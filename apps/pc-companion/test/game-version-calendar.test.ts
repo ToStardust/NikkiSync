@@ -119,6 +119,24 @@ test('calendar store persists the last valid snapshot and resolves after reconst
   } finally { db.close() }
 })
 
+test('calendar store treats a malformed persisted snapshot as unavailable', () => {
+  const db = new DatabaseManager(':memory:')
+  db.initialize()
+  try {
+    const settings = new AppSettingsRepository(db)
+    settings.set('game_version_calendar_snapshot', {
+      schemaVersion: 1,
+      provider: 'stale-calendar',
+      providerVersion: 'legacy',
+      sourceUrls: ['https://example.test/versions']
+    })
+
+    const store = new GameVersionCalendarStore(settings)
+    assert.equal(store.manifest(), undefined)
+    assert.equal(store.resolve('2026-09-01T00:00:00.000Z'), undefined)
+  } finally { db.close() }
+})
+
 test('calendar store starts empty and replacing a snapshot updates future inference without touching assets', () => {
   const db = new DatabaseManager(':memory:')
   db.initialize()
