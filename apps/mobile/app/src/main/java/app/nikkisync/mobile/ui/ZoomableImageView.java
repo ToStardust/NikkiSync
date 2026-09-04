@@ -13,7 +13,7 @@ public final class ZoomableImageView extends ImageView {
         void onSwipeRight();
     }
 
-    private final ViewerInteractionState state = new ViewerInteractionState();
+    private final ViewerInteractionState state;
     private final ScaleGestureDetector scaleDetector;
     private final GestureDetector gestureDetector;
     private GestureListener listener;
@@ -21,7 +21,12 @@ public final class ZoomableImageView extends ImageView {
     private float translatedY;
 
     public ZoomableImageView(Context context) {
+        this(context, new ViewerInteractionState());
+    }
+
+    public ZoomableImageView(Context context, ViewerInteractionState state) {
         super(context);
+        this.state = state;
         setScaleType(ScaleType.FIT_CENTER);
         scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector detector) {
