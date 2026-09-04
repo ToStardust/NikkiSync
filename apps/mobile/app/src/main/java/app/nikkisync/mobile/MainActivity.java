@@ -3,10 +3,8 @@ package app.nikkisync.mobile;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
@@ -18,7 +16,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -48,6 +45,8 @@ import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
+import app.nikkisync.mobile.ui.PhotoViewerDialog;
+import app.nikkisync.mobile.ui.ViewerSession;
 
 import org.json.JSONObject;
 
@@ -58,6 +57,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public final class MainActivity extends Activity implements NsdDiscovery.Listener {
     private static final int NEARBY_PERMISSION = 401;
@@ -280,18 +280,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             for (int i = 0; i < selected.size(); i++) {
                 AssetSummary asset = selected.get(i); hadMotion |= asset.hasMotion();
                 int index = i + 1; main.post(() -> setStatus("正在保存 " + index + " / " + selected.size()));
-                try {
-                    if (asset.hasMotion()) {
-                        String manufacturer = ((android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER) + " " +
-                                (android.os.Build.BRAND == null ? "" : android.os.Build.BRAND)).toLowerCase(java.util.Locale.ROOT);
-                        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) vivoLivePhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) huaweiMovingPhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) oppoLivePhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("samsung")) samsungMotionPhotoSaver.save(this, current, asset);
-                        else motionPhotoSaver.save(this, current, asset);
-                    } else originalSaver.save(this, current, asset);
-                    success++;
-                }
+                try { saveAsset(current, asset); success++; }
                 catch (Exception ignored) { failure++; }
             }
             int saved = success, failed = failure; boolean motion = hadMotion;
@@ -304,52 +293,52 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         });
     }
 
-    private void showViewer(AssetSummary asset) {
-        Dialog dialog = new Dialog(this);
-        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(14), dp(14), dp(14), dp(14)); body.setBackgroundColor(Color.WHITE);
-        ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(0xFFF0EDEA);
-        body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(480)));
-        imageLoader.load(client, asset, image);
-        String description = (asset.hasMotion() ? "LIVE · " : "") + (asset.width() == null ? "" : asset.width() + " × " + asset.height()) +
-                (asset.capturedAt() == null ? "" : "\n" + asset.capturedAt());
-        TextView info = text(description, 13, false, getColor(R.color.text_secondary)); info.setPadding(dp(4), dp(12), dp(4), dp(10)); body.addView(info);
-        TextView params = text("正在读取照片参数…", 13, false, getColor(R.color.text_secondary)); params.setPadding(dp(4), dp(4), dp(4), dp(10)); body.addView(params);
-        Button edit = button("编辑照片参数"); edit.setEnabled(false); body.addView(edit);
-        AssetDetail[] detailHolder = new AssetDetail[1];
+    private void saveAsset(NikkiSyncClient current, AssetSummary asset) throws Exception {
+        if (!asset.hasMotion()) {
+            originalSaver.save(this, current, asset);
+            return;
+        }
+        String manufacturer = ((android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER) + " " +
+                (android.os.Build.BRAND == null ? "" : android.os.Build.BRAND)).toLowerCase(java.util.Locale.ROOT);
+        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) vivoLivePhotoSaver.save(this, current, asset);
+        else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) huaweiMovingPhotoSaver.save(this, current, asset);
+        else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) oppoLivePhotoSaver.save(this, current, asset);
+        else if (manufacturer.contains("samsung")) samsungMotionPhotoSaver.save(this, current, asset);
+        else motionPhotoSaver.save(this, current, asset);
+    }
+
+    private void saveFromViewer(AssetSummary asset) {
+        NikkiSyncClient current = client;
+        if (current == null) { toast("电脑当前不可用"); return; }
+        toast("正在保存照片…");
         io.execute(() -> {
             try {
-                AssetDetail detail = client.asset(asset.assetId()); detailHolder[0] = detail;
-                main.post(() -> { params.setText(metadataSummary(detail)); edit.setEnabled(true); });
-            } catch (Exception error) { main.post(() -> params.setText("参数读取失败：" + message(error))); }
+                saveAsset(current, asset);
+                main.post(() -> toast(asset.hasMotion() ? "LIVE 照片已保存" : "原图已保存"));
+            } catch (Exception error) {
+                main.post(() -> toast("保存失败：" + message(error)));
+            }
         });
-        edit.setOnClickListener(v -> { if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder); });
-        Button select = button("选择保存原图"); select.setOnClickListener(v -> { adapter.toggle(asset); updateSelection(); dialog.dismiss(); }); body.addView(select);
-        dialog.setContentView(body); if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); dialog.show();
-        if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
-    private String metadataSummary(AssetDetail detail) {
-        if (detail.metadataJson() == null) return "暖暖原生参数：未检测到\nNikkiSync 参数：暂无";
-        try {
-            JSONObject metadata = new JSONObject(detail.metadataJson());
-            JSONObject raw = metadata.optJSONObject("raw"); JSONObject camera = metadata.optJSONObject("camera");
-            StringBuilder out = new StringBuilder();
-            out.append(raw != null && raw.optString("nativeParamToken", "").length() == 44
-                    ? "暖暖原生参数：已读取（待本地解码）" : "暖暖原生参数：未检测到");
-            if (camera == null || camera.length() == 0) return out.append("\nNikkiSync 参数：暂无").toString();
-            appendParam(out, camera, "focalLength", "焦距"); appendParam(out, camera, "exposure", "曝光");
-            appendParam(out, camera, "brightness", "亮度"); appendParam(out, camera, "contrast", "对比度");
-            appendParam(out, camera, "saturation", "饱和度"); appendParam(out, camera, "vibrance", "鲜艳度");
-            appendParam(out, camera, "highlights", "高光"); appendParam(out, camera, "shadows", "阴影");
-            return out.toString();
-        } catch (Exception error) { return "参数数据损坏：" + message(error); }
+    private void showViewer(AssetSummary asset) {
+        NikkiSyncClient current = client;
+        if (current == null) { toast("电脑当前不可用"); return; }
+        final ViewerSession session;
+        try { session = ViewerSession.fromGallery(List.copyOf(assets), asset.assetId()); }
+        catch (Exception error) { toast("无法打开照片：" + message(error)); return; }
+
+        PhotoViewerDialog dialog = new PhotoViewerDialog(this, session, imageLoader, current, new PhotoViewerDialog.Callbacks() {
+            @Override public void onSave(AssetSummary currentAsset) { saveFromViewer(currentAsset); }
+
+            @Override public void onEditMetadata(AssetSummary currentAsset, AssetDetail detail, Consumer<AssetDetail> onUpdated) {
+                showMetadataEditor(currentAsset, detail, onUpdated);
+            }
+        });
+        dialog.showViewer();
     }
 
-    private static void appendParam(StringBuilder out, JSONObject object, String key, String label) {
-        if (object.has(key) && !object.isNull(key)) out.append("\n").append(label).append("：").append(object.opt(key));
-    }
-
-    private void showMetadataEditor(AssetSummary asset, AssetDetail detail, TextView params, AssetDetail[] detailHolder) {
+    private void showMetadataEditor(AssetSummary asset, AssetDetail detail, Consumer<AssetDetail> onUpdated) {
         JSONObject camera;
         try { JSONObject metadata = detail.metadataJson() == null ? new JSONObject() : new JSONObject(detail.metadataJson()); camera = metadata.optJSONObject("camera"); }
         catch (Exception error) { toast("参数读取失败：" + message(error)); return; }
@@ -377,15 +366,23 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                             if (!value.isEmpty()) patchCamera.put(entry.getKey(), Double.parseDouble(value));
                         }
                         JSONObject patch = new JSONObject().put("camera", patchCamera);
-                        params.setText("正在保存参数…");
+                        toast("正在保存参数…");
                         io.execute(() -> {
                             try {
-                                AssetDetail updated = client.updateMetadata(asset.assetId(), patch); detailHolder[0] = updated;
-                                main.post(() -> { params.setText(metadataSummary(updated)); toast("照片参数已保存到 NikkiSync"); });
-                            } catch (Exception error) { main.post(() -> { params.setText(metadataSummary(detailHolder[0])); toast("参数保存失败：" + message(error)); }); }
+                                AssetDetail updated = currentClient().updateMetadata(asset.assetId(), patch);
+                                main.post(() -> { onUpdated.accept(updated); toast("照片参数已保存到 NikkiSync"); });
+                            } catch (Exception error) {
+                                main.post(() -> toast("参数保存失败：" + message(error)));
+                            }
                         });
                     } catch (Exception error) { toast("请输入有效数字"); }
                 }).show();
+    }
+
+    private NikkiSyncClient currentClient() {
+        NikkiSyncClient current = client;
+        if (current == null) throw new IllegalStateException("电脑当前不可用");
+        return current;
     }
 
     private void updateSelection() {
