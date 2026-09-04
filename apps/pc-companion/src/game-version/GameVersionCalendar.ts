@@ -57,13 +57,15 @@ export function parseGameVersionCalendarManifest(value: unknown): GameVersionCal
     if (!availableAt) throw new Error(`game version calendar entries[${index}].availableAt is required`)
     return { version, availableAt }
   })
+  const generatedAt = optionalUtcTimestamp(raw.generatedAt, 'generatedAt')
+  const fetchedAt = optionalUtcTimestamp(raw.fetchedAt, 'fetchedAt')
   return {
     schemaVersion: 1,
     provider,
     providerVersion,
     sourceUrls,
-    ...(optionalUtcTimestamp(raw.generatedAt, 'generatedAt') ? { generatedAt: optionalUtcTimestamp(raw.generatedAt, 'generatedAt') } : {}),
-    ...(optionalUtcTimestamp(raw.fetchedAt, 'fetchedAt') ? { fetchedAt: optionalUtcTimestamp(raw.fetchedAt, 'fetchedAt') } : {}),
+    ...(generatedAt ? { generatedAt } : {}),
+    ...(fetchedAt ? { fetchedAt } : {}),
     entries
   }
 }
