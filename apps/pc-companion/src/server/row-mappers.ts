@@ -29,6 +29,12 @@ function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhoto
   return raw ? { ...value, raw } as InfinityPhotoMetadata : value
 }
 
+function parseMetadata(value: unknown): InfinityPhotoMetadata | undefined {
+  return optionalString(value)
+    ? JSON.parse(String(value)) as InfinityPhotoMetadata
+    : undefined
+}
+
 export function mapResourceRow(row: Record<string, unknown>): MediaResource {
   return {
     resourceId: String(row.resource_id),
@@ -49,9 +55,7 @@ export function mapAssetRow(row: Record<string, unknown>, resourceRows: Record<s
   const resources = resourceRows.map(mapResourceRow)
   const still = resources.find((resource) => resource.role === 'source_primary' || resource.role === 'source_high_quality')
   const motion = resources.find((resource) => resource.role === 'source_motion')
-  const metadata = publicMetadata(optionalString(row.metadata_json)
-    ? JSON.parse(String(row.metadata_json)) as InfinityPhotoMetadata
-    : undefined)
+  const metadata = publicMetadata(parseMetadata(row.metadata_json))
   return {
     schemaVersion: 1,
     assetId: String(row.asset_id),
@@ -91,6 +95,8 @@ export function mapAssetDetail(row: Record<string, unknown>, resourceRows: Recor
 
 export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Record<string, unknown>[]): AssetSummary {
   const resources = resourceRows.map(mapResourceRow)
+  const metadata = parseMetadata(row.metadata_json)
+  const explicitGameVersion = optionalString(metadata?.identity?.gameVersion)
   const visual = resources.find((resource) => resource.role === 'source_high_quality')
     ?? resources.find((resource) => resource.role === 'source_primary')
     ?? resources[0]
@@ -109,6 +115,9 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ...(visual?.height === undefined ? {} : { height: visual.height }),
     hasMotion: resources.some((resource) => resource.role === 'source_motion'),
     hasMetadata: Boolean(row.metadata_json),
+    ...(explicitGameVersion
+      ? { gameVersion: explicitGameVersion, gameVersionSource: 'explicit' as const }
+      : { gameVersionSource: 'unknown' as const }),
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),
