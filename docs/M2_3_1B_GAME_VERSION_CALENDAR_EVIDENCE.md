@@ -16,6 +16,13 @@ feature/m2-3-1b-game-version-calendar
 feature/m2-3-1-game-version-gallery
 ```
 
+Stacked PR：
+
+```text
+#2 M2.3.1B: infer gallery game versions from cached calendar
+base: feature/m2-3-1-game-version-gallery
+```
+
 ## 1. 本阶段目标
 
 M2.3.1B 只补 PC 侧的小型版本日历、缓存与推断链，不改变 Android 为每张照片联网查询的边界，也不进入 Viewer、旋转或 Live Photo 转码。
@@ -64,6 +71,8 @@ apps/pc-companion/src/game-version/GameVersionCalendarStore.ts
 - 不新增数据库表。
 - key：`game_version_calendar_snapshot`。
 - PC runtime 重建后仍可从最后一份有效 snapshot 离线 resolve。
+- 读取持久化 snapshot 时重新执行 manifest 校验；旧 schema、半损坏对象或非法 JSON 被视为 calendar unavailable，而不是让 `/v1/assets` 失败。
+- runtime 遇到 unavailable cache 会按现有逻辑回退 built-in seed。
 - 更新 calendar 不要求重新下载照片，也不要求重新扫描游戏媒体。
 
 ### 保守内置 seed
@@ -128,7 +137,8 @@ apps/pc-companion/src/windows-app.ts
 ```
 
 - 空缓存启动时装入 built-in seed。
-- 已有缓存绝不被 built-in seed 覆盖。
+- 已有**有效**缓存绝不被 built-in seed 覆盖。
+- 无效缓存按 unavailable 处理，避免损坏 gallery API。
 - runtime 把 store resolver 注入 `LocalSyncServer`。
 - `/v1/assets` 在生成 `AssetSummary` 时执行 explicit > inferred > unknown。
 - remote updater 属于 runtime 生命周期：`start()` 启动，`stop()` 停止。
@@ -147,30 +157,34 @@ apps/pc-companion/src/windows-app.ts
 - `GameVersionCalendarStore` 尚不存在时，持久化测试编译失败。
 - remote provider/update service 尚不存在时，对应测试编译失败。
 - remote config loader 尚不存在时，对应测试编译失败。
-- 最终 runtime/server wiring RED（GitHub Actions run `33900425958`）明确失败于：
+- runtime/server wiring RED（GitHub Actions run `33900425958`）明确失败于：
   - `LocalSyncServerConfig` 缺 `gameVersionResolver`；
   - `PcCompanionRuntimeConfig` 缺 `gameVersionCalendarRemote`；
   - runtime 缺 calendar store/updater 成员。
+- PR patch review 后新增 malformed-cache RED（GitHub Actions run `33903788034`）：
+  - 总计 74 tests；73 pass / 1 fail；
+  - 唯一失败测试 `calendar store treats a malformed persisted snapshot as unavailable`；
+  - 实际值证明旧实现会把缺少 `entries` 的坏 snapshot 原样返回。
 
-随后只补对应生产接线。
+随后只在 `GameVersionCalendarStore.manifest()` 的持久化信任边界补严格解析；没有改变 server/auth/protocol/Android 行为。
 
-## 4. 最终自动化验证
+## 4. 自动化验证
 
-最终生产代码 HEAD（文档更新前）：
+### 4.1 Review hardening 后的 PC 生产代码
+
+HEAD：
 
 ```text
-f788b5c989d33b820c046045334836205d2ffbff
+f0d2f35bd774571f3820cf0edc2cbe3fc3884285
 ```
 
 GitHub Actions run：
 
 ```text
-33902625997
+33903877387
 ```
 
-### Windows / Node 24
-
-执行：
+Windows / Node 24：
 
 ```text
 npm test -- --runInBand
@@ -179,8 +193,8 @@ npm test -- --runInBand
 结果：
 
 ```text
-tests 73
-pass  73
+tests 74
+pass  74
 fail  0
 cancelled 0
 skipped   0
@@ -194,15 +208,23 @@ skipped   0
 - canonical capture -> birth -> modified fallback；
 - derived resource timestamp 禁止推断；
 - app_settings snapshot 持久化与 runtime 重建；
+- malformed persisted snapshot 视为 unavailable；
 - conditional GET；
 - remote failure 保留旧 snapshot；
 - remote 请求无照片/UID 标识；
 - non-UTC boundary 拒绝；
 - explicit enabled + HTTPS 配置门槛；
 - LocalSyncServer `/v1/assets` 真实返回 inferred，同时保留 explicit；
-- runtime 空缓存 seed、已有缓存不覆盖、构造 remote updater 不触发网络。
+- runtime 空缓存 seed、已有有效缓存不覆盖、构造 remote updater 不触发网络。
 
-### Android
+### 4.2 Android baseline
+
+在 review hardening 前、相同 M2.3.1B 生产接线且 Android 源码完全相同的 final-head run：
+
+```text
+HEAD d42317979b89c16970926d6f4ac0274f4b4892b8
+run 33903179024
+```
 
 执行：
 
@@ -224,9 +246,17 @@ BUILD SUCCESSFUL
 38 actionable tasks: 38 executed
 ```
 
-Android 源码在 M2.3.1B 没有新增功能改动；此验证用于确认 parent M2.3.1 的版本分组客户端仍与新的 PC summary 行为兼容。
+Review hardening 只改 PC calendar store 与其 Node 测试；文档更新后会再次触发最终 branch CI。合并前必须检查 PR 最新 HEAD 的 Node + Android 两个 job，而不能只引用旧 HEAD。
 
-## 5. 已知未完成项
+## 5. PR patch review 结论
+
+PR #2 changed-files 范围与 M2.3.1B 一致：PC calendar/runtime/server、对应测试、交接文档与根 test script；**没有 Android UI 源码、NUAN5、M4 archive 或其他无关行为扩散。**
+
+Review 发现的 malformed-cache blocking issue 已按上面的 RED -> GREEN 闭环修复。当前未发现第二个 blocking correctness/security 问题。
+
+非阻塞后续优化：当前 resolver 在每张 summary 上读取本地 calendar store；这是本地 SQLite/JSON 路径，不会联网，也不会改变结果。若大图库 profiling 显示这里成为热点，可后续把已验证 manifest/calendar 做进程内缓存，不应在本次 bounded change 中无证据提前扩展。
+
+## 6. 已知未完成项
 
 不得把以下内容写成已经验收：
 
@@ -238,7 +268,7 @@ Android 源码在 M2.3.1B 没有新增功能改动；此验证用于确认 paren
 - M3 rotated LIVE export；
 - M4.2.2B 本地游戏归档提取证明（仍受合法 archive key/config 缺失阻塞）。
 
-## 6. 后续推荐顺序
+## 7. 后续推荐顺序
 
 ```text
 手机实机验收 M2.3.1 + M2.3.1B 版本分组首页
