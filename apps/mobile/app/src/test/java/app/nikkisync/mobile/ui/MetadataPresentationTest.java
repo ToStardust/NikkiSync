@@ -48,6 +48,17 @@ public final class MetadataPresentationTest {
         assertTrue(technical.contains("nativeParamToken"));
     }
 
+    @Test public void fallsBackToSummaryCaptureTimeWhenMetadataOmitsCapture() {
+        MetadataPresentation presentation = MetadataPresentation.fromMetadataJson(
+                "{\"camera\":{\"focalLength\":35}}",
+                1920,
+                1080,
+                "2026-09-01T03:04:05.000Z"
+        );
+
+        assertTrue(presentation.summary().contains("拍摄时间：2026-09-01T03:04:05.000Z"));
+    }
+
     @Test public void missingOrBrokenMetadataDegradesWithoutThrowing() {
         MetadataPresentation empty = MetadataPresentation.fromMetadataJson(null, null, null);
         MetadataPresentation broken = MetadataPresentation.fromMetadataJson("{broken", 100, 200);
