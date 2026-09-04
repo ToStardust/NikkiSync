@@ -1,0 +1,12 @@
+{
+  "name": "@nikkisync/sample-analyzer",
+  "version": "0.0.1-m0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nikkisync-sample-analyzer": "./analyze.mjs"
+  },
+  "dependencies": {
+    "@nikkisync/core": "0.0.1-m0"
+  }
+}

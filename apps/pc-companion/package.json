@@ -1,0 +1,21 @@
+{
+  "name": "@nikkisync/pc-companion",
+  "version": "0.0.1-m0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:server": "node dist/src/dev-server.js",
+    "package:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ..\\windows-shell\\package.ps1"
+  },
+  "dependencies": {
+    "@nikkisync/database": "0.0.1-m0",
+    "@nikkisync/protocol": "0.0.1-m0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5"
+  }
+}

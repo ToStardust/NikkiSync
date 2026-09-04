@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CUE4Parse" Version="1.2.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- CUE4Parse packages this native bridge as a compile-time .dll asset. Keep it
+         as a runtime asset, but do not ask the C# compiler to read PE metadata from it. -->
+    <Reference Remove="CUE4Parse-Natives" />
+  </ItemGroup>
+</Project>
