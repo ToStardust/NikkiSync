@@ -32,7 +32,7 @@ NikkiSync/
 └─ tsconfig.base.json
 ```
 
-交给通过本地 MCP 连接的 GPT 继续开发时，先让它阅读 [GPT_HANDOFF_2026-09-02.md](docs/GPT_HANDOFF_2026-09-02.md)。
+交给通过本地 MCP 或 GitHub 连接的 GPT 继续开发时，先让它阅读最新的 [GPT_HANDOFF_2026-09-04.md](docs/GPT_HANDOFF_2026-09-04.md)；较早的 [GPT_HANDOFF_2026-09-02.md](docs/GPT_HANDOFF_2026-09-02.md) 仅作为历史记录。
 
 依赖方向：
 
