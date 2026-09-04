@@ -25,8 +25,8 @@ import app.nikkisync.mobile.net.NikkiSyncClient;
 
 import org.json.JSONObject;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -44,7 +44,7 @@ public final class PhotoViewerDialog extends Dialog {
     private final Callbacks callbacks;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService detailExecutor = Executors.newSingleThreadExecutor();
-    private final Map<String, AssetDetail> detailCache = new HashMap<>();
+    private final Map<String, AssetDetail> detailCache = new ConcurrentHashMap<>();
     private final ViewerInteractionState interactionState = new ViewerInteractionState();
 
     private ZoomableImageView image;
