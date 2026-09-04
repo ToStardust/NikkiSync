@@ -48,16 +48,17 @@ public final class Models {
     }
 
     public static final class AssetSummary {
-        private final String assetId, type, state, capturedAt, uid, thumbnailResourceId, previewResourceId;
+        private final String assetId, type, state, capturedAt, uid, gameVersion, gameVersionSource, thumbnailResourceId, previewResourceId;
         private final long revision;
         private final Integer width, height;
         private final boolean hasMotion, hasMetadata;
         public AssetSummary(String assetId, String type, String state, String capturedAt, String uid, long revision,
                             Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
-                            String thumbnailResourceId, String previewResourceId) {
+                            String gameVersion, String gameVersionSource, String thumbnailResourceId, String previewResourceId) {
             this.assetId = assetId; this.type = type; this.state = state; this.capturedAt = capturedAt; this.uid = uid;
             this.revision = revision; this.width = width; this.height = height; this.hasMotion = hasMotion;
-            this.hasMetadata = hasMetadata; this.thumbnailResourceId = thumbnailResourceId; this.previewResourceId = previewResourceId;
+            this.hasMetadata = hasMetadata; this.gameVersion = gameVersion; this.gameVersionSource = gameVersionSource;
+            this.thumbnailResourceId = thumbnailResourceId; this.previewResourceId = previewResourceId;
         }
         public String assetId() { return assetId; }
         public String type() { return type; }
@@ -69,6 +70,8 @@ public final class Models {
         public Integer height() { return height; }
         public boolean hasMotion() { return hasMotion; }
         public boolean hasMetadata() { return hasMetadata; }
+        public String gameVersion() { return gameVersion; }
+        public String gameVersionSource() { return gameVersionSource; }
         public String thumbnailResourceId() { return thumbnailResourceId; }
         public String previewResourceId() { return previewResourceId; }
     }
