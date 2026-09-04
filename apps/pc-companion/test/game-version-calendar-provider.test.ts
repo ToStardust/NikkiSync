@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { AppSettingsRepository, DatabaseManager } from '@nikkisync/database'
 import { GameVersionCalendarStore } from '../src/game-version/GameVersionCalendarStore.js'
 import { GameVersionCalendarUpdateService } from '../src/game-version/GameVersionCalendarUpdateService.js'
+import { loadGameVersionCalendarRemoteConfigFile } from '../src/game-version/GameVersionCalendarRemoteConfigFile.js'
 import { RemoteJsonGameVersionCalendarProvider } from '../src/game-version/RemoteJsonGameVersionCalendarProvider.js'
 
 test('remote calendar update uses conditional GET and replaces the cached snapshot without photo identifiers', async () => {
@@ -119,5 +123,40 @@ test('remote calendar rejects non-UTC availability boundaries instead of silentl
     await assert.rejects(provider.fetch(), /UTC|availableAt/i)
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('remote calendar config requires explicit enabled true and HTTPS', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-game-version-calendar-config-'))
+  const file = path.join(directory, 'game-version-calendar-remote.json')
+  try {
+    await writeFile(file, JSON.stringify({
+      enabled: true,
+      provider: {
+        type: 'remote-json',
+        id: 'fixture-calendar',
+        endpoint: 'https://calendar.example.test/v1',
+        intervalMs: 3_600_000,
+        timeoutMs: 5_000
+      }
+    }))
+    const enabled = loadGameVersionCalendarRemoteConfigFile(file)
+    assert.equal(enabled?.enabled, true)
+    assert.equal(enabled?.provider?.id, 'fixture-calendar')
+    assert.equal(enabled?.provider?.endpoint, 'https://calendar.example.test/v1')
+    assert.equal(enabled?.provider?.intervalMs, 3_600_000)
+
+    await writeFile(file, JSON.stringify({
+      provider: { type: 'remote-json', id: 'fixture-calendar', endpoint: 'https://calendar.example.test/v1' }
+    }))
+    assert.equal(loadGameVersionCalendarRemoteConfigFile(file), undefined)
+
+    await writeFile(file, JSON.stringify({
+      enabled: true,
+      provider: { type: 'remote-json', id: 'fixture-calendar', endpoint: 'http://127.0.0.1/calendar' }
+    }))
+    assert.equal(loadGameVersionCalendarRemoteConfigFile(file), undefined)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
   }
 })
