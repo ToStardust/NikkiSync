@@ -1,5 +1,9 @@
 import type { AppSettingsRepository } from '@nikkisync/database'
-import { GameVersionCalendar, type GameVersionCalendarManifest } from './GameVersionCalendar.js'
+import {
+  GameVersionCalendar,
+  parseGameVersionCalendarManifest,
+  type GameVersionCalendarManifest
+} from './GameVersionCalendar.js'
 
 const SNAPSHOT_KEY = 'game_version_calendar_snapshot'
 
@@ -11,7 +15,12 @@ export class GameVersionCalendarStore {
   }
 
   manifest(): GameVersionCalendarManifest | undefined {
-    return this.settings.get<GameVersionCalendarManifest>(SNAPSHOT_KEY)
+    try {
+      const persisted = this.settings.get<unknown>(SNAPSHOT_KEY)
+      return persisted === undefined ? undefined : parseGameVersionCalendarManifest(persisted)
+    } catch {
+      return undefined
+    }
   }
 
   calendar(): GameVersionCalendar | undefined {
