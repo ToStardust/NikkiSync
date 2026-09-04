@@ -54,7 +54,11 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
   assets.reconcile({
     assetId: 'asset_test', assetType: 'photo', assetState: 'ready', uid: '10001', discoveredAt: '2026-09-02T00:00:00.000Z',
     metadataSchemaVersion: 1,
-    metadata: { schemaVersion: 1, raw: { nativeParamToken: 'token-visible', nativeParamPayload: 'pc-only-secret-payload', nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef' } },
+    metadata: {
+      schemaVersion: 1,
+      identity: { gameVersion: '2.9' },
+      raw: { nativeParamToken: 'token-visible', nativeParamPayload: 'pc-only-secret-payload', nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef' }
+    },
     resources: [{
       resourceId: 'resource_test', assetId: 'asset_test', role: 'source_high_quality', fileName: 'photo.jpeg',
       sourcePath: mediaPath, pathKey: mediaPath.replaceAll('\\', '/').toLowerCase(), mimeType: 'image/jpeg', fileExt: '.jpeg',
@@ -96,9 +100,20 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     const assetsPath = '/v1/assets?limit=10'
     const assetList = await fetch(`${base}${assetsPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', assetsPath) })
     assert.equal(assetList.status, 200)
-    const listJson = await assetList.json() as { items: Array<{ assetId: string; hasMotion: boolean; previewResourceId?: string }>; libraryRevision: number }
+    const listJson = await assetList.json() as {
+      items: Array<{
+        assetId: string
+        hasMotion: boolean
+        previewResourceId?: string
+        gameVersion?: string
+        gameVersionSource: 'explicit' | 'inferred' | 'unknown'
+      }>
+      libraryRevision: number
+    }
     assert.equal(listJson.items.length, 1); assert.equal(listJson.items[0]?.assetId, 'asset_test'); assert.equal(listJson.items[0]?.hasMotion, false)
     assert.equal(listJson.items[0]?.previewResourceId, 'resource_test')
+    assert.equal(listJson.items[0]?.gameVersion, '2.9')
+    assert.equal(listJson.items[0]?.gameVersionSource, 'explicit')
 
     const detailPath = '/v1/assets/asset_test'
     const detail = await fetch(`${base}${detailPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', detailPath) })
@@ -121,8 +136,6 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     assert.equal(metadataJson.asset.metadata?.camera?.exposure, 0.75)
     assert.equal(metadataJson.asset.metadata?.camera?.contrast, 0.2)
     assert.equal(metadataJson.revision, 2)
-    // Let the journal broadcaster advance past the metadata update before opening the WS
-    // used below to assert the next asset-created event; otherwise this test races the poller.
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     const resourcePath = '/v1/assets/asset_test/resources/resource_test'
@@ -158,6 +171,16 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
         pathKey: nextMediaPath.replaceAll('\\', '/').toLowerCase(), mimeType: 'image/jpeg', fileExt: '.jpeg', sizeBytes: 4, sha256: sha256(Buffer.from('next')), stableState: 'stable', isDerived: false }]
     })
     assert.equal((JSON.parse(await nextEvent) as { event: string }).event, 'asset.created')
+
+    const refreshedList = await fetch(`${base}${assetsPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', assetsPath) })
+    assert.equal(refreshedList.status, 200)
+    const refreshedJson = await refreshedList.json() as {
+      items: Array<{ assetId: string; gameVersion?: string; gameVersionSource: 'explicit' | 'inferred' | 'unknown' }>
+    }
+    const unknownAsset = refreshedJson.items.find((item) => item.assetId === 'asset_next')
+    assert.ok(unknownAsset)
+    assert.equal(unknownAsset.gameVersion, undefined)
+    assert.equal(unknownAsset.gameVersionSource, 'unknown')
     socket.destroy()
   } finally {
     await server.stop(); db.close(); await rm(temp, { recursive: true, force: true })
