@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AppSettingsRepository, DatabaseManager } from '@nikkisync/database'
+import { BUILTIN_GAME_VERSION_CALENDAR } from '../src/game-version/BuiltinGameVersionCalendar.js'
 import { GameVersionCalendar } from '../src/game-version/GameVersionCalendar.js'
 import { GameVersionCalendarStore } from '../src/game-version/GameVersionCalendarStore.js'
 import { mapAssetSummary } from '../src/server/row-mappers.js'
@@ -21,6 +22,19 @@ test('game version calendar resolves the latest UTC availability boundary and le
   assert.equal(calendar.resolve('2026-08-28T03:00:00.000Z'), '2.9')
   assert.equal(calendar.resolve('2026-09-05T00:00:00.000Z'), '2.9')
   assert.equal(calendar.resolve('2026-07-17T02:59:59.999Z'), undefined)
+})
+
+test('built-in calendar conservatively covers only verified versions 2.8 and 2.9', () => {
+  const calendar = new GameVersionCalendar(BUILTIN_GAME_VERSION_CALENDAR)
+  assert.deepEqual(BUILTIN_GAME_VERSION_CALENDAR.entries.map((entry) => entry.version), ['2.8', '2.9'])
+  assert.equal(calendar.resolve('2026-07-17T02:59:59.999Z'), undefined)
+  assert.equal(calendar.resolve('2026-07-17T03:00:00.000Z'), '2.8')
+  assert.equal(calendar.resolve('2026-08-28T02:59:59.999Z'), '2.8')
+  assert.equal(calendar.resolve('2026-08-28T03:00:00.000Z'), '2.9')
+  assert.deepEqual(BUILTIN_GAME_VERSION_CALENDAR.sourceUrls, [
+    'https://infinitynikki.infoldgames.com/en/news/559',
+    'https://infinitynikki.infoldgames.com/en/news/583'
+  ])
 })
 
 test('game version calendar rejects invalid timestamps instead of forcing a version', () => {
