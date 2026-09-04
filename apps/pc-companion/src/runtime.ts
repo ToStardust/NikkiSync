@@ -1,4 +1,4 @@
-import { DatabaseManager } from '@nikkisync/database'
+import { AppSettingsRepository, DatabaseManager } from '@nikkisync/database'
 import { buildPairingUri } from '@nikkisync/protocol'
 import type { MetadataDictionaryManifest } from '@nikkisync/core'
 import { LocalSyncServer, type LocalSyncServerAddress, type LocalSyncServerConfig } from './server/LocalSyncServer.js'
@@ -10,6 +10,13 @@ import type { MetadataResolverServiceConfig, PhotoMetadataResolver } from './met
 import { MetadataDictionaryService } from './metadata/MetadataDictionaryService.js'
 import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceConfig } from './metadata/MetadataDictionaryUpdateService.js'
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
+import { BUILTIN_GAME_VERSION_CALENDAR } from './game-version/BuiltinGameVersionCalendar.js'
+import type { GameVersionCalendarProvider } from './game-version/GameVersionCalendarProvider.js'
+import { GameVersionCalendarStore } from './game-version/GameVersionCalendarStore.js'
+import {
+  GameVersionCalendarUpdateService,
+  type GameVersionCalendarUpdateServiceConfig
+} from './game-version/GameVersionCalendarUpdateService.js'
 
 export interface PcCompanionRuntimeConfig {
   databaseFile?: string
@@ -23,6 +30,10 @@ export interface PcCompanionRuntimeConfig {
   metadataDictionaryRemote?: {
     provider: MetadataDictionaryProvider
     service?: MetadataDictionaryUpdateServiceConfig
+  }
+  gameVersionCalendarRemote?: {
+    provider: GameVersionCalendarProvider
+    service?: GameVersionCalendarUpdateServiceConfig
   }
 }
 
@@ -39,11 +50,25 @@ export class PcCompanionRuntime {
   readonly metadataResolver?: MetadataResolverService
   readonly metadataDictionary?: MetadataDictionaryService
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
+  readonly gameVersionCalendar: GameVersionCalendarStore
+  readonly gameVersionCalendarUpdater?: GameVersionCalendarUpdateService
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
+
+    this.gameVersionCalendar = new GameVersionCalendarStore(new AppSettingsRepository(this.database))
+    if (!this.gameVersionCalendar.manifest()) this.gameVersionCalendar.replace(BUILTIN_GAME_VERSION_CALENDAR)
+    if (config.gameVersionCalendarRemote) {
+      this.gameVersionCalendarUpdater = new GameVersionCalendarUpdateService(
+        this.database,
+        this.gameVersionCalendar,
+        config.gameVersionCalendarRemote.provider,
+        config.gameVersionCalendarRemote.service
+      )
+    }
+
     if (config.metadataDictionary || config.metadataDictionaryRemote) {
       this.metadataDictionary = new MetadataDictionaryService(this.database)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
@@ -64,7 +89,10 @@ export class PcCompanionRuntime {
         this.metadataDictionary
       )
     }
-    const serverConfig = config.server ?? {}
+    const serverConfig: LocalSyncServerConfig = {
+      ...(config.server ?? {}),
+      gameVersionResolver: (timestamp) => this.gameVersionCalendar.resolve(timestamp)
+    }
     if (serverConfig.tls) {
       this.server = new LocalSyncServer(this.database, serverConfig)
     } else {
@@ -79,6 +107,7 @@ export class PcCompanionRuntime {
       const server = await this.server.start()
       this.metadataDictionary?.reenrichResolvedAssets()
       this.metadataDictionaryUpdater?.start()
+      this.gameVersionCalendarUpdater?.start()
       this.metadataResolver?.start()
       return { scan, server }
     } catch (error) {
@@ -89,6 +118,7 @@ export class PcCompanionRuntime {
 
   async stop(): Promise<void> {
     this.metadataResolver?.stop()
+    this.gameVersionCalendarUpdater?.stop()
     this.metadataDictionaryUpdater?.stop()
     await this.server.stop()
     await this.scanner.stop()

@@ -7,6 +7,8 @@ import type {
   NikkiAsset
 } from '@nikkisync/protocol'
 
+export type GameVersionResolver = (timestamp: string | undefined) => string | undefined
+
 function optionalString(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value)
 }
@@ -33,6 +35,26 @@ function parseMetadata(value: unknown): InfinityPhotoMetadata | undefined {
   return optionalString(value)
     ? JSON.parse(String(value)) as InfinityPhotoMetadata
     : undefined
+}
+
+function preferredSourceRow(resourceRows: Record<string, unknown>[]): Record<string, unknown> | undefined {
+  for (const role of ['source_high_quality', 'source_primary', 'source_low_quality']) {
+    const row = resourceRows.find((candidate) => String(candidate.role) === role)
+    if (row) return row
+  }
+  return undefined
+}
+
+function gameVersionInferenceTimestamp(
+  row: Record<string, unknown>,
+  resourceRows: Record<string, unknown>[],
+  metadata: InfinityPhotoMetadata | undefined
+): string | undefined {
+  const canonicalCapture = optionalString(metadata?.capture?.capturedAt) ?? optionalString(row.captured_at)
+  if (canonicalCapture) return canonicalCapture
+  const source = preferredSourceRow(resourceRows)
+  if (!source) return undefined
+  return optionalString(source.birth_time) ?? optionalString(source.modified_at)
 }
 
 export function mapResourceRow(row: Record<string, unknown>): MediaResource {
@@ -93,10 +115,19 @@ export function mapAssetDetail(row: Record<string, unknown>, resourceRows: Recor
   return { asset: mapAssetRow(row, resourceRows) }
 }
 
-export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Record<string, unknown>[]): AssetSummary {
+export function mapAssetSummary(
+  row: Record<string, unknown>,
+  resourceRows: Record<string, unknown>[],
+  resolveGameVersion?: GameVersionResolver
+): AssetSummary {
   const resources = resourceRows.map(mapResourceRow)
   const metadata = parseMetadata(row.metadata_json)
   const explicitGameVersion = optionalString(metadata?.identity?.gameVersion)
+  const canonicalCapturedAt = optionalString(metadata?.capture?.capturedAt) ?? optionalString(row.captured_at)
+  const inferenceTimestamp = gameVersionInferenceTimestamp(row, resourceRows, metadata)
+  const inferredGameVersion = explicitGameVersion || !resolveGameVersion || !inferenceTimestamp
+    ? undefined
+    : resolveGameVersion(inferenceTimestamp)
   const visual = resources.find((resource) => resource.role === 'source_high_quality')
     ?? resources.find((resource) => resource.role === 'source_primary')
     ?? resources[0]
@@ -108,7 +139,7 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     assetId: String(row.asset_id),
     type: String(row.asset_type) as AssetSummary['type'],
     state: String(row.asset_state) as AssetSummary['state'],
-    ...(optionalString(row.captured_at) ? { capturedAt: String(row.captured_at) } : {}),
+    ...(canonicalCapturedAt ? { capturedAt: canonicalCapturedAt } : {}),
     ...(optionalString(row.uid) ? { uid: String(row.uid) } : {}),
     revision: Number(row.revision),
     ...(visual?.width === undefined ? {} : { width: visual.width }),
@@ -117,7 +148,9 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     hasMetadata: Boolean(row.metadata_json),
     ...(explicitGameVersion
       ? { gameVersion: explicitGameVersion, gameVersionSource: 'explicit' as const }
-      : { gameVersionSource: 'unknown' as const }),
+      : inferredGameVersion
+        ? { gameVersion: inferredGameVersion, gameVersionSource: 'inferred' as const }
+        : { gameVersionSource: 'unknown' as const }),
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),
