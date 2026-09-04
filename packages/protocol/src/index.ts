@@ -49,6 +49,7 @@ export const PROTOCOL_VERSION = 1 as const
 export type ProtocolVersion = typeof PROTOCOL_VERSION
 export type DeviceId = string
 export type ServerId = string
+export type GameVersionSource = 'explicit' | 'inferred' | 'unknown'
 
 export interface AssetSummary {
   assetId: AssetId
@@ -61,6 +62,8 @@ export interface AssetSummary {
   height?: number
   hasMotion: boolean
   hasMetadata: boolean
+  gameVersion?: string
+  gameVersionSource: GameVersionSource
   thumbnailResourceId?: ResourceId
   previewResourceId?: ResourceId
 }
