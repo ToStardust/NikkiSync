@@ -23,7 +23,7 @@ import {
 import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
-import { mapAssetDetail, mapAssetSummary, mapChangeRow } from './row-mappers.js'
+import { mapAssetDetail, mapAssetSummary, mapChangeRow, type GameVersionResolver } from './row-mappers.js'
 import { WebSocketHub } from './WebSocketHub.js'
 
 export interface LocalSyncServerConfig {
@@ -34,6 +34,7 @@ export interface LocalSyncServerConfig {
   journalPollMs?: number
   mdns?: boolean
   maxJsonBodyBytes?: number
+  gameVersionResolver?: GameVersionResolver
 }
 
 export interface LocalSyncServerAddress {
@@ -125,7 +126,7 @@ export class LocalSyncServer {
   private pollTimer: NodeJS.Timeout | undefined
   private lastBroadcastRevision = 0
   private address: LocalSyncServerAddress | undefined
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls'>
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'gameVersionResolver'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
@@ -139,7 +140,8 @@ export class LocalSyncServer {
       journalPollMs: config.journalPollMs ?? 250,
       mdns: config.mdns ?? true,
       maxJsonBodyBytes: config.maxJsonBodyBytes ?? 1024 * 1024,
-      ...(config.tls ? { tls: config.tls } : {})
+      ...(config.tls ? { tls: config.tls } : {}),
+      ...(config.gameVersionResolver ? { gameVersionResolver: config.gameVersionResolver } : {})
     }
   }
 
@@ -257,7 +259,11 @@ export class LocalSyncServer {
     })
     const hasMore = rows.length > rawLimit
     const pageRows = rows.slice(0, rawLimit)
-    const items = pageRows.map((row) => mapAssetSummary(row, this.reads.listResources(String(row.asset_id))))
+    const items = pageRows.map((row) => mapAssetSummary(
+      row,
+      this.reads.listResources(String(row.asset_id)),
+      this.config.gameVersionResolver
+    ))
     const last = pageRows.at(-1)
     const nextCursor = hasMore && last
       ? encodeCursor({ t: String(last.captured_at ?? last.discovered_at), id: String(last.asset_id) })
