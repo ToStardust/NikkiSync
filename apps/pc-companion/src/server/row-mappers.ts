@@ -124,9 +124,10 @@ export function mapAssetSummary(
   const metadata = parseMetadata(row.metadata_json)
   const explicitGameVersion = optionalString(metadata?.identity?.gameVersion)
   const canonicalCapturedAt = optionalString(metadata?.capture?.capturedAt) ?? optionalString(row.captured_at)
-  const inferredGameVersion = explicitGameVersion || !resolveGameVersion
+  const inferenceTimestamp = gameVersionInferenceTimestamp(row, resourceRows, metadata)
+  const inferredGameVersion = explicitGameVersion || !resolveGameVersion || !inferenceTimestamp
     ? undefined
-    : resolveGameVersion(gameVersionInferenceTimestamp(row, resourceRows, metadata))
+    : resolveGameVersion(inferenceTimestamp)
   const visual = resources.find((resource) => resource.role === 'source_high_quality')
     ?? resources.find((resource) => resource.role === 'source_primary')
     ?? resources[0]
