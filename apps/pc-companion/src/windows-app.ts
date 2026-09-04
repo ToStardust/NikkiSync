@@ -9,6 +9,8 @@ import { asNuan5ResolverConfig, asRemoteResolverConfig, loadMetadataResolverConf
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { RemoteJsonMetadataDictionaryProvider } from './metadata/RemoteJsonMetadataDictionaryProvider.js'
+import { loadGameVersionCalendarRemoteConfigFile } from './game-version/GameVersionCalendarRemoteConfigFile.js'
+import { RemoteJsonGameVersionCalendarProvider } from './game-version/RemoteJsonGameVersionCalendarProvider.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
@@ -23,6 +25,7 @@ const DATABASE_FILE = path.join(APP_DATA, 'nikkisync.sqlite')
 const METADATA_RESOLVER_CONFIG_FILE = path.join(APP_DATA, 'metadata-resolver.json')
 const METADATA_DICTIONARY_FILE = path.join(APP_DATA, 'metadata-dictionary.json')
 const METADATA_DICTIONARY_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'metadata-dictionary-remote.json')
+const GAME_VERSION_CALENDAR_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'game-version-calendar-remote.json')
 
 function isLanIpv4(address: string): boolean {
   const [first, second] = address.split('.').map(Number)
@@ -50,6 +53,10 @@ async function main(): Promise<void> {
   const metadataDictionaryRemote = metadataDictionaryRemoteConfig?.enabled === true && metadataDictionaryRemoteConfig.provider
     ? new RemoteJsonMetadataDictionaryProvider(metadataDictionaryRemoteConfig.provider)
     : undefined
+  const gameVersionCalendarRemoteConfig = loadGameVersionCalendarRemoteConfigFile(GAME_VERSION_CALENDAR_REMOTE_CONFIG_FILE)
+  const gameVersionCalendarRemote = gameVersionCalendarRemoteConfig?.provider
+    ? new RemoteJsonGameVersionCalendarProvider(gameVersionCalendarRemoteConfig.provider)
+    : undefined
   const fileResolverConfig = asRemoteResolverConfig(resolverFile?.provider)
   const fileNuan5ResolverConfig = asNuan5ResolverConfig(resolverFile?.provider)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
@@ -75,6 +82,17 @@ async function main(): Promise<void> {
           ...(metadataDictionaryRemoteConfig?.provider?.intervalMs === undefined
             ? {}
             : { intervalMs: metadataDictionaryRemoteConfig.provider.intervalMs })
+        }
+      }
+    } : {}),
+    ...(gameVersionCalendarRemote ? {
+      gameVersionCalendarRemote: {
+        provider: gameVersionCalendarRemote,
+        service: {
+          enabled: true,
+          ...(gameVersionCalendarRemoteConfig?.provider.intervalMs === undefined
+            ? {}
+            : { intervalMs: gameVersionCalendarRemoteConfig.provider.intervalMs })
         }
       }
     } : {}),
