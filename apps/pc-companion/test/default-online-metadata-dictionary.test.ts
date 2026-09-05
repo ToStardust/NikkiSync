@@ -83,7 +83,7 @@ test('default online dictionary returns not-modified when combined content finge
     })
     const first = await provider.fetch()
     assert.equal(first.status, 'updated')
-    if (first.status !== 'updated') throw new Error('expected first update')
+    if (first.status !== 'updated' || !first.etag) throw new Error('expected first update with fingerprint')
     const second = await provider.fetch({ etag: first.etag })
     assert.equal(second.status, 'not-modified')
   } finally {
