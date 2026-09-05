@@ -19,6 +19,8 @@ import app.nikkisync.mobile.R;
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.net.NikkiSyncClient;
+import app.nikkisync.mobile.storage.RotationStore;
+import app.nikkisync.mobile.storage.SharedPreferencesRotationBackend;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -39,6 +41,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final ImageLoader images;
     private final Supplier<NikkiSyncClient> client;
     private final Listener listener;
+    private final RotationStore rotationStore;
     private final List<Row> rows = new ArrayList<>();
     private final List<AssetSummary> items = new ArrayList<>();
     private final Set<String> selected = new HashSet<>();
@@ -48,6 +51,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         this.images = images;
         this.client = client;
         this.listener = listener;
+        this.rotationStore = new RotationStore(new SharedPreferencesRotationBackend(context));
     }
 
     public void setItems(List<AssetSummary> next) {
@@ -205,6 +209,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         }
 
         void bind(AssetSummary asset, boolean isSelected) {
+            image.setRotation(rotationStore.get(asset.assetId()));
             live.setVisibility(asset.hasMotion() ? VISIBLE : GONE);
             check.setVisibility(isSelected ? VISIBLE : GONE);
             setAlpha(isSelected ? 0.72f : 1f);
