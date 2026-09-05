@@ -19,17 +19,30 @@ public final class MetadataPresentation {
     public String technicalDetails() { return technicalDetails; }
 
     public static MetadataPresentation fromMetadataJson(String metadataJson, Integer width, Integer height) {
+        return fromMetadataJson(metadataJson, width, height, null);
+    }
+
+    public static MetadataPresentation fromMetadataJson(
+            String metadataJson,
+            Integer width,
+            Integer height,
+            String capturedAtFallback
+    ) {
         List<String> lines = new ArrayList<>();
         if (width != null && height != null) lines.add("分辨率：" + width + " × " + height);
 
         if (metadataJson == null || metadataJson.isBlank()) {
+            appendFallbackCapturedAt(lines, capturedAtFallback);
             if (lines.isEmpty()) lines.add("暂无可显示的照片参数");
             return new MetadataPresentation(String.join("\n", lines), "暂无技术详情");
         }
 
         try {
             JSONObject metadata = new JSONObject(metadataJson);
-            appendNamedValue(lines, metadata.optJSONObject("capture"), "capturedAt", "拍摄时间");
+            JSONObject capture = metadata.optJSONObject("capture");
+            boolean hasCapturedAt = capture != null && !capture.optString("capturedAt", "").trim().isEmpty();
+            appendNamedValue(lines, capture, "capturedAt", "拍摄时间");
+            if (!hasCapturedAt) appendFallbackCapturedAt(lines, capturedAtFallback);
 
             JSONObject location = metadata.optJSONObject("location");
             appendNamedValue(lines, location, "name", "地点");
@@ -63,9 +76,15 @@ public final class MetadataPresentation {
             if (lines.isEmpty()) lines.add("暂无可显示的照片参数");
             return new MetadataPresentation(String.join("\n", lines), metadata.toString(2));
         } catch (Exception error) {
+            appendFallbackCapturedAt(lines, capturedAtFallback);
             lines.add("照片参数读取失败");
             return new MetadataPresentation(String.join("\n", lines), "原始参数无法解析");
         }
+    }
+
+    private static void appendFallbackCapturedAt(List<String> lines, String capturedAtFallback) {
+        if (capturedAtFallback == null || capturedAtFallback.isBlank()) return;
+        lines.add("拍摄时间：" + capturedAtFallback.trim());
     }
 
     private static void appendNamedValue(List<String> lines, JSONObject object, String key, String label) {
