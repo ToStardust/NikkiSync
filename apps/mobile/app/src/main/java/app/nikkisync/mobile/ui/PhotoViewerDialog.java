@@ -289,7 +289,7 @@ public final class PhotoViewerDialog extends Dialog {
             TextView technical
     ) {
         MetadataPresentation presentation = MetadataPresentation.fromMetadataJson(
-                detail.metadataJson(), asset.width(), asset.height()
+                detail.metadataJson(), asset.width(), asset.height(), asset.capturedAt()
         );
         summary.setText(presentation.summary());
         editable.setText(editableCameraSummary(detail));
