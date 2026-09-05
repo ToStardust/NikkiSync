@@ -80,7 +80,11 @@ export class PcCompanionRuntime {
     this.scanner = new ScannerService(this.database, scannerConfig)
 
     this.gameVersionCalendar = new GameVersionCalendarStore(this.appSettings)
-    if (!this.gameVersionCalendar.manifest()) this.gameVersionCalendar.replace(BUILTIN_GAME_VERSION_CALENDAR)
+    const cachedCalendar = this.gameVersionCalendar.manifest()
+    const packagedBuiltinIsNewer = cachedCalendar?.provider === BUILTIN_GAME_VERSION_CALENDAR.provider
+      && (cachedCalendar.providerVersion === undefined
+        || cachedCalendar.providerVersion < (BUILTIN_GAME_VERSION_CALENDAR.providerVersion ?? ''))
+    if (!cachedCalendar || packagedBuiltinIsNewer) this.gameVersionCalendar.replace(BUILTIN_GAME_VERSION_CALENDAR)
     if (config.gameVersionCalendarRemote) {
       this.gameVersionCalendarUpdater = new GameVersionCalendarUpdateService(
         this.database,
