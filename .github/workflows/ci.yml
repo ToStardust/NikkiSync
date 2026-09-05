@@ -26,6 +26,28 @@ jobs:
       - run: npm ci
       - run: npm test -- --runInBand
 
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: npm ci
+      - run: npm run pc:exe
+      - name: Upload Windows pairing bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: NikkiSync-Windows-${{ github.sha }}
+          path: release/NikkiSync/**
+          if-no-files-found: error
+          retention-days: 7
+
   android:
     runs-on: ubuntu-latest
     defaults:
