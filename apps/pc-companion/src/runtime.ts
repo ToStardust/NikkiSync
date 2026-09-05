@@ -56,7 +56,7 @@ export class PcCompanionRuntime {
   readonly gameVersionCalendar: GameVersionCalendarStore
   readonly gameVersionCalendarUpdater?: GameVersionCalendarUpdateService
   private readonly appSettings: AppSettingsRepository
-  private scannerRetryTimer?: ReturnType<typeof setInterval>
+  private scannerRetryTimer: ReturnType<typeof setInterval> | undefined
   private scannerRetryInFlight = false
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
