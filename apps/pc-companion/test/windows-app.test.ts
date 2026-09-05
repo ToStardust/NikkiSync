@@ -3,6 +3,7 @@ import test from 'node:test'
 import { DatabaseManager } from '@nikkisync/database'
 import { DesktopStatusService } from '../src/desktop/DesktopStatusService.js'
 import { createDesktopControlServer } from '../src/desktop/DesktopControlServer.js'
+import { selectPairingHost } from '../src/desktop/PairingHostSelector.js'
 
 test('desktop status marks an empty device list as first run', () => {
   const database = new DatabaseManager(':memory:')
@@ -44,4 +45,20 @@ test('desktop control page shows pairing automatically only on first run', async
       new Promise<void>((resolve) => pairedServer.close(() => resolve()))
     ])
   }
+})
+
+test('pairing host selector prefers physical Wi-Fi over virtual private adapters', () => {
+  const host = selectPairingHost({
+    'vEthernet (WSL)': [{ address: '172.28.96.1', family: 'IPv4', internal: false }],
+    'Tailscale': [{ address: '100.64.0.9', family: 'IPv4', internal: false }],
+    'Wi-Fi': [{ address: '192.168.31.42', family: 'IPv4', internal: false }]
+  })
+  assert.equal(host, '192.168.31.42')
+})
+
+test('pairing host selector falls back to a virtual RFC1918 address when it is the only LAN candidate', () => {
+  const host = selectPairingHost({
+    'vEthernet (Default Switch)': [{ address: '172.24.224.1', family: 'IPv4', internal: false }]
+  })
+  assert.equal(host, '172.24.224.1')
 })
