@@ -1,6 +1,9 @@
 package app.nikkisync.mobile.ui;
 
 import android.content.Context;
+import android.graphics.Matrix;
+import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -19,6 +22,7 @@ public final class ZoomableImageView extends ImageView {
     private GestureListener listener;
     private float translatedX;
     private float translatedY;
+    private int quarterRotationDegrees;
 
     public ZoomableImageView(Context context) {
         this(context, new ViewerInteractionState());
@@ -27,7 +31,7 @@ public final class ZoomableImageView extends ImageView {
     public ZoomableImageView(Context context, ViewerInteractionState state) {
         super(context);
         this.state = state;
-        setScaleType(ScaleType.FIT_CENTER);
+        setScaleType(ScaleType.MATRIX);
         scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector detector) {
                 state.setScale(state.scale() * detector.getScaleFactor());
@@ -84,11 +88,31 @@ public final class ZoomableImageView extends ImageView {
 
     public float zoomScale() { return state.scale(); }
 
+    public int quarterRotationDegrees() { return quarterRotationDegrees; }
+
+    public void setQuarterRotationDegrees(int degrees) {
+        if (!RotationDegrees.isValid(degrees)) {
+            throw new IllegalArgumentException("rotation must be 0, 90, 180, or 270 degrees");
+        }
+        if (quarterRotationDegrees == degrees) {
+            applyBaseImageMatrix();
+            return;
+        }
+        quarterRotationDegrees = degrees;
+        resetZoom();
+        applyBaseImageMatrix();
+    }
+
     public void resetZoom() {
         state.resetZoom();
         translatedX = 0f;
         translatedY = 0f;
         applyTransform();
+    }
+
+    @Override public void setImageDrawable(Drawable drawable) {
+        super.setImageDrawable(drawable);
+        post(this::applyBaseImageMatrix);
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -99,8 +123,33 @@ public final class ZoomableImageView extends ImageView {
 
     @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
         super.onSizeChanged(width, height, oldWidth, oldHeight);
+        applyBaseImageMatrix();
         clampTranslation();
         applyTransform();
+    }
+
+    private void applyBaseImageMatrix() {
+        Drawable drawable = getDrawable();
+        if (drawable == null || getWidth() <= 0 || getHeight() <= 0) return;
+        int sourceWidth = drawable.getIntrinsicWidth();
+        int sourceHeight = drawable.getIntrinsicHeight();
+        if (sourceWidth <= 0 || sourceHeight <= 0) return;
+
+        RotationFit.Result fit = RotationFit.calculate(
+                sourceWidth,
+                sourceHeight,
+                getWidth(),
+                getHeight(),
+                quarterRotationDegrees
+        );
+        Matrix matrix = new Matrix();
+        matrix.setRotate(quarterRotationDegrees, sourceWidth / 2f, sourceHeight / 2f);
+        RectF rotatedBounds = new RectF(0f, 0f, sourceWidth, sourceHeight);
+        matrix.mapRect(rotatedBounds);
+        matrix.postTranslate(-rotatedBounds.left, -rotatedBounds.top);
+        matrix.postScale((float) fit.scale(), (float) fit.scale());
+        matrix.postTranslate((float) fit.offsetX(), (float) fit.offsetY());
+        setImageMatrix(matrix);
     }
 
     private void clampTranslation() {

@@ -30,6 +30,7 @@ import app.nikkisync.mobile.media.HuaweiMovingPhotoSaver;
 import app.nikkisync.mobile.media.MotionPhotoSaver;
 import app.nikkisync.mobile.media.OppoLivePhotoSaver;
 import app.nikkisync.mobile.media.OriginalSaver;
+import app.nikkisync.mobile.media.RotatedStillSaver;
 import app.nikkisync.mobile.media.SamsungMotionPhotoSaver;
 import app.nikkisync.mobile.media.VivoLivePhotoSaver;
 import app.nikkisync.mobile.model.Models.AssetDetail;
@@ -43,9 +44,12 @@ import app.nikkisync.mobile.net.NsdDiscovery;
 import app.nikkisync.mobile.net.RealtimeWebSocket;
 import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
+import app.nikkisync.mobile.storage.RotationStore;
 import app.nikkisync.mobile.storage.ServerStore;
+import app.nikkisync.mobile.storage.SharedPreferencesRotationBackend;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 import app.nikkisync.mobile.ui.PhotoViewerDialog;
+import app.nikkisync.mobile.ui.RotationSavePolicy;
 import app.nikkisync.mobile.ui.ViewerSession;
 
 import org.json.JSONObject;
@@ -67,6 +71,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private final AtomicBoolean syncing = new AtomicBoolean(false);
     private ImageLoader imageLoader;
     private final OriginalSaver originalSaver = new OriginalSaver();
+    private final RotatedStillSaver rotatedStillSaver = new RotatedStillSaver();
     private final MotionPhotoSaver motionPhotoSaver = new MotionPhotoSaver();
     private final OppoLivePhotoSaver oppoLivePhotoSaver = new OppoLivePhotoSaver();
     private final SamsungMotionPhotoSaver samsungMotionPhotoSaver = new SamsungMotionPhotoSaver();
@@ -74,6 +79,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private final HuaweiMovingPhotoSaver huaweiMovingPhotoSaver = new HuaweiMovingPhotoSaver();
 
     private ServerStore serverStore;
+    private RotationStore rotationStore;
     private DeviceIdentity identity;
     private NsdDiscovery discovery;
     private NikkiSyncClient client;
@@ -93,6 +99,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         super.onCreate(state);
         imageLoader = new ImageLoader(this);
         serverStore = new ServerStore(this);
+        rotationStore = new RotationStore(new SharedPreferencesRotationBackend(this));
         try { identity = DeviceIdentity.getOrCreate(this); }
         catch (Exception error) {
             new AlertDialog.Builder(this).setTitle("设备身份初始化失败").setMessage(error.toString()).setPositiveButton("退出", (d, w) -> finish()).show();
@@ -171,7 +178,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         selection.setBackground(roundRect(0xEFFFFFFF, 18));
         selectionLabel = text("", 13, true, getColor(R.color.text_primary));
         selection.addView(selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        saveButton = button("保存原图"); saveButton.setOnClickListener(v -> saveSelected()); selection.addView(saveButton);
+        saveButton = button("保存"); saveButton.setOnClickListener(v -> saveSelected()); selection.addView(saveButton);
         selection.setTag("selectionBar"); selection.setVisibility(View.GONE);
         root.addView(selection);
         setContentView(root);
@@ -276,27 +283,49 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         if (selected.isEmpty() || current == null) return;
         setBusy(true); saveButton.setEnabled(false); setStatus("正在保存 0 / " + selected.size());
         io.execute(() -> {
-            int success = 0; int failure = 0; boolean hadMotion = false;
+            int success = 0; int failure = 0; int rotated = 0; int unsupportedLive = 0; boolean hadOriginalMotion = false;
             for (int i = 0; i < selected.size(); i++) {
-                AssetSummary asset = selected.get(i); hadMotion |= asset.hasMotion();
+                AssetSummary asset = selected.get(i);
                 int index = i + 1; main.post(() -> setStatus("正在保存 " + index + " / " + selected.size()));
-                try { saveAsset(current, asset); success++; }
-                catch (Exception ignored) { failure++; }
+                try {
+                    RotationSavePolicy.Mode mode = saveAsset(current, asset);
+                    success++;
+                    if (mode == RotationSavePolicy.Mode.ROTATED_STILL) rotated++;
+                    if (mode == RotationSavePolicy.Mode.ORIGINAL && asset.hasMotion()) hadOriginalMotion = true;
+                } catch (UnsupportedOperationException error) {
+                    failure++;
+                    unsupportedLive++;
+                } catch (Exception error) {
+                    failure++;
+                }
             }
-            int saved = success, failed = failure; boolean motion = hadMotion;
+            int saved = success, failed = failure, rotatedSaved = rotated, unsupported = unsupportedLive;
+            boolean originalMotion = hadOriginalMotion;
             main.post(() -> {
                 setBusy(false); saveButton.setEnabled(true); adapter.clearSelection(); updateSelection();
-                String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
-                if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
-                toast(result); setStatus("已连接 · 实时同步中");
+                StringBuilder result = new StringBuilder("已保存 ").append(saved).append(" 张");
+                if (rotatedSaved > 0) result.append("，其中旋转导出 ").append(rotatedSaved).append(" 张");
+                if (failed > 0) result.append("；失败 ").append(failed).append(" 张");
+                if (unsupported > 0) result.append("（旋转 LIVE 暂不支持 ").append(unsupported).append(" 张）");
+                if (originalMotion) result.append("。0° LIVE 已按当前手机厂商格式封装");
+                toast(result.toString()); setStatus("已连接 · 实时同步中");
             });
         });
     }
 
-    private void saveAsset(NikkiSyncClient current, AssetSummary asset) throws Exception {
+    private RotationSavePolicy.Mode saveAsset(NikkiSyncClient current, AssetSummary asset) throws Exception {
+        int degrees = rotationStore.get(asset.assetId());
+        RotationSavePolicy.Mode mode = RotationSavePolicy.select(degrees, asset.hasMotion());
+        if (mode == RotationSavePolicy.Mode.ROTATED_LIVE_UNSUPPORTED) {
+            throw new UnsupportedOperationException("旋转后的 LIVE 照片暂不支持保存");
+        }
+        if (mode == RotationSavePolicy.Mode.ROTATED_STILL) {
+            rotatedStillSaver.save(this, current, asset, degrees);
+            return mode;
+        }
         if (!asset.hasMotion()) {
             originalSaver.save(this, current, asset);
-            return;
+            return mode;
         }
         String manufacturer = ((android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER) + " " +
                 (android.os.Build.BRAND == null ? "" : android.os.Build.BRAND)).toLowerCase(java.util.Locale.ROOT);
@@ -305,6 +334,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) oppoLivePhotoSaver.save(this, current, asset);
         else if (manufacturer.contains("samsung")) samsungMotionPhotoSaver.save(this, current, asset);
         else motionPhotoSaver.save(this, current, asset);
+        return mode;
     }
 
     private void saveFromViewer(AssetSummary asset) {
@@ -313,8 +343,13 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         toast("正在保存照片…");
         io.execute(() -> {
             try {
-                saveAsset(current, asset);
-                main.post(() -> toast(asset.hasMotion() ? "LIVE 照片已保存" : "原图已保存"));
+                RotationSavePolicy.Mode mode = saveAsset(current, asset);
+                main.post(() -> {
+                    if (mode == RotationSavePolicy.Mode.ROTATED_STILL) toast("旋转照片已保存");
+                    else toast(asset.hasMotion() ? "LIVE 照片已保存" : "原图已保存");
+                });
+            } catch (UnsupportedOperationException error) {
+                main.post(() -> toast("旋转后的 LIVE 照片暂不支持保存；请还原为 0° 后保存原始 LIVE。"));
             } catch (Exception error) {
                 main.post(() -> toast("保存失败：" + message(error)));
             }
@@ -333,6 +368,10 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
             @Override public void onEditMetadata(AssetSummary currentAsset, AssetDetail detail, Consumer<AssetDetail> onUpdated) {
                 showMetadataEditor(currentAsset, detail, onUpdated);
+            }
+
+            @Override public void onRotationChanged(AssetSummary currentAsset, int degrees) {
+                adapter.notifyDataSetChanged();
             }
         });
         dialog.showViewer();
@@ -389,7 +428,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         View selectionBar = findViewWithTag(((ViewGroup) findViewById(android.R.id.content)).getChildAt(0), "selectionBar");
         if (selectionBar == null) return;
         int count = adapter.selectedCount(); selectionBar.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
-        selectionLabel.setText("已选择 " + count + " 张"); saveButton.setText("保存原图");
+        selectionLabel.setText("已选择 " + count + " 张"); saveButton.setText("保存");
     }
 
     private View findViewWithTag(View root, Object tag) {
