@@ -14,6 +14,7 @@ import { RemoteJsonGameVersionCalendarProvider } from './game-version/RemoteJson
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
+import { selectPairingHost } from './desktop/PairingHostSelector.js'
 
 const APP_NAME = 'NikkiSync PC'
 const APP_DATA = chooseWritableDataDirectory([
@@ -27,25 +28,10 @@ const METADATA_DICTIONARY_FILE = path.join(APP_DATA, 'metadata-dictionary.json')
 const METADATA_DICTIONARY_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'metadata-dictionary-remote.json')
 const GAME_VERSION_CALENDAR_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'game-version-calendar-remote.json')
 
-function isLanIpv4(address: string): boolean {
-  const [first, second] = address.split('.').map(Number)
-  return first === 10
-    || (first === 192 && second === 168)
-    || (first === 172 && second !== undefined && second >= 16 && second <= 31)
-}
-
-function preferredLanIpv4(): string | undefined {
-  const candidates = Object.values(os.networkInterfaces())
-    .flatMap((entries) => entries ?? [])
-    .filter((entry) => entry.family === 'IPv4' && !entry.internal)
-    .map((entry) => entry.address)
-  return candidates.find(isLanIpv4) ?? candidates[0]
-}
-
 async function main(): Promise<void> {
   mkdirSync(APP_DATA, { recursive: true })
-  const pairingHost = preferredLanIpv4()
-  if (!pairingHost) throw new Error('未找到局域网 IPv4 地址。请连接 Wi-Fi 或网线后重新打开 NikkiSync PC。')
+  const pairingHost = selectPairingHost(os.networkInterfaces())
+  if (!pairingHost) throw new Error('未找到可用于手机配对的局域网 IPv4 地址。请连接 Wi-Fi 或网线后重新打开 NikkiSync PC。')
 
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
