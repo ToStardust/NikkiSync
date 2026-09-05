@@ -20,7 +20,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import app.nikkisync.mobile.media.ImageLoader;
-import app.nikkisync.mobile.media.RotatedStillSaver;
 import app.nikkisync.mobile.model.Models.AssetDetail;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.net.NikkiSyncClient;
@@ -48,7 +47,6 @@ public final class PhotoViewerDialog extends Dialog {
     private final NikkiSyncClient client;
     private final Callbacks callbacks;
     private final RotationStore rotationStore;
-    private final RotatedStillSaver rotatedStillSaver = new RotatedStillSaver();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService detailExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, AssetDetail> detailCache = new ConcurrentHashMap<>();
@@ -240,30 +238,13 @@ public final class PhotoViewerDialog extends Dialog {
         AssetSummary asset = session.current();
         int degrees = rotationStore.get(asset.assetId());
         RotationSavePolicy.Mode mode = RotationSavePolicy.select(degrees, asset.hasMotion());
-        if (mode == RotationSavePolicy.Mode.ORIGINAL) {
-            callbacks.onSave(asset);
-            return;
-        }
         if (mode == RotationSavePolicy.Mode.ROTATED_LIVE_UNSUPPORTED) {
             Toast.makeText(activity,
                     "旋转后的 LIVE 照片暂不支持保存；请还原为 0° 后保存原始 LIVE。",
                     Toast.LENGTH_LONG).show();
             return;
         }
-
-        Toast.makeText(activity, "正在导出旋转照片…", Toast.LENGTH_SHORT).show();
-        detailExecutor.execute(() -> {
-            try {
-                rotatedStillSaver.save(activity, client, asset, degrees);
-                main.post(() -> Toast.makeText(activity,
-                        "已保存旋转 " + degrees + "° 的新照片",
-                        Toast.LENGTH_LONG).show());
-            } catch (Exception error) {
-                main.post(() -> Toast.makeText(activity,
-                        "旋转导出失败：" + message(error),
-                        Toast.LENGTH_LONG).show());
-            }
-        });
+        callbacks.onSave(asset);
     }
 
     private void applyChromeVisibility() {
@@ -435,10 +416,6 @@ public final class PhotoViewerDialog extends Dialog {
             out.append("拍摄时间：").append(asset.capturedAt());
         }
         return out.length() == 0 ? "正在读取照片信息…" : out.toString();
-    }
-
-    private static String message(Throwable error) {
-        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
     }
 
     private Button chromeButton(String value) {
