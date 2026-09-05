@@ -3,9 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
 import { qrSvg } from './qr.js'
-import { RemoteJsonMetadataResolver } from './metadata/RemoteJsonMetadataResolver.js'
-import { Nuan5CompatibleResolver } from './metadata/Nuan5CompatibleResolver.js'
-import { asNuan5ResolverConfig, asRemoteResolverConfig, loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
+import { loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
+import { selectMetadataResolver } from './metadata/MetadataResolverSelection.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { RemoteJsonMetadataDictionaryProvider } from './metadata/RemoteJsonMetadataDictionaryProvider.js'
@@ -43,19 +42,17 @@ async function main(): Promise<void> {
   const gameVersionCalendarRemote = gameVersionCalendarRemoteConfig?.provider
     ? new RemoteJsonGameVersionCalendarProvider(gameVersionCalendarRemoteConfig.provider)
     : undefined
-  const fileResolverConfig = asRemoteResolverConfig(resolverFile?.provider)
-  const fileNuan5ResolverConfig = asNuan5ResolverConfig(resolverFile?.provider)
-  const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
-    endpoint: process.env.NIKKISYNC_METADATA_RESOLVER_URL,
-    id: process.env.NIKKISYNC_METADATA_RESOLVER_ID ?? 'remote-json',
+  const resolver = selectMetadataResolver(resolverFile, {
+    ...(process.env.NIKKISYNC_METADATA_RESOLVER_URL
+      ? { endpoint: process.env.NIKKISYNC_METADATA_RESOLVER_URL }
+      : {}),
+    ...(process.env.NIKKISYNC_METADATA_RESOLVER_ID
+      ? { id: process.env.NIKKISYNC_METADATA_RESOLVER_ID }
+      : {}),
     ...(process.env.NIKKISYNC_METADATA_RESOLVER_VERSION
       ? { version: process.env.NIKKISYNC_METADATA_RESOLVER_VERSION }
       : {})
-  } : undefined
-  const resolverConfig = fileResolverConfig ?? environmentResolverConfig
-  const resolver = fileNuan5ResolverConfig
-    ? new Nuan5CompatibleResolver(fileNuan5ResolverConfig)
-    : resolverConfig ? new RemoteJsonMetadataResolver(resolverConfig) : undefined
+  })
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
@@ -82,7 +79,7 @@ async function main(): Promise<void> {
         }
       }
     } : {}),
-    ...(resolver && resolverFile?.enabled !== false ? {
+    ...(resolver ? {
       metadataResolver: {
         resolver
       }
