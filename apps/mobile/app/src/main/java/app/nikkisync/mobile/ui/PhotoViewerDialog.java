@@ -17,11 +17,14 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.model.Models.AssetDetail;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.net.NikkiSyncClient;
+import app.nikkisync.mobile.storage.RotationStore;
+import app.nikkisync.mobile.storage.SharedPreferencesRotationBackend;
 
 import org.json.JSONObject;
 
@@ -35,6 +38,7 @@ public final class PhotoViewerDialog extends Dialog {
     public interface Callbacks {
         void onSave(AssetSummary asset);
         void onEditMetadata(AssetSummary asset, AssetDetail detail, Consumer<AssetDetail> onUpdated);
+        default void onRotationChanged(AssetSummary asset, int degrees) {}
     }
 
     private final Activity activity;
@@ -42,6 +46,7 @@ public final class PhotoViewerDialog extends Dialog {
     private final ImageLoader images;
     private final NikkiSyncClient client;
     private final Callbacks callbacks;
+    private final RotationStore rotationStore;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService detailExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, AssetDetail> detailCache = new ConcurrentHashMap<>();
@@ -53,6 +58,8 @@ public final class PhotoViewerDialog extends Dialog {
     private TextView title;
     private TextView position;
     private TextView liveBadge;
+    private TextView rotationBadge;
+    private Button restoreRotation;
     private Dialog activeInfoSheet;
 
     public PhotoViewerDialog(
@@ -68,6 +75,7 @@ public final class PhotoViewerDialog extends Dialog {
         this.images = images;
         this.client = client;
         this.callbacks = callbacks;
+        this.rotationStore = new RotationStore(new SharedPreferencesRotationBackend(activity));
         buildUi();
         setOnDismissListener(ignored -> {
             if (activeInfoSheet != null && activeInfoSheet.isShowing()) activeInfoSheet.dismiss();
@@ -131,6 +139,16 @@ public final class PhotoViewerDialog extends Dialog {
         heading.addView(position);
         topChrome.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
+        rotationBadge = label("", 10, true, Color.WHITE);
+        rotationBadge.setPadding(dp(8), dp(4), dp(8), dp(4));
+        rotationBadge.setBackground(roundRect(0xB8333333, 12));
+        LinearLayout.LayoutParams rotationBadgeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        rotationBadgeLp.setMargins(0, 0, dp(6), 0);
+        topChrome.addView(rotationBadge, rotationBadgeLp);
+
         liveBadge = label("LIVE", 10, true, Color.WHITE);
         liveBadge.setPadding(dp(8), dp(4), dp(8), dp(4));
         liveBadge.setBackground(roundRect(0xB8333333, 12));
@@ -149,13 +167,20 @@ public final class PhotoViewerDialog extends Dialog {
         bottomChrome.setBackgroundColor(0x88000000);
 
         Button save = chromeButton("保存");
-        save.setOnClickListener(v -> callbacks.onSave(session.current()));
+        save.setOnClickListener(v -> saveCurrent());
         Button info = chromeButton("信息");
         info.setOnClickListener(v -> showInfoSheet(session.current()));
+        Button rotate = chromeButton("旋转 ↻");
+        rotate.setOnClickListener(v -> rotateCurrentClockwise());
+        restoreRotation = chromeButton("还原");
+        restoreRotation.setOnClickListener(v -> restoreCurrentRotation());
+
         LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(0, dp(48), 1);
-        actionLp.setMargins(dp(5), 0, dp(5), 0);
+        actionLp.setMargins(dp(4), 0, dp(4), 0);
         bottomChrome.addView(save, actionLp);
         bottomChrome.addView(info, actionLp);
+        bottomChrome.addView(rotate, actionLp);
+        bottomChrome.addView(restoreRotation, actionLp);
 
         FrameLayout.LayoutParams bottomLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -169,12 +194,62 @@ public final class PhotoViewerDialog extends Dialog {
 
     private void renderCurrent() {
         AssetSummary asset = session.current();
+        int degrees = rotationStore.get(asset.assetId());
         image.resetZoom();
+        image.setQuarterRotationDegrees(degrees);
         images.loadPreview(client, asset, image);
         title.setText(asset.gameVersion() == null ? "版本未知" : asset.gameVersion() + " 版本");
         position.setText((session.position() + 1) + " / " + session.size());
         liveBadge.setVisibility(asset.hasMotion() ? View.VISIBLE : View.GONE);
+        applyRotationControls(asset, degrees);
         applyChromeVisibility();
+    }
+
+    private void rotateCurrentClockwise() {
+        AssetSummary asset = session.current();
+        int next = RotationDegrees.nextClockwise(rotationStore.get(asset.assetId()));
+        rotationStore.set(asset.assetId(), next);
+        image.setQuarterRotationDegrees(next);
+        applyRotationControls(asset, next);
+        callbacks.onRotationChanged(asset, next);
+    }
+
+    private void restoreCurrentRotation() {
+        AssetSummary asset = session.current();
+        rotationStore.set(asset.assetId(), 0);
+        image.setQuarterRotationDegrees(0);
+        applyRotationControls(asset, 0);
+        callbacks.onRotationChanged(asset, 0);
+    }
+
+    private void applyRotationControls(AssetSummary asset, int degrees) {
+        boolean rotated = degrees != 0;
+        rotationBadge.setText(rotated ? degrees + "°" : "");
+        rotationBadge.setVisibility(rotated ? View.VISIBLE : View.GONE);
+        restoreRotation.setVisibility(rotated ? View.VISIBLE : View.GONE);
+        if (rotated && asset.hasMotion()) {
+            rotationBadge.setContentDescription("旋转 " + degrees + " 度，LIVE 仅预览");
+        } else {
+            rotationBadge.setContentDescription(rotated ? "旋转 " + degrees + " 度" : null);
+        }
+    }
+
+    private void saveCurrent() {
+        AssetSummary asset = session.current();
+        int degrees = rotationStore.get(asset.assetId());
+        if (degrees == 0) {
+            callbacks.onSave(asset);
+            return;
+        }
+        if (asset.hasMotion()) {
+            Toast.makeText(activity,
+                    "旋转后的 LIVE 照片暂不支持保存；请还原为 0° 后保存原始 LIVE。",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(activity,
+                "旋转静态图导出正在接入；当前不会误保存未旋转原图。",
+                Toast.LENGTH_LONG).show();
     }
 
     private void applyChromeVisibility() {
