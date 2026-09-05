@@ -18,6 +18,9 @@ import {
   type GameVersionCalendarUpdateServiceConfig
 } from './game-version/GameVersionCalendarUpdateService.js'
 
+const SCANNER_INSTALL_ROOT_SETTING = 'scanner.installRoot'
+const SCANNER_DISCOVERY_RETRY_MS = 5_000
+
 export interface PcCompanionRuntimeConfig {
   databaseFile?: string
   scanner?: ScannerConfig
@@ -52,13 +55,31 @@ export class PcCompanionRuntime {
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
   readonly gameVersionCalendar: GameVersionCalendarStore
   readonly gameVersionCalendarUpdater?: GameVersionCalendarUpdateService
+  private readonly appSettings: AppSettingsRepository
+  private scannerRetryTimer?: ReturnType<typeof setInterval>
+  private scannerRetryInFlight = false
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
-    this.scanner = new ScannerService(this.database, config.scanner)
+    this.appSettings = new AppSettingsRepository(this.database)
 
-    this.gameVersionCalendar = new GameVersionCalendarStore(new AppSettingsRepository(this.database))
+    let persistedInstallRoot: string | undefined
+    try {
+      const value = this.appSettings.get<unknown>(SCANNER_INSTALL_ROOT_SETTING)
+      if (typeof value === 'string' && value.trim()) persistedInstallRoot = value
+    } catch {
+      // A malformed optional cache must never prevent the PC service from starting.
+    }
+    const scannerConfig: ScannerConfig = {
+      ...(config.scanner ?? {}),
+      ...(!config.scanner?.cachedInstallRoot && persistedInstallRoot
+        ? { cachedInstallRoot: persistedInstallRoot }
+        : {})
+    }
+    this.scanner = new ScannerService(this.database, scannerConfig)
+
+    this.gameVersionCalendar = new GameVersionCalendarStore(this.appSettings)
     if (!this.gameVersionCalendar.manifest()) this.gameVersionCalendar.replace(BUILTIN_GAME_VERSION_CALENDAR)
     if (config.gameVersionCalendarRemote) {
       this.gameVersionCalendarUpdater = new GameVersionCalendarUpdateService(
@@ -103,20 +124,24 @@ export class PcCompanionRuntime {
 
   async start(): Promise<PcCompanionStartResult> {
     const scan = await this.scanner.start()
+    this.rememberScannerInstallRoot()
     try {
       const server = await this.server.start()
       this.metadataDictionary?.reenrichResolvedAssets()
       this.metadataDictionaryUpdater?.start()
       this.gameVersionCalendarUpdater?.start()
       this.metadataResolver?.start()
+      this.startScannerDiscoveryRetryIfNeeded()
       return { scan, server }
     } catch (error) {
+      this.stopScannerDiscoveryRetry()
       await this.scanner.stop()
       throw error
     }
   }
 
   async stop(): Promise<void> {
+    this.stopScannerDiscoveryRetry()
     this.metadataResolver?.stop()
     this.gameVersionCalendarUpdater?.stop()
     this.metadataDictionaryUpdater?.stop()
@@ -127,5 +152,30 @@ export class PcCompanionRuntime {
 
   createPairingUri(host: string, ttlMs?: number): string {
     return buildPairingUri(this.server.createPairingPayload(host, ttlMs))
+  }
+
+  private rememberScannerInstallRoot(): void {
+    const installRoot = this.scanner.getStatus().installation?.installRoot
+    if (installRoot) this.appSettings.set(SCANNER_INSTALL_ROOT_SETTING, installRoot)
+  }
+
+  private startScannerDiscoveryRetryIfNeeded(): void {
+    if (this.scanner.getStatus().status !== 'error' || this.scannerRetryTimer) return
+    this.scannerRetryTimer = setInterval(() => {
+      if (this.scannerRetryInFlight || this.scanner.getStatus().status !== 'error') return
+      this.scannerRetryInFlight = true
+      void this.scanner.start()
+        .then(() => {
+          this.rememberScannerInstallRoot()
+          if (this.scanner.getStatus().status !== 'error') this.stopScannerDiscoveryRetry()
+        })
+        .catch(() => { /* retry remains best-effort; pairing service stays available */ })
+        .finally(() => { this.scannerRetryInFlight = false })
+    }, SCANNER_DISCOVERY_RETRY_MS)
+  }
+
+  private stopScannerDiscoveryRetry(): void {
+    if (this.scannerRetryTimer) clearInterval(this.scannerRetryTimer)
+    this.scannerRetryTimer = undefined
   }
 }
