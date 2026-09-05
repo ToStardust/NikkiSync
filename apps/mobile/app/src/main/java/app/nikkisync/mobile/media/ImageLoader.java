@@ -41,7 +41,17 @@ public final class ImageLoader {
     }
 
     public void load(NikkiSyncClient client, AssetSummary asset, ImageView target) {
-        String resourceId = asset.thumbnailResourceId() != null ? asset.thumbnailResourceId() : asset.previewResourceId();
+        loadResource(client, asset, target, false);
+    }
+
+    public void loadPreview(NikkiSyncClient client, AssetSummary asset, ImageView target) {
+        loadResource(client, asset, target, true);
+    }
+
+    private void loadResource(NikkiSyncClient client, AssetSummary asset, ImageView target, boolean preferPreview) {
+        String resourceId = preferPreview
+                ? (asset.previewResourceId() != null ? asset.previewResourceId() : asset.thumbnailResourceId())
+                : (asset.thumbnailResourceId() != null ? asset.thumbnailResourceId() : asset.previewResourceId());
         String key = asset.assetId() + ":" + resourceId + ":r" + asset.revision();
         target.setTag(key);
         target.setImageDrawable(null);
