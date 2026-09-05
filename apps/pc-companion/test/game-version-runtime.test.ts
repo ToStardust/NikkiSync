@@ -31,6 +31,37 @@ test('runtime seeds an empty calendar cache and constructs remote updater withou
   }
 })
 
+test('runtime upgrades an older built-in calendar snapshot so existing installs gain historical versions', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-calendar-runtime-upgrade-'))
+  const databaseFile = path.join(directory, 'nikkisync.sqlite')
+  const database = new DatabaseManager(databaseFile)
+  database.initialize()
+  new GameVersionCalendarStore(new AppSettingsRepository(database)).replace({
+    schemaVersion: 1,
+    provider: 'nikkisync-builtin-official',
+    providerVersion: '2026-08-27',
+    sourceUrls: [
+      'https://infinitynikki.infoldgames.com/en/news/560',
+      'https://infinitynikki.infoldgames.com/en/news/583'
+    ],
+    entries: [
+      { version: '2.8', availableAt: '2026-07-17T03:00:00.000Z' },
+      { version: '2.9', availableAt: '2026-08-28T03:00:00.000Z' }
+    ]
+  })
+  database.close()
+
+  const runtime = new PcCompanionRuntime({ databaseFile, server: { host: '127.0.0.1', port: 0, mdns: false } })
+  try {
+    assert.equal(runtime.gameVersionCalendar.manifest()?.provider, 'nikkisync-builtin-official')
+    assert.equal(runtime.gameVersionCalendar.manifest()?.providerVersion, '2026-09-05-full-history')
+    assert.equal(runtime.gameVersionCalendar.resolve('2025-09-30T00:00:00.000Z'), '1.10')
+  } finally {
+    runtime.database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('runtime preserves an existing cached calendar instead of overwriting it with the built-in seed', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-calendar-runtime-'))
   const databaseFile = path.join(directory, 'nikkisync.sqlite')
