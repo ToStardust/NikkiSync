@@ -232,7 +232,7 @@ export class AssetRepository {
   }
 
   /** Assets that contain a native Infinity Nikki token. Resolver service decides whether cached enrichment is current. */
-  listMetadataResolutionCandidates(limit = 50): Array<Record<string, unknown>> {
+  listMetadataResolutionCandidates(limit = 50, offset = 0): Array<Record<string, unknown>> {
     return this.database.connection.prepare(`
       SELECT * FROM assets
       WHERE asset_state <> 'deleted'
@@ -240,8 +240,8 @@ export class AssetRepository {
         AND metadata_json IS NOT NULL
         AND json_extract(metadata_json, '$.raw.nativeParamToken') IS NOT NULL
       ORDER BY discovered_at ASC, asset_id ASC
-      LIMIT ?
-    `).all(limit) as Array<Record<string, unknown>>
+      LIMIT ? OFFSET ?
+    `).all(limit, offset) as Array<Record<string, unknown>>
   }
 
   softDelete(assetId: string, deletedAt = new Date().toISOString()): number {
