@@ -21,7 +21,24 @@ export class ScannerService {
 
   async start(): Promise<ScanResult> {
     this.status = 'discovering'; this.installation = await new ScannerDiscovery(this.config).discover()
-    if (!this.installation) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
+    if (!this.installation) {
+      this.status = 'error'
+      const result: ScanResult = {
+        scanId: `scan_${Date.now().toString(36)}`,
+        roots: [],
+        filesObserved: 0,
+        resourcesAccepted: 0,
+        resourcesIgnored: 0,
+        assetsCreated: 0,
+        assetsUpdated: 0,
+        assetsDeleted: 0,
+        journalRevisions: [],
+        pendingPaths: [],
+        errors: ['Infinity Nikki installation was not found']
+      }
+      this.lastScan = result
+      return result
+    }
     const result = await this.fullScan()
     if (this.config.watcher !== false) {
       this.watcher = new ScannerWatcher(this.config.debounceMs ?? 250)
