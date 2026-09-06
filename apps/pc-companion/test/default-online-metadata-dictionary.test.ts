@@ -57,6 +57,7 @@ test('default online dictionary combines NUAN5 camera names with clothing item I
     assert.equal(result.manifest.provider, 'nikkisync-default-online')
     const byKey = new Map(result.manifest.entries.map((entry) => [`${entry.kind}:${entry.id}`, entry]))
     assert.equal(byKey.get('clothing:1020100111')?.name, '馥郁时花')
+    assert.equal(byKey.get('clothing:1020100111')?.thumbnail, 'https://gongeo.us/images/items/icons/1020100111.png')
     assert.equal(byKey.get('clothing:1020100112')?.name, '和风轻抚')
     assert.equal(byKey.get('filter:7')?.name, '晨雾')
     assert.equal(byKey.get('filter:7')?.thumbnail, 'https://example.test/filter-7.png')
