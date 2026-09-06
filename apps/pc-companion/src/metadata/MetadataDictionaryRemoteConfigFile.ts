@@ -15,16 +15,20 @@ function isPositiveFiniteNumber(value: unknown): value is number {
 }
 
 /**
- * Optional, explicit opt-in for a bodyless remote dictionary GET.
- * Invalid, missing, or non-HTTPS configuration leaves remote updates disabled.
+ * Optional override for the packaged metadata dictionary updater.
+ * `enabled: false` is a complete opt-out. An enabled custom provider must use
+ * HTTPS; invalid custom configuration falls back to the packaged default.
  */
 export function loadMetadataDictionaryRemoteConfigFile(filePath: string): MetadataDictionaryRemoteConfigFile | undefined {
   try {
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
-    const provider = parsed?.provider
-    if (!parsed || typeof parsed !== 'object' || !provider || typeof provider !== 'object' || Array.isArray(provider)) return undefined
-    const record = provider as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     if (parsed.enabled !== undefined && typeof parsed.enabled !== 'boolean') return undefined
+    if (parsed.enabled === false) return { enabled: false }
+
+    const provider = parsed.provider
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)) return undefined
+    const record = provider as Record<string, unknown>
     if (record.type !== 'remote-json' || typeof record.id !== 'string' || !record.id) return undefined
     if (typeof record.endpoint !== 'string' || !/^https:\/\//i.test(record.endpoint)) return undefined
     for (const key of ['locale'] as const) if (record[key] !== undefined && typeof record[key] !== 'string') return undefined

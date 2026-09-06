@@ -6,6 +6,8 @@ export interface Nuan5CompatibleResolverConfig {
   id?: string
   version?: string
   timeoutMs?: number
+  minRequestIntervalMs?: number
+  maxRateLimitRetries?: number
 }
 
 type DecodedPhoto = Record<string, unknown>
@@ -63,28 +65,69 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
   readonly id: string
   readonly version: string | undefined
   private readonly endpoint: string
+  private readonly minRequestIntervalMs: number
+  private readonly maxRateLimitRetries: number
+  private nextAllowedAt = 0
+  private sendGate: Promise<void> = Promise.resolve()
 
   constructor(private readonly config: Nuan5CompatibleResolverConfig = {}) {
     this.id = config.id ?? 'nuan5-compatible'
     this.version = config.version
     this.endpoint = config.endpoint ?? 'https://nuan5.pro/api/decode-photo2'
+    this.minRequestIntervalMs = Math.max(0, config.minRequestIntervalMs ?? 500)
+    this.maxRateLimitRetries = Math.max(0, Math.floor(config.maxRateLimitRetries ?? 2))
   }
 
-  async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+  private async acquireSendSlot(): Promise<void> {
+    const slot = this.sendGate.then(async () => {
+      const waitMs = this.nextAllowedAt - Date.now()
+      if (waitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
+      this.nextAllowedAt = Date.now() + this.minRequestIntervalMs
+    })
+    this.sendGate = slot.catch(() => {})
+    await slot
+  }
+
+  private async post(body: unknown): Promise<Response> {
+    await this.acquireSendSlot()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 12_000)
     try {
-      const body = { photos: { [request.uid]: [[request.nativeParamNuan5Md5!, buildEncodedTuple(request)]] }, raw_data: true, raw_id: true }
-      const response = await fetch(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'x-client': 'SpinningMomo' }, body: JSON.stringify(body), signal: controller.signal })
-      const text = await response.text()
-      if (!response.ok) throw new Error(`NUAN5 resolver HTTP ${response.status}: ${text.slice(0, 240)}`)
-      const parsed = JSON.parse(text) as unknown
-      if (!Array.isArray(parsed) || parsed.length !== 1 || !Array.isArray(parsed[0]) || parsed[0][0] !== request.uid || !Array.isArray(parsed[0][1]) || parsed[0][1].length !== 1) throw new Error('NUAN5 resolver returned an unexpected single-photo response')
-      const item = parsed[0][1][0]
-      if (typeof item === 'string') throw new Error(`NUAN5 resolver rejected photo: ${item}`)
-      const photo = recordOf(item)
-      if (!photo) throw new Error('NUAN5 resolver returned an invalid decoded photo')
-      return { metadata: mapDecodedPhoto(photo), provider: this.id, ...(this.version ? { providerVersion: this.version } : {}), rawResponse: photo }
-    } finally { clearTimeout(timer) }
+      return await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'x-client': 'SpinningMomo'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+    const body = { photos: { [request.uid]: [[request.nativeParamNuan5Md5!, buildEncodedTuple(request)]] }, raw_data: true, raw_id: true }
+    let response: Response | undefined
+    let text = ''
+    for (let attempt = 0; attempt <= this.maxRateLimitRetries; attempt++) {
+      response = await this.post(body)
+      text = await response.text()
+      if (response.status !== 429) break
+      if (attempt >= this.maxRateLimitRetries) {
+        throw new Error(`NUAN5 resolver HTTP 429: rate limited; retries exhausted after ${attempt} retries`)
+      }
+    }
+    if (!response) throw new Error('NUAN5 resolver response is unavailable')
+    if (!response.ok) throw new Error(`NUAN5 resolver HTTP ${response.status}: ${text.slice(0, 240)}`)
+    const parsed = JSON.parse(text) as unknown
+    if (!Array.isArray(parsed) || parsed.length !== 1 || !Array.isArray(parsed[0]) || parsed[0][0] !== request.uid || !Array.isArray(parsed[0][1]) || parsed[0][1].length !== 1) throw new Error('NUAN5 resolver returned an unexpected single-photo response')
+    const item = parsed[0][1][0]
+    if (typeof item === 'string') throw new Error(`NUAN5 resolver rejected photo: ${item}`)
+    const photo = recordOf(item)
+    if (!photo) throw new Error('NUAN5 resolver returned an invalid decoded photo')
+    return { metadata: mapDecodedPhoto(photo), provider: this.id, ...(this.version ? { providerVersion: this.version } : {}), rawResponse: photo }
   }
 }
