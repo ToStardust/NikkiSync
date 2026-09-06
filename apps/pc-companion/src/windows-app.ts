@@ -7,7 +7,7 @@ import { loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfi
 import { selectMetadataResolver } from './metadata/MetadataResolverSelection.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
-import { RemoteJsonMetadataDictionaryProvider } from './metadata/RemoteJsonMetadataDictionaryProvider.js'
+import { selectMetadataDictionaryRemote } from './metadata/MetadataDictionarySelection.js'
 import { loadGameVersionCalendarRemoteConfigFile } from './game-version/GameVersionCalendarRemoteConfigFile.js'
 import { RemoteJsonGameVersionCalendarProvider } from './game-version/RemoteJsonGameVersionCalendarProvider.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
@@ -35,9 +35,7 @@ async function main(): Promise<void> {
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
-  const metadataDictionaryRemote = metadataDictionaryRemoteConfig?.enabled === true && metadataDictionaryRemoteConfig.provider
-    ? new RemoteJsonMetadataDictionaryProvider(metadataDictionaryRemoteConfig.provider)
-    : undefined
+  const metadataDictionaryRemote = selectMetadataDictionaryRemote(metadataDictionaryRemoteConfig)
   const gameVersionCalendarRemoteConfig = loadGameVersionCalendarRemoteConfigFile(GAME_VERSION_CALENDAR_REMOTE_CONFIG_FILE)
   const gameVersionCalendarRemote = gameVersionCalendarRemoteConfig?.provider
     ? new RemoteJsonGameVersionCalendarProvider(gameVersionCalendarRemoteConfig.provider)
@@ -57,17 +55,7 @@ async function main(): Promise<void> {
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
     ...(metadataDictionary ? { metadataDictionary } : {}),
-    ...(metadataDictionaryRemote ? {
-      metadataDictionaryRemote: {
-        provider: metadataDictionaryRemote,
-        service: {
-          enabled: true,
-          ...(metadataDictionaryRemoteConfig?.provider?.intervalMs === undefined
-            ? {}
-            : { intervalMs: metadataDictionaryRemoteConfig.provider.intervalMs })
-        }
-      }
-    } : {}),
+    ...(metadataDictionaryRemote ? { metadataDictionaryRemote } : {}),
     ...(gameVersionCalendarRemote ? {
       gameVersionCalendarRemote: {
         provider: gameVersionCalendarRemote,
