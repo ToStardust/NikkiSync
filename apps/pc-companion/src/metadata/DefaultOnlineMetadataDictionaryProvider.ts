@@ -8,6 +8,7 @@ import type {
 
 const DEFAULT_CAMERA_ENDPOINT = 'https://nuan5.pro/assets/data/spinning-momo-camera.json'
 const DEFAULT_CLOTHING_ENDPOINT = 'https://raw.githubusercontent.com/dastrokes/gongeo.us-nikki-tracker/master/app/locales/zh/item.json'
+const CLOTHING_THUMBNAIL_BASE = 'https://gongeo.us/images/items/icons'
 
 export interface DefaultOnlineMetadataDictionaryProviderConfig {
   cameraEndpoint?: string
@@ -65,7 +66,13 @@ function clothingEntries(payload: unknown): MetadataDictionaryEntry[] {
     const match = /^item\.(\d+)\.name$/.exec(key)
     const name = optionalString(rawName)
     if (!match || !name) continue
-    entries.push({ kind: 'clothing', id: match[1]!, name })
+    const id = match[1]!
+    entries.push({
+      kind: 'clothing',
+      id,
+      name,
+      thumbnail: `${CLOTHING_THUMBNAIL_BASE}/${id}.png`
+    })
   }
   if (entries.length === 0) throw new Error('default clothing dictionary contains no item IDs')
   return entries
