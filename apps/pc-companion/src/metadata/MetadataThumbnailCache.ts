@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import path from 'node:path'
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
@@ -40,6 +41,40 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
+function isPrivateIpv4(host: string): boolean {
+  const parts = host.split('.').map(Number)
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  const [a, b] = parts
+  return a === 0 || a === 10 || a === 127 || a! >= 224
+    || (a === 100 && b! >= 64 && b! <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b! >= 16 && b! <= 31)
+    || (a === 192 && b === 168)
+}
+
+function assertSafeHttpsUrl(raw: string): URL {
+  let url: URL
+  try { url = new URL(raw) }
+  catch { throw new Error('metadata thumbnail source URL is invalid') }
+  if (url.protocol !== 'https:') throw new Error('metadata thumbnail source must use HTTPS')
+  if (url.username || url.password) throw new Error('metadata thumbnail source must not contain credentials')
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    throw new Error('metadata thumbnail source must not target a local host')
+  }
+  const ipVersion = isIP(host)
+  if (ipVersion === 4 && isPrivateIpv4(host)) throw new Error('metadata thumbnail source must not target a private address')
+  if (ipVersion === 6) {
+    const normalized = host.toLowerCase()
+    if (normalized === '::1' || normalized === '::' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) {
+      throw new Error('metadata thumbnail source must not target a private address')
+    }
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized)
+    if (mapped?.[1] && isPrivateIpv4(mapped[1])) throw new Error('metadata thumbnail source must not target a private address')
+  }
+  return url
+}
+
 export class MetadataThumbnailCache {
   private readonly maxBytes: number
   private readonly timeoutMs: number
@@ -56,13 +91,13 @@ export class MetadataThumbnailCache {
   }
 
   async get(sourceUrl: string, versionKey = ''): Promise<CachedMetadataThumbnail> {
-    if (!/^https:\/\//i.test(sourceUrl)) throw new Error('metadata thumbnail source must use HTTPS')
-    const key = cacheKey(sourceUrl, versionKey)
-    const cached = await this.readCached(key, sourceUrl, versionKey)
+    const normalizedUrl = assertSafeHttpsUrl(sourceUrl).toString()
+    const key = cacheKey(normalizedUrl, versionKey)
+    const cached = await this.readCached(key, normalizedUrl, versionKey)
     if (cached) return cached
     const running = this.inflight.get(key)
     if (running) return await running
-    const request = this.download(key, sourceUrl, versionKey)
+    const request = this.download(key, normalizedUrl, versionKey)
     this.inflight.set(key, request)
     try {
       return await request
@@ -105,7 +140,7 @@ export class MetadataThumbnailCache {
       clearTimeout(timer)
     }
     if (!response.ok) throw new Error(`metadata thumbnail HTTP ${response.status}`)
-    if (response.url && !/^https:\/\//i.test(response.url)) throw new Error('metadata thumbnail redirect must remain HTTPS')
+    if (response.url) assertSafeHttpsUrl(response.url)
     const mimeType = normalizedContentType(response.headers.get('content-type'))
     if (!ALLOWED_CONTENT_TYPES.has(mimeType)) throw new Error(`metadata thumbnail content type is not allowed: ${mimeType || 'missing'}`)
     const advertisedLength = Number(response.headers.get('content-length'))
