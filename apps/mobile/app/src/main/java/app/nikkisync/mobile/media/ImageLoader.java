@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -46,6 +47,73 @@ public final class ImageLoader {
 
     public void loadPreview(NikkiSyncClient client, AssetSummary asset, ImageView target) {
         loadResource(client, asset, target, true);
+    }
+
+    public void loadRemote(String url, ImageView target) {
+        if (url == null || url.isBlank()) return;
+        String key = "remote:" + url;
+        target.setTag(key);
+        target.setImageDrawable(null);
+        Bitmap cached = cache.get(key);
+        if (cached != null) {
+            target.setImageBitmap(cached);
+            return;
+        }
+        executor.execute(() -> loadRemoteOnWorker(url, key, target));
+    }
+
+    private void loadRemoteOnWorker(String url, String key, ImageView target) {
+        HttpsURLConnection connection = null;
+        File temp = null;
+        try {
+            File disk = diskFile(key);
+            if (disk.isFile()) {
+                Bitmap bitmap;
+                try (InputStream input = new FileInputStream(disk)) {
+                    bitmap = BitmapFactory.decodeStream(input);
+                }
+                if (bitmap != null) {
+                    disk.setLastModified(System.currentTimeMillis());
+                    cache.put(key, bitmap);
+                    main.post(() -> { if (key.equals(target.getTag())) target.setImageBitmap(bitmap); });
+                    return;
+                }
+                disk.delete();
+            }
+
+            URL remote = new URL(url);
+            if (!"https".equalsIgnoreCase(remote.getProtocol())) return;
+            connection = (HttpsURLConnection) remote.openConnection();
+            connection.setConnectTimeout(5_000);
+            connection.setReadTimeout(10_000);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("Accept", "image/*");
+            if (connection.getResponseCode() != 200) return;
+
+            temp = new File(diskDir, disk.getName() + ".part");
+            try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(temp)) {
+                byte[] buffer = new byte[32 * 1024];
+                int read;
+                while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            }
+            Bitmap bitmap = BitmapFactory.decodeFile(temp.getAbsolutePath());
+            if (bitmap == null) return;
+            if (!temp.renameTo(disk)) {
+                try (InputStream input = new FileInputStream(temp); FileOutputStream output = new FileOutputStream(disk)) {
+                    byte[] buffer = new byte[32 * 1024];
+                    int read;
+                    while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+                }
+                temp.delete();
+            }
+            cache.put(key, bitmap);
+            main.post(() -> { if (key.equals(target.getTag())) target.setImageBitmap(bitmap); });
+        } catch (Exception ignored) {
+            // The card keeps its placeholder and text when a remote thumbnail is unavailable.
+        } finally {
+            if (temp != null && temp.isFile() && temp.getName().endsWith(".part")) temp.delete();
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private void loadResource(NikkiSyncClient client, AssetSummary asset, ImageView target, boolean preferPreview) {
