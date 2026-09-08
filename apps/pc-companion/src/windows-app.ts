@@ -4,8 +4,7 @@ import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
 import { qrSvg } from './qr.js'
 import { RemoteJsonMetadataResolver } from './metadata/RemoteJsonMetadataResolver.js'
-import { Nuan5CompatibleResolver } from './metadata/Nuan5CompatibleResolver.js'
-import { asNuan5ResolverConfig, asRemoteResolverConfig, loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
+import { createMetadataResolverFromConfig, loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { RemoteJsonMetadataDictionaryProvider } from './metadata/RemoteJsonMetadataDictionaryProvider.js'
@@ -50,8 +49,8 @@ async function main(): Promise<void> {
   const metadataDictionaryRemote = metadataDictionaryRemoteConfig?.enabled === true && metadataDictionaryRemoteConfig.provider
     ? new RemoteJsonMetadataDictionaryProvider(metadataDictionaryRemoteConfig.provider)
     : undefined
-  const fileResolverConfig = asRemoteResolverConfig(resolverFile?.provider)
-  const fileNuan5ResolverConfig = asNuan5ResolverConfig(resolverFile?.provider)
+
+  const fileResolver = resolverFile?.enabled === false ? undefined : createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
     endpoint: process.env.NIKKISYNC_METADATA_RESOLVER_URL,
     id: process.env.NIKKISYNC_METADATA_RESOLVER_ID ?? 'remote-json',
@@ -59,10 +58,11 @@ async function main(): Promise<void> {
       ? { version: process.env.NIKKISYNC_METADATA_RESOLVER_VERSION }
       : {})
   } : undefined
-  const resolverConfig = fileResolverConfig ?? environmentResolverConfig
-  const resolver = fileNuan5ResolverConfig
-    ? new Nuan5CompatibleResolver(fileNuan5ResolverConfig)
-    : resolverConfig ? new RemoteJsonMetadataResolver(resolverConfig) : undefined
+  // Local hot-config has precedence. The environment variable remains a backwards-compatible
+  // single remote provider only when no usable file provider is configured.
+  const resolver = fileResolver ?? (environmentResolverConfig
+    ? new RemoteJsonMetadataResolver(environmentResolverConfig)
+    : undefined)
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
         }
       }
     } : {}),
-    ...(resolver && resolverFile?.enabled !== false ? {
+    ...(resolver ? {
       metadataResolver: {
         resolver
       }
