@@ -8,12 +8,15 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -28,6 +31,7 @@ import app.nikkisync.mobile.storage.SharedPreferencesRotationBackend;
 
 import org.json.JSONObject;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -267,8 +271,31 @@ public final class PhotoViewerDialog extends Dialog {
         panel.addView(heading);
 
         TextView summary = label(assetFallbackSummary(asset), 13, false, 0xFF45403D);
-        summary.setPadding(0, dp(12), 0, dp(16));
+        summary.setPadding(0, dp(12), 0, dp(12));
         panel.addView(summary);
+
+        LinearLayout clothingSection = new LinearLayout(activity);
+        clothingSection.setOrientation(LinearLayout.VERTICAL);
+        clothingSection.setVisibility(View.GONE);
+        clothingSection.setPadding(0, 0, 0, dp(16));
+        TextView clothingHeading = label("服装预览", 14, true, 0xFF1F1C1A);
+        clothingHeading.setPadding(0, 0, 0, dp(8));
+        clothingSection.addView(clothingHeading);
+
+        HorizontalScrollView clothingScroll = new HorizontalScrollView(activity);
+        clothingScroll.setHorizontalScrollBarEnabled(false);
+        clothingScroll.setFillViewport(false);
+        LinearLayout clothingCards = new LinearLayout(activity);
+        clothingCards.setOrientation(LinearLayout.HORIZONTAL);
+        clothingScroll.addView(clothingCards, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        clothingSection.addView(clothingScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        panel.addView(clothingSection);
 
         TextView editableHeading = label("NikkiSync 可编辑参数", 14, true, 0xFF1F1C1A);
         panel.addView(editableHeading);
@@ -311,13 +338,18 @@ public final class PhotoViewerDialog extends Dialog {
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
 
-        bindDetailToSheet(asset, sheet, summary, editable, edit, technicalToggle, technical);
+        bindDetailToSheet(
+                asset, sheet, summary, clothingSection, clothingCards,
+                editable, edit, technicalToggle, technical
+        );
     }
 
     private void bindDetailToSheet(
             AssetSummary asset,
             Dialog sheet,
             TextView summary,
+            LinearLayout clothingSection,
+            LinearLayout clothingCards,
             TextView editable,
             Button edit,
             Button technicalToggle,
@@ -325,7 +357,10 @@ public final class PhotoViewerDialog extends Dialog {
     ) {
         AssetDetail cached = detailCache.get(asset.assetId());
         if (cached != null) {
-            renderDetail(asset, cached, sheet, summary, editable, edit, technicalToggle, technical);
+            renderDetail(
+                    asset, cached, sheet, summary, clothingSection, clothingCards,
+                    editable, edit, technicalToggle, technical
+            );
             return;
         }
 
@@ -336,11 +371,16 @@ public final class PhotoViewerDialog extends Dialog {
                 main.post(() -> {
                     if (!sheet.isShowing()) return;
                     if (!session.current().assetId().equals(asset.assetId())) return;
-                    renderDetail(asset, detail, sheet, summary, editable, edit, technicalToggle, technical);
+                    renderDetail(
+                            asset, detail, sheet, summary, clothingSection, clothingCards,
+                            editable, edit, technicalToggle, technical
+                    );
                 });
             } catch (Exception error) {
                 main.post(() -> {
                     if (!sheet.isShowing()) return;
+                    clothingCards.removeAllViews();
+                    clothingSection.setVisibility(View.GONE);
                     editable.setText("照片参数读取失败");
                     summary.setText(assetFallbackSummary(asset) + "\n照片参数读取失败");
                 });
@@ -353,6 +393,8 @@ public final class PhotoViewerDialog extends Dialog {
             AssetDetail detail,
             Dialog sheet,
             TextView summary,
+            LinearLayout clothingSection,
+            LinearLayout clothingCards,
             TextView editable,
             Button edit,
             Button technicalToggle,
@@ -362,6 +404,7 @@ public final class PhotoViewerDialog extends Dialog {
                 detail.metadataJson(), asset.width(), asset.height(), asset.capturedAt()
         );
         summary.setText(presentation.summary());
+        renderClothingCards(detail.metadataJson(), clothingSection, clothingCards);
         editable.setText(editableCameraSummary(detail));
         technical.setText(presentation.technicalDetails());
         technicalToggle.setEnabled(true);
@@ -375,8 +418,54 @@ public final class PhotoViewerDialog extends Dialog {
             detailCache.put(asset.assetId(), updated);
             if (!sheet.isShowing()) return;
             if (!session.current().assetId().equals(asset.assetId())) return;
-            renderDetail(asset, updated, sheet, summary, editable, edit, technicalToggle, technical);
+            renderDetail(
+                    asset, updated, sheet, summary, clothingSection, clothingCards,
+                    editable, edit, technicalToggle, technical
+            );
         }));
+    }
+
+    private void renderClothingCards(
+            String metadataJson,
+            LinearLayout clothingSection,
+            LinearLayout clothingCards
+    ) {
+        List<ClothingPresentation.Item> items = ClothingPresentation.fromMetadataJson(metadataJson);
+        clothingCards.removeAllViews();
+        if (items.isEmpty()) {
+            clothingSection.setVisibility(View.GONE);
+            return;
+        }
+
+        for (ClothingPresentation.Item item : items) {
+            LinearLayout card = new LinearLayout(activity);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER_HORIZONTAL);
+            card.setPadding(dp(6), dp(6), dp(6), dp(8));
+            card.setBackground(roundRect(0xFFF0ECE8, 14));
+
+            ImageView thumbnail = new ImageView(activity);
+            thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbnail.setBackground(roundRect(0xFFE1DCD7, 10));
+            thumbnail.setContentDescription(item.name());
+            card.addView(thumbnail, new LinearLayout.LayoutParams(dp(76), dp(76)));
+
+            TextView name = label(item.name(), 11, false, 0xFF3F3935);
+            name.setGravity(Gravity.CENTER);
+            name.setMaxLines(2);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            name.setPadding(0, dp(6), 0, 0);
+            card.addView(name, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            ));
+
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(dp(92), dp(122));
+            cardLp.setMargins(0, 0, dp(8), 0);
+            clothingCards.addView(card, cardLp);
+            images.loadRemote(item.thumbnailUrl(), thumbnail);
+        }
+        clothingSection.setVisibility(View.VISIBLE);
     }
 
     private String editableCameraSummary(AssetDetail detail) {
