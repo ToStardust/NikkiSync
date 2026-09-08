@@ -21,6 +21,10 @@ test('route builders encode identifiers and query values', () => {
     API_ROUTES.resource('asset/a', 'resource b'),
     '/v1/assets/asset%2Fa/resources/resource%20b'
   )
+  assert.equal(
+    API_ROUTES.clothingThumbnail('asset/a', '1020810145'),
+    '/v1/assets/asset%2Fa/clothing/1020810145/thumbnail'
+  )
   assert.equal(buildChangesRoute(42), '/v1/changes?after=42')
   assert.equal(
     buildAssetsRoute({ cursor: 'a/b', limit: 25, type: 'motion_photo', includeDeleted: true }),
