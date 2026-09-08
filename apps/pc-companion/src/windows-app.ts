@@ -6,8 +6,10 @@ import { qrSvg } from './qr.js'
 import { RemoteJsonMetadataResolver } from './metadata/RemoteJsonMetadataResolver.js'
 import { createMetadataResolverFromConfig, loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
-import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
-import { RemoteJsonMetadataDictionaryProvider } from './metadata/RemoteJsonMetadataDictionaryProvider.js'
+import {
+  createMetadataDictionaryProviderFromConfig,
+  loadMetadataDictionaryRemoteConfigFile
+} from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
@@ -46,9 +48,7 @@ async function main(): Promise<void> {
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
-  const metadataDictionaryRemote = metadataDictionaryRemoteConfig?.enabled === true && metadataDictionaryRemoteConfig.provider
-    ? new RemoteJsonMetadataDictionaryProvider(metadataDictionaryRemoteConfig.provider)
-    : undefined
+  const metadataDictionaryRemote = createMetadataDictionaryProviderFromConfig(metadataDictionaryRemoteConfig)
 
   const fileResolver = createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
