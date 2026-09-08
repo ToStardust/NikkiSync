@@ -185,6 +185,8 @@ export const API_ROUTES = {
   metadata: (assetId: AssetId) => `/v1/assets/${encodeURIComponent(assetId)}/metadata`,
   resource: (assetId: AssetId, resourceId: ResourceId) =>
     `/v1/assets/${encodeURIComponent(assetId)}/resources/${encodeURIComponent(resourceId)}`,
+  clothingThumbnail: (assetId: AssetId, clothingId: string) =>
+    `/v1/assets/${encodeURIComponent(assetId)}/clothing/${encodeURIComponent(clothingId)}/thumbnail`,
   changes: '/v1/changes',
   websocket: '/ws/v1'
 } as const
