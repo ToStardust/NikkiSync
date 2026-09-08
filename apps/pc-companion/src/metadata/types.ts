@@ -1,5 +1,20 @@
 import type { InfinityPhotoMetadata } from '@nikkisync/core'
 
+export type MetadataCapability =
+  | 'clothing'
+  | 'pose'
+  | 'camera'
+  | 'filter'
+  | 'lighting'
+  | 'location'
+  | 'thumbnail'
+
+export interface MetadataProviderDescriptor {
+  id: string
+  version?: string
+  capabilities: MetadataCapability[]
+}
+
 export interface PhotoMetadataResolveRequest {
   assetId: string
   uid: string
@@ -19,6 +34,7 @@ export interface PhotoMetadataResolveResult {
   metadata: Partial<InfinityPhotoMetadata>
   provider: string
   providerVersion?: string
+  capabilities?: MetadataCapability[]
   rawResponse?: unknown
 }
 
@@ -26,6 +42,7 @@ export interface PhotoMetadataResolver {
   readonly id: string
   /** Bump when provider parsing/dictionary semantics change so cached photos can be re-enriched. */
   readonly version?: string | undefined
+  readonly capabilities?: MetadataCapability[]
   resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult>
 }
 
