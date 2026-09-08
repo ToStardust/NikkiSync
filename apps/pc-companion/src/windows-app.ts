@@ -10,6 +10,7 @@ import {
   createMetadataDictionaryProviderFromConfig,
   loadMetadataDictionaryRemoteConfigFile
 } from './metadata/MetadataDictionaryRemoteConfigFile.js'
+import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
@@ -24,6 +25,7 @@ const DATABASE_FILE = path.join(APP_DATA, 'nikkisync.sqlite')
 const METADATA_RESOLVER_CONFIG_FILE = path.join(APP_DATA, 'metadata-resolver.json')
 const METADATA_DICTIONARY_FILE = path.join(APP_DATA, 'metadata-dictionary.json')
 const METADATA_DICTIONARY_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'metadata-dictionary-remote.json')
+const METADATA_THUMBNAIL_CACHE_DIR = path.join(APP_DATA, 'metadata-thumbnails')
 
 function isLanIpv4(address: string): boolean {
   const [first, second] = address.split('.').map(Number)
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
   const metadataDictionaryRemote = createMetadataDictionaryProviderFromConfig(metadataDictionaryRemoteConfig)
+  const metadataThumbnailCache = new MetadataThumbnailCache({ cacheDir: METADATA_THUMBNAIL_CACHE_DIR })
 
   const fileResolver = createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
@@ -89,7 +92,8 @@ async function main(): Promise<void> {
       host: process.env.NIKKISYNC_BIND ?? '0.0.0.0',
       port: Number(process.env.NIKKISYNC_PORT ?? 28080),
       mdns: process.env.NIKKISYNC_MDNS !== '0',
-      name: APP_NAME
+      name: APP_NAME,
+      metadataThumbnailCache
     }
   })
   const started = await runtime.start()
