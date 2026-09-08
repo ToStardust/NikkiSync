@@ -1,5 +1,5 @@
 import type { InfinityPhotoMetadata } from '@nikkisync/core'
-import type { PhotoMetadataResolveRequest, PhotoMetadataResolver, PhotoMetadataResolveResult } from './types.js'
+import type { MetadataCapability, PhotoMetadataResolveRequest, PhotoMetadataResolver, PhotoMetadataResolveResult } from './types.js'
 
 export interface RemoteJsonMetadataResolverConfig {
   id?: string
@@ -7,6 +7,7 @@ export interface RemoteJsonMetadataResolverConfig {
   endpoint: string
   timeoutMs?: number
   headers?: Record<string, string>
+  capabilities?: MetadataCapability[]
 }
 
 /**
@@ -16,10 +17,20 @@ export interface RemoteJsonMetadataResolverConfig {
 export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
   readonly id: string
   readonly version: string | undefined
+  readonly capabilities: MetadataCapability[]
 
   constructor(private readonly config: RemoteJsonMetadataResolverConfig) {
     this.id = config.id ?? 'remote-json'
     this.version = config.version
+    this.capabilities = config.capabilities ?? [
+      'clothing',
+      'pose',
+      'camera',
+      'filter',
+      'lighting',
+      'location',
+      'thumbnail'
+    ]
   }
 
   async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
@@ -35,8 +46,6 @@ export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
         },
         body: JSON.stringify({
           uid: request.uid,
-          // Pass the exact scanner-verified Base64 envelope regardless of size. Real samples show
-          // both large and very small block-aligned envelopes; size alone is not a format version.
           params: request.nativeParamPayload ?? request.nativeParamToken,
           token: request.nativeParamToken,
           ...(request.nativeParamPayloadMd5 ? { md5: request.nativeParamPayloadMd5 } : {}),
@@ -65,6 +74,7 @@ export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
       metadata: payload,
       provider: this.id,
       ...(typeof object.version === 'string' ? { providerVersion: object.version } : {}),
+      capabilities: this.capabilities,
       rawResponse: value
     }
   }
