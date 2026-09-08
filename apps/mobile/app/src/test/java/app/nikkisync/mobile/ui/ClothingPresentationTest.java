@@ -45,4 +45,24 @@ public final class ClothingPresentationTest {
 
         assertTrue(items.isEmpty());
     }
+
+    @Test public void unreachableThumbnailStillKeepsHumanReadableClothingText() {
+        String metadata = """
+                {
+                  "dressing": {
+                    "clothes": [
+                      {"id":"1020100111","name":"馥郁时花","thumbnail":"https://example.invalid/missing.png"}
+                    ]
+                  }
+                }
+                """;
+
+        List<ClothingPresentation.Item> cards = ClothingPresentation.fromMetadataJson(metadata);
+        MetadataPresentation text = MetadataPresentation.fromMetadataJson(metadata, null, null, null);
+
+        assertEquals(1, cards.size());
+        assertEquals("馥郁时花", cards.get(0).name());
+        assertTrue(text.summary().contains("馥郁时花"));
+        assertFalse(text.summary().contains("1020100111"));
+    }
 }
