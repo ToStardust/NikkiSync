@@ -7,11 +7,13 @@ import type { RemoteJsonMetadataDictionaryProviderConfig } from './RemoteJsonMet
 type RemoteJsonProviderConfig = RemoteJsonMetadataDictionaryProviderConfig & {
   type: 'remote-json'
   intervalMs?: number
+  manifestEndpoint?: undefined
 }
 
 type NikkiAlbumsProviderConfig = {
   type: 'nikki-albums-public'
   id?: string
+  endpoint?: undefined
   manifestEndpoint?: string
   locale?: string
   intervalMs?: number
