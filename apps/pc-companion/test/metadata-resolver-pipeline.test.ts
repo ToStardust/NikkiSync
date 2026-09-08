@@ -45,11 +45,13 @@ test('resolver pipeline continues after a provider failure', async () => {
   }
   const fallback: PhotoMetadataResolver = {
     id: 'fallback', capabilities: ['pose'],
-    async resolve() { return { provider: 'fallback', capabilities: ['pose'], metadata: { pose: { id: '12' } } } }
+    async resolve() {
+      return { provider: 'fallback', capabilities: ['pose'], metadata: { photography: { poseId: '12' } } }
+    }
   }
 
   const result = await new MetadataResolverPipeline({ resolvers: [failing, fallback] }).resolve(request)
-  assert.equal(result.metadata.pose?.id, '12')
+  assert.equal(result.metadata.photography?.poseId, '12')
   const raw = result.rawResponse as { failures?: Array<{ provider: string }> }
   assert.equal(raw.failures?.[0]?.provider, 'failing')
 })
