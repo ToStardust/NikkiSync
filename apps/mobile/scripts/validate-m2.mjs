@@ -15,6 +15,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/net/NsdDiscovery.java',
   'app/src/main/java/app/nikkisync/mobile/security/DeviceIdentity.java',
   'app/src/main/java/app/nikkisync/mobile/security/PinnedTls.java',
+  'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/OppoLivePhotoSaver.java',
@@ -77,10 +78,19 @@ expect(motionSaver.includes('video/mp4'), 'Motion Photo MP4 item is missing')
 const mainActivity = text('app/src/main/java/app/nikkisync/mobile/MainActivity.java')
 expect(mainActivity.includes('编辑照片参数'), 'M4 metadata editor UI is missing')
 expect(mainActivity.includes('nativeParamToken'), 'M4 native Infinity Nikki parameter-token status is missing')
+expect(mainActivity.includes('renderClothingSection'), 'M4.2.8 clothing detail renderer is missing')
+expect(mainActivity.includes('穿搭 · '), 'M4.2.8 clothing section heading is missing')
+expect(mainActivity.includes('baseMakeup') && mainActivity.includes('底妆'), 'M4.2.8 clothing category labels are missing')
+expect(mainActivity.includes('new ScrollView(this)'), 'photo detail must remain scrollable when clothing rows are present')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
 expect(client.includes('/metadata'), 'M4 metadata route is missing')
+expect(client.includes('/clothing/'), 'M4.2.8 clothing thumbnail must be requested through the paired PC')
+
+const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
+expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
+expect(!imageLoader.includes('https://images.'), 'mobile image loader must not embed a third-party clothing image host')
 
 const huaweiSaver = text('app/src/main/java/app/nikkisync/mobile/media/HuaweiMovingPhotoSaver.java')
 expect(huaweiSaver.includes('Environment.DIRECTORY_DCIM + "/Camera"'), 'Huawei adapter must publish to Camera')
@@ -95,3 +105,4 @@ console.log('M2 mobile source contract: OK')
 console.log(`validated files: ${required.length}`)
 console.log('transport: pinned HTTPS + Ed25519 signed requests + mDNS + WebSocket')
 console.log('original export: MediaStore + SHA-256 verification')
+console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy')
