@@ -75,6 +75,10 @@ public final class NikkiSyncClient {
         return http.resource("/v1/assets/" + encode(assetId) + "/resources/" + encode(resourceId));
     }
 
+    public HttpsURLConnection clothingThumbnail(String assetId, String clothingId) throws Exception {
+        return http.resource("/v1/assets/" + encode(assetId) + "/clothing/" + encode(clothingId) + "/thumbnail");
+    }
+
     public SignedHttpClient signedHttp() { return http; }
     public PairedServer server() { return server; }
 
