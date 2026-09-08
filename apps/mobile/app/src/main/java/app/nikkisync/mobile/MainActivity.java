@@ -47,6 +47,7 @@ import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -296,7 +297,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
     private void showViewer(AssetSummary asset) {
         Dialog dialog = new Dialog(this);
-        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(14), dp(14), dp(14), dp(14)); body.setBackgroundColor(Color.WHITE);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(14), dp(14), dp(14), dp(20)); body.setBackgroundColor(Color.WHITE);
+        scroll.addView(body, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(0xFFF0EDEA);
         body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(480)));
         imageLoader.load(client, asset, image);
@@ -304,18 +307,115 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 (asset.capturedAt() == null ? "" : "\n" + asset.capturedAt());
         TextView info = text(description, 13, false, getColor(R.color.text_secondary)); info.setPadding(dp(4), dp(12), dp(4), dp(10)); body.addView(info);
         TextView params = text("正在读取照片参数…", 13, false, getColor(R.color.text_secondary)); params.setPadding(dp(4), dp(4), dp(4), dp(10)); body.addView(params);
+        LinearLayout clothingSection = new LinearLayout(this); clothingSection.setOrientation(LinearLayout.VERTICAL); clothingSection.setVisibility(View.GONE);
+        clothingSection.setPadding(dp(2), dp(6), dp(2), dp(8)); body.addView(clothingSection);
         Button edit = button("编辑照片参数"); edit.setEnabled(false); body.addView(edit);
         AssetDetail[] detailHolder = new AssetDetail[1];
         io.execute(() -> {
             try {
                 AssetDetail detail = client.asset(asset.assetId()); detailHolder[0] = detail;
-                main.post(() -> { params.setText(metadataSummary(detail)); edit.setEnabled(true); });
+                main.post(() -> {
+                    params.setText(metadataSummary(detail));
+                    renderClothingSection(asset, detail, clothingSection);
+                    edit.setEnabled(true);
+                });
             } catch (Exception error) { main.post(() -> params.setText("参数读取失败：" + message(error))); }
         });
         edit.setOnClickListener(v -> { if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder); });
         Button select = button("选择保存原图"); select.setOnClickListener(v -> { adapter.toggle(asset); updateSelection(); dialog.dismiss(); }); body.addView(select);
-        dialog.setContentView(body); if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); dialog.show();
-        if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dialog.setContentView(scroll); dialog.show();
+        if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+    }
+
+    private void renderClothingSection(AssetSummary asset, AssetDetail detail, LinearLayout section) {
+        section.removeAllViews(); section.setVisibility(View.GONE);
+        if (detail.metadataJson() == null || client == null) return;
+        try {
+            JSONObject metadata = new JSONObject(detail.metadataJson());
+            JSONObject dressing = metadata.optJSONObject("dressing");
+            JSONArray clothes = dressing == null ? null : dressing.optJSONArray("clothes");
+            if (clothes == null || clothes.length() == 0) return;
+            JSONObject raw = metadata.optJSONObject("raw");
+            JSONObject dictionary = raw == null ? null : raw.optJSONObject("dictionary");
+            String cacheVersion = dictionary == null ? "" : dictionary.optString("providerVersion", "");
+
+            int displayCount = 0;
+            for (int i = 0; i < clothes.length(); i++) {
+                JSONObject clothing = clothes.optJSONObject(i);
+                if (clothing != null && clothing.has("id") && !clothing.isNull("id")) displayCount++;
+            }
+            if (displayCount == 0) return;
+
+            TextView heading = text("穿搭 · " + displayCount + " 件", 16, true, getColor(R.color.text_primary));
+            heading.setPadding(dp(4), dp(6), dp(4), dp(8)); section.addView(heading);
+
+            for (int i = 0; i < clothes.length(); i++) {
+                JSONObject clothing = clothes.optJSONObject(i);
+                if (clothing == null || !clothing.has("id") || clothing.isNull("id")) continue;
+                String id = String.valueOf(clothing.opt("id")).trim();
+                if (id.isEmpty()) continue;
+                String name = clothing.optString("name", "").trim();
+                if (name.isEmpty()) name = "服装 " + id;
+                String category = clothing.optString("category", "").trim();
+                String categoryLabel = clothingCategoryLabel(category);
+
+                LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(10), dp(8), dp(10), dp(8));
+                row.setBackground(roundRect(0xFFF7F5F3, 14));
+                LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rowLp.setMargins(0, 0, 0, dp(7));
+
+                if (!clothing.optString("thumbnail", "").isBlank()) {
+                    ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER); icon.setBackground(roundRect(0xFFECE8E4, 10));
+                    row.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
+                    imageLoader.loadClothingThumbnail(client, asset.assetId(), id, cacheVersion, icon);
+                }
+
+                LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(10), 0, 0, 0);
+                TextView nameView = text(name, 14, true, getColor(R.color.text_primary)); labels.addView(nameView);
+                String subline = categoryLabel + " · ID " + id;
+                TextView categoryView = text(subline, 11, false, getColor(R.color.text_secondary)); categoryView.setPadding(0, dp(3), 0, 0); labels.addView(categoryView);
+                row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                section.addView(row, rowLp);
+            }
+            section.setVisibility(View.VISIBLE);
+        } catch (Exception ignored) {
+            section.removeAllViews(); section.setVisibility(View.GONE);
+        }
+    }
+
+    private static String clothingCategoryLabel(String category) {
+        return switch (category) {
+            case "hair" -> "发型";
+            case "dresses" -> "连衣裙";
+            case "outerwear" -> "外套";
+            case "tops" -> "上衣";
+            case "bottoms" -> "下装";
+            case "socks" -> "袜子";
+            case "shoes" -> "鞋子";
+            case "hairAccessories" -> "发饰";
+            case "headwear" -> "帽子";
+            case "earrings" -> "耳饰";
+            case "neckwear" -> "颈饰";
+            case "bracelets" -> "腕饰";
+            case "chokers" -> "项圈";
+            case "gloves" -> "手套";
+            case "faceDecorations" -> "面饰";
+            case "chestAccessories" -> "胸饰";
+            case "pendants" -> "挂饰";
+            case "backpieces" -> "背饰";
+            case "rings" -> "戒指";
+            case "armDecorations" -> "臂饰";
+            case "handhelds" -> "手持物";
+            case "bodyPaint" -> "肤绘";
+            case "fullMakeup" -> "全妆";
+            case "baseMakeup" -> "底妆";
+            case "eyebrows" -> "眉妆";
+            case "eyelashes" -> "睫毛";
+            case "contacts" -> "美瞳";
+            case "lips" -> "唇妆";
+            case "skinTones" -> "肤色";
+            default -> category.isEmpty() ? "未知部位" : category;
+        };
     }
 
     private String metadataSummary(AssetDetail detail) {
