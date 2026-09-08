@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     ? new RemoteJsonMetadataDictionaryProvider(metadataDictionaryRemoteConfig.provider)
     : undefined
 
-  const fileResolver = resolverFile?.enabled === false ? undefined : createMetadataResolverFromConfig(resolverFile)
+  const fileResolver = createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
     endpoint: process.env.NIKKISYNC_METADATA_RESOLVER_URL,
     id: process.env.NIKKISYNC_METADATA_RESOLVER_ID ?? 'remote-json',
@@ -58,11 +58,13 @@ async function main(): Promise<void> {
       ? { version: process.env.NIKKISYNC_METADATA_RESOLVER_VERSION }
       : {})
   } : undefined
-  // Local hot-config has precedence. The environment variable remains a backwards-compatible
-  // single remote provider only when no usable file provider is configured.
-  const resolver = fileResolver ?? (environmentResolverConfig
-    ? new RemoteJsonMetadataResolver(environmentResolverConfig)
-    : undefined)
+  // Local hot-config has precedence. Explicit enabled:false disables all online enrichment,
+  // including the legacy environment-variable fallback.
+  const resolver = resolverFile?.enabled === false
+    ? undefined
+    : fileResolver ?? (environmentResolverConfig
+        ? new RemoteJsonMetadataResolver(environmentResolverConfig)
+        : undefined)
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
