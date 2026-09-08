@@ -20,6 +20,7 @@ import {
   type ServerInfoResponse,
   type WsEvent
 } from '@nikkisync/protocol'
+import type { MetadataThumbnailCache } from '../metadata/MetadataThumbnailCache.js'
 import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
@@ -34,6 +35,7 @@ export interface LocalSyncServerConfig {
   journalPollMs?: number
   mdns?: boolean
   maxJsonBodyBytes?: number
+  metadataThumbnailCache?: MetadataThumbnailCache
 }
 
 export interface LocalSyncServerAddress {
@@ -114,6 +116,10 @@ function parseRange(value: string | undefined, size: number): { start: number; e
   return { start, end: Math.min(end, size - 1) }
 }
 
+function objectOf(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
 export class LocalSyncServer {
   private readonly reads: SyncReadRepository
   private readonly assets: AssetRepository
@@ -125,7 +131,7 @@ export class LocalSyncServer {
   private pollTimer: NodeJS.Timeout | undefined
   private lastBroadcastRevision = 0
   private address: LocalSyncServerAddress | undefined
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls'>
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
@@ -139,7 +145,8 @@ export class LocalSyncServer {
       journalPollMs: config.journalPollMs ?? 250,
       mdns: config.mdns ?? true,
       maxJsonBodyBytes: config.maxJsonBodyBytes ?? 1024 * 1024,
-      ...(config.tls ? { tls: config.tls } : {})
+      ...(config.tls ? { tls: config.tls } : {}),
+      ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {})
     }
   }
 
@@ -198,6 +205,15 @@ export class LocalSyncServer {
       if (!this.auth.verifyRequest(req)) return json(res, 401, errorBody('unauthorized', 'Request signature is missing or invalid'))
       if (req.method === 'GET' && url.pathname === API_ROUTES.assets) return this.listAssets(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.changes) return this.listChanges(url, res)
+      const clothingThumbnailMatch = /^\/v1\/assets\/([^/]+)\/clothing\/([^/]+)\/thumbnail$/.exec(url.pathname)
+      if ((req.method === 'GET' || req.method === 'HEAD') && clothingThumbnailMatch) {
+        return void await this.streamClothingThumbnail(
+          req,
+          res,
+          decodeURIComponent(clothingThumbnailMatch[1]!),
+          decodeURIComponent(clothingThumbnailMatch[2]!)
+        )
+      }
       const assetMatch = /^\/v1\/assets\/([^/]+)$/.exec(url.pathname)
       if (req.method === 'GET' && assetMatch) return this.assetDetail(decodeURIComponent(assetMatch[1]!), res)
       const resourceMatch = /^\/v1\/assets\/([^/]+)\/resources\/([^/]+)$/.exec(url.pathname)
@@ -304,6 +320,46 @@ export class LocalSyncServer {
     const changes = fullResyncRequired ? [] : this.reads.listChangesAfter(after).map(mapChangeRow)
     const body: ChangesResponse = { changes, libraryRevision: current, fullResyncRequired }
     json(res, 200, body)
+  }
+
+  private clothingThumbnailSource(assetId: string, clothingId: string): { sourceUrl: string; versionKey: string } | undefined {
+    const row = this.reads.getAsset(assetId)
+    if (!row?.metadata_json) return undefined
+    try {
+      const metadata = objectOf(JSON.parse(String(row.metadata_json)))
+      const dressing = objectOf(metadata?.dressing)
+      const clothes = Array.isArray(dressing?.clothes) ? dressing.clothes : []
+      const clothing = clothes
+        .map(objectOf)
+        .find((item) => item && String(item.id ?? '') === clothingId)
+      if (!clothing || typeof clothing.thumbnail !== 'string' || !/^https:\/\//i.test(clothing.thumbnail)) return undefined
+      const dictionary = objectOf(objectOf(metadata?.raw)?.dictionary)
+      const versionKey = typeof dictionary?.providerVersion === 'string' ? dictionary.providerVersion : ''
+      return { sourceUrl: clothing.thumbnail, versionKey }
+    } catch {
+      return undefined
+    }
+  }
+
+  private async streamClothingThumbnail(req: IncomingMessage, res: ServerResponse, assetId: string, clothingId: string): Promise<void> {
+    const cache = this.config.metadataThumbnailCache
+    const source = this.clothingThumbnailSource(assetId, clothingId)
+    if (!cache || !source) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
+    let thumbnail
+    try {
+      thumbnail = await cache.get(source.sourceUrl, source.versionKey)
+    } catch {
+      return json(res, 503, errorBody('resource_not_ready', 'Clothing thumbnail source is temporarily unavailable'))
+    }
+    res.writeHead(200, {
+      'Content-Type': thumbnail.mimeType,
+      'Content-Length': thumbnail.sizeBytes,
+      'ETag': `"sha256:${thumbnail.sha256}"`,
+      'X-NikkiSync-SHA256': thumbnail.sha256,
+      'Cache-Control': 'private, max-age=86400'
+    })
+    if (req.method === 'HEAD') return void res.end()
+    createReadStream(thumbnail.path).pipe(res)
   }
 
   private async streamResource(req: IncomingMessage, res: ServerResponse, assetId: string, resourceId: string): Promise<void> {
