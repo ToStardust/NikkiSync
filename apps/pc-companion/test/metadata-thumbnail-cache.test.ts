@@ -39,13 +39,15 @@ test('metadata thumbnail cache downloads an HTTPS image once and reuses the cach
   }
 })
 
-test('metadata thumbnail cache rejects unsafe URL, content type and oversized responses', async () => {
+test('metadata thumbnail cache rejects unsafe URL, local targets, content type and oversized responses', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-metadata-thumb-safety-'))
+  let requests = 0
   try {
     const cache = new MetadataThumbnailCache({
       cacheDir: directory,
       maxBytes: 4,
       fetchImpl: (async (input: string | URL | Request) => {
+        requests++
         const url = String(input)
         if (url.endsWith('/html')) return new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })
         return new Response(Buffer.from([1, 2, 3, 4, 5]), { status: 200, headers: { 'content-type': 'image/png' } })
@@ -53,8 +55,14 @@ test('metadata thumbnail cache rejects unsafe URL, content type and oversized re
     })
 
     await assert.rejects(() => cache.get('http://images.example.test/plain.png', 'dict-v1'), /HTTPS/i)
+    await assert.rejects(() => cache.get('https://localhost/private.png', 'dict-v1'), /local|private/i)
+    await assert.rejects(() => cache.get('https://127.0.0.1/private.png', 'dict-v1'), /local|private/i)
+    await assert.rejects(() => cache.get('https://192.168.1.8/private.png', 'dict-v1'), /local|private/i)
+    assert.equal(requests, 0)
+
     await assert.rejects(() => cache.get('https://images.example.test/html', 'dict-v1'), /content type/i)
     await assert.rejects(() => cache.get('https://images.example.test/large.png', 'dict-v1'), /too large/i)
+    assert.equal(requests, 2)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
