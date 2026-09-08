@@ -5,6 +5,8 @@ export * from './game-directory-discovery.js'
 export * from './runtime.js'
 export * from './scanner/index.js'
 export * from './server/index.js'
+export * from './metadata/MetadataResolverPipeline.js'
+export * from './metadata/types.js'
 
 /** Shared PC Companion context. Scanner and local transport share the same SQLite source of truth. */
 export interface PcCompanionContext {
