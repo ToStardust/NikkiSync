@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
+import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
 
 function firstIpv4(): string | undefined {
   for (const entries of Object.values(os.networkInterfaces())) {
@@ -16,7 +17,15 @@ const databaseFile = databaseSetting === ':memory:' ? ':memory:' : path.resolve(
 const host = process.env.NIKKISYNC_BIND ?? '0.0.0.0'
 const port = Number(process.env.NIKKISYNC_PORT ?? 0)
 const mdns = process.env.NIKKISYNC_MDNS !== '0'
-const runtime = new PcCompanionRuntime({ databaseFile, server: { host, port, mdns } })
+const metadataThumbnailCacheDir = process.env.NIKKISYNC_METADATA_THUMBNAIL_CACHE
+  ?? (databaseFile === ':memory:'
+    ? path.join(os.tmpdir(), 'nikkisync-metadata-thumbnails-dev')
+    : path.join(path.dirname(databaseFile), 'metadata-thumbnails'))
+const metadataThumbnailCache = new MetadataThumbnailCache({ cacheDir: metadataThumbnailCacheDir })
+const runtime = new PcCompanionRuntime({
+  databaseFile,
+  server: { host, port, mdns, metadataThumbnailCache }
+})
 
 async function main(): Promise<void> {
   const started = await runtime.start()
