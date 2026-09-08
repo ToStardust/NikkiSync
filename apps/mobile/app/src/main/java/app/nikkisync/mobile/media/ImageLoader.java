@@ -30,6 +30,11 @@ public final class ImageLoader {
     private final LruCache<String, Bitmap> cache;
     private final File diskDir;
 
+    @FunctionalInterface
+    private interface ConnectionFactory {
+        HttpsURLConnection open() throws Exception;
+    }
+
     public ImageLoader(Context context) {
         int maxKb = (int) Math.min(96 * 1024, Runtime.getRuntime().maxMemory() / 1024 / 6);
         cache = new LruCache<>(maxKb) {
@@ -43,9 +48,18 @@ public final class ImageLoader {
     public void load(NikkiSyncClient client, AssetSummary asset, ImageView target) {
         String resourceId = asset.thumbnailResourceId() != null ? asset.thumbnailResourceId() : asset.previewResourceId();
         String key = asset.assetId() + ":" + resourceId + ":r" + asset.revision();
+        if (resourceId == null) { target.setTag(key); target.setImageDrawable(null); return; }
+        loadNetwork(key, target, () -> client.resource(asset.assetId(), resourceId));
+    }
+
+    public void loadClothingThumbnail(NikkiSyncClient client, String assetId, String clothingId, String cacheVersion, ImageView target) {
+        String key = "clothing:" + assetId + ":" + clothingId + ":" + (cacheVersion == null ? "" : cacheVersion);
+        loadNetwork(key, target, () -> client.clothingThumbnail(assetId, clothingId));
+    }
+
+    private void loadNetwork(String key, ImageView target, ConnectionFactory connectionFactory) {
         target.setTag(key);
         target.setImageDrawable(null);
-        if (resourceId == null) return;
         Bitmap cached = cache.get(key);
         if (cached != null) { target.setImageBitmap(cached); return; }
         executor.execute(() -> {
@@ -62,7 +76,7 @@ public final class ImageLoader {
                     }
                     disk.delete();
                 }
-                HttpsURLConnection connection = client.resource(asset.assetId(), resourceId);
+                HttpsURLConnection connection = connectionFactory.open();
                 if (connection.getResponseCode() != 200) return;
                 Bitmap bitmap;
                 File temp = new File(diskDir, disk.getName() + ".part");
@@ -71,7 +85,7 @@ public final class ImageLoader {
                     while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
                 }
                 bitmap = BitmapFactory.decodeFile(temp.getAbsolutePath());
-                if (bitmap == null) return;
+                if (bitmap == null) { temp.delete(); return; }
                 if (!temp.renameTo(disk)) {
                     try (InputStream input = new FileInputStream(temp); FileOutputStream output = new FileOutputStream(disk)) {
                         byte[] buffer = new byte[64 * 1024]; int read;
