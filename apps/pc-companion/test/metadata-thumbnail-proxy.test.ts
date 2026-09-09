@@ -25,6 +25,23 @@ function signedHeaders(privateKey: string, deviceId: string, method: string, req
   }
 }
 
+async function pairTestPhone(db: DatabaseManager, base: string, port: number, deviceId: string) {
+  const deviceKeys = generateKeyPairSync('ed25519', {
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  })
+  const pairing = new PairingService(db)
+  const qr = pairing.createQrPayload({ host: '127.0.0.1', port, tlsFingerprintSha256: '0'.repeat(64) })
+  const pair = await fetch(`${base}/v1/pair`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      pairingToken: qr.pairingToken,
+      device: { deviceId, deviceName: 'Test Phone', platform: 'android', publicKey: deviceKeys.publicKey, appVersion: '0.2.0' }
+    })
+  })
+  assert.equal(pair.status, 200)
+  return deviceKeys
+}
+
 test('clothing thumbnail route proxies only a thumbnail URL already present in the asset metadata', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-thumb-proxy-'))
   const db = new DatabaseManager(':memory:')
@@ -62,20 +79,7 @@ test('clothing thumbnail route proxies only a thumbnail URL already present in t
   const base = `http://127.0.0.1:${address.port}`
 
   try {
-    const deviceKeys = generateKeyPairSync('ed25519', {
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    })
-    const pairing = new PairingService(db)
-    const qr = pairing.createQrPayload({ host: '127.0.0.1', port: address.port, tlsFingerprintSha256: '0'.repeat(64) })
-    const pair = await fetch(`${base}/v1/pair`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-        pairingToken: qr.pairingToken,
-        device: { deviceId: 'phone_clothing', deviceName: 'Test Phone', platform: 'android', publicKey: deviceKeys.publicKey, appVersion: '0.2.0' }
-      })
-    })
-    assert.equal(pair.status, 200)
-
+    const deviceKeys = await pairTestPhone(db, base, address.port, 'phone_clothing')
     const route = '/v1/assets/asset_clothing/clothing/1020810145/thumbnail'
     assert.equal((await fetch(`${base}${route}`)).status, 401)
 
@@ -99,6 +103,67 @@ test('clothing thumbnail route proxies only a thumbnail URL already present in t
     })
     assert.equal(unknown.status, 404)
     assert.equal(requests, 1)
+  } finally {
+    await server.stop()
+    db.close()
+    await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test('clothing thumbnail route falls back to the dictionary clothing-type image when the exact item image is missing', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-thumb-fallback-'))
+  const db = new DatabaseManager(':memory:')
+  db.initialize()
+  const assets = new AssetRepository(db)
+  assets.create({
+    assetId: 'asset_skin_tone', assetType: 'photo', uid: '10001', discoveredAt: '2026-09-09T00:00:00.000Z',
+    metadataSchemaVersion: 1,
+    metadata: {
+      schemaVersion: 1,
+      identity: { uid: '10001' }, capture: {}, camera: {},
+      dressing: {
+        clothes: [{
+          id: '1023860042', name: '雪上月华', category: 'skinTones',
+          thumbnail: 'https://images.example.test/cloth/1023860042.png',
+          thumbnailFallbacks: ['https://images.example.test/type/86.png']
+        }]
+      },
+      raw: { dictionary: { provider: 'fixture', providerVersion: 'dict-v2' } }
+    }
+  })
+
+  const fallbackImage = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+  const requestedUrls: string[] = []
+  const cache = new MetadataThumbnailCache({
+    cacheDir: temp,
+    fetchImpl: (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      requestedUrls.push(url)
+      if (url.includes('/cloth/1023860042.png')) return new Response('missing', { status: 404 })
+      if (url.includes('/type/86.png')) return new Response(fallbackImage, { status: 200, headers: { 'content-type': 'image/png' } })
+      return new Response('missing', { status: 404 })
+    }) as typeof fetch
+  })
+  const server = new LocalSyncServer(db, {
+    host: '127.0.0.1', port: 0, mdns: false, metadataThumbnailCache: cache
+  })
+  const address = await server.start()
+  const base = `http://127.0.0.1:${address.port}`
+
+  try {
+    const deviceKeys = await pairTestPhone(db, base, address.port, 'phone_skin_tone')
+    const route = '/v1/assets/asset_skin_tone/clothing/1023860042/thumbnail'
+    const proxied = await fetch(`${base}${route}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_skin_tone', 'GET', route)
+    })
+    assert.equal(proxied.status, 200)
+    assert.equal(proxied.headers.get('x-nikkisync-thumbnail-source'), 'fallback')
+    assert.equal(proxied.headers.get('x-nikkisync-sha256'), sha256(fallbackImage))
+    assert.deepEqual(Buffer.from(await proxied.arrayBuffer()), fallbackImage)
+    assert.deepEqual(requestedUrls, [
+      'https://images.example.test/cloth/1023860042.png',
+      'https://images.example.test/type/86.png'
+    ])
   } finally {
     await server.stop()
     db.close()
