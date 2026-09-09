@@ -56,6 +56,12 @@ function encryptPackage(plain: Buffer): Buffer {
   return Buffer.concat([salt, nonce, encrypted, cipher.getAuthTag()])
 }
 
+function responseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(value.byteLength)
+  copy.set(value)
+  return copy
+}
+
 function languageFixture(id: number, name: string): Buffer {
   return msgpackMap([
     ['infinity_nikki', msgpackMap([
@@ -103,8 +109,8 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
         }
       ]), { status: 200, headers: { 'content-type': 'application/json', etag: '"fixture-v1"' } })
     }
-    if (url === langUrl) return new Response(encryptPackage(languageFixture(clothingId, '测试底妆')), { status: 200 })
-    if (url === dbUrl) return new Response(encryptPackage(databaseFixture(clothingId, 81)), { status: 200 })
+    if (url === langUrl) return new Response(responseBytes(encryptPackage(languageFixture(clothingId, '测试底妆'))), { status: 200 })
+    if (url === dbUrl) return new Response(responseBytes(encryptPackage(databaseFixture(clothingId, 81))), { status: 200 })
     return new Response('not found', { status: 404 })
   }) as typeof fetch
 
