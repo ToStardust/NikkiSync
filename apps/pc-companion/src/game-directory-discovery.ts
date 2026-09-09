@@ -141,6 +141,8 @@ export async function discoverInfinityNikkiInstallation(
   for (const candidate of options.startingPaths ?? []) {
     localCandidates.push({ path: candidate, source: 'local-ancestor' })
   }
+  const environmentGameRoot = process.env.NIKKISYNC_GAME_ROOT?.trim()
+  if (environmentGameRoot) localCandidates.push({ path: environmentGameRoot, source: 'local-ancestor' })
   localCandidates.push(
     { path: process.cwd(), source: 'local-ancestor' },
     { path: moduleDirectory, source: 'local-ancestor' }

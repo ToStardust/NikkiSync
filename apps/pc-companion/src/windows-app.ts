@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
@@ -26,6 +26,17 @@ const METADATA_RESOLVER_CONFIG_FILE = path.join(APP_DATA, 'metadata-resolver.jso
 const METADATA_DICTIONARY_FILE = path.join(APP_DATA, 'metadata-dictionary.json')
 const METADATA_DICTIONARY_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'metadata-dictionary-remote.json')
 const METADATA_THUMBNAIL_CACHE_DIR = path.join(APP_DATA, 'metadata-thumbnails')
+const GAME_ROOT_CACHE_FILE = path.join(APP_DATA, 'game-install-root.txt')
+const DEFAULT_GAME_ROOT = 'D:\\GAME\\InfinityNikki Launcher\\InfinityNikki'
+
+function readCachedGameRoot(): string | undefined {
+  try {
+    const value = readFileSync(GAME_ROOT_CACHE_FILE, 'utf8').trim()
+    return value || undefined
+  } catch {
+    return undefined
+  }
+}
 
 function isLanIpv4(address: string): boolean {
   const [first, second] = address.split('.').map(Number)
@@ -52,6 +63,9 @@ async function main(): Promise<void> {
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
   const metadataDictionaryRemote = createMetadataDictionaryProviderFromConfig(metadataDictionaryRemoteConfig)
   const metadataThumbnailCache = new MetadataThumbnailCache({ cacheDir: METADATA_THUMBNAIL_CACHE_DIR })
+  const cachedGameRoot = readCachedGameRoot()
+  const gameRootCandidates = [cachedGameRoot, process.env.NIKKISYNC_GAME_ROOT, DEFAULT_GAME_ROOT]
+    .filter((candidate): candidate is string => Boolean(candidate?.trim()))
 
   const fileResolver = createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
@@ -71,6 +85,10 @@ async function main(): Promise<void> {
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
+    scanner: {
+      ...(cachedGameRoot ? { cachedInstallRoot: cachedGameRoot } : {}),
+      startingPaths: gameRootCandidates
+    },
     ...(metadataDictionary ? { metadataDictionary } : {}),
     ...(metadataDictionaryRemote ? {
       metadataDictionaryRemote: {
@@ -97,6 +115,10 @@ async function main(): Promise<void> {
     }
   })
   const started = await runtime.start()
+  const installRoot = runtime.scanner.getStatus().installation?.installRoot
+  if (installRoot) {
+    try { writeFileSync(GAME_ROOT_CACHE_FILE, `${installRoot}\n`, 'utf8') } catch { /* best-effort startup cache */ }
+  }
   const status = new DesktopStatusService(runtime.database)
   const dashboard = createDesktopControlServer({
     getStatus: () => status.getStatus({ host: pairingHost, port: started.server.port }),

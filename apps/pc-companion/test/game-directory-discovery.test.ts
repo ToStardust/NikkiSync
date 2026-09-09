@@ -47,6 +47,29 @@ test('uses a persisted internal install root without asking the user again', asy
   }
 })
 
+test('uses the internal game-root environment fallback when the app runs outside the game directory', async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), 'nikkisync-env-discovery-'))
+  const previousRoot = process.env.NIKKISYNC_GAME_ROOT
+  try {
+    const installRoot = path.join(sandbox, 'InfinityNikki')
+    await mkdir(path.join(installRoot, 'X6Game', 'ScreenShot'), { recursive: true })
+    await writeFile(path.join(installRoot, 'InfinityNikki.exe'), '')
+    process.env.NIKKISYNC_GAME_ROOT = installRoot
+
+    const result = await discoverInfinityNikkiInstallation({
+      startingPaths: [],
+      runningExecutablePaths: []
+    })
+
+    assert.equal(result?.installRoot, installRoot)
+    assert.equal(result?.source, 'local-ancestor')
+  } finally {
+    if (previousRoot === undefined) delete process.env.NIKKISYNC_GAME_ROOT
+    else process.env.NIKKISYNC_GAME_ROOT = previousRoot
+    await rm(sandbox, { recursive: true, force: true })
+  }
+})
+
 test('prefers original hidden GamePlayPhotos and nested Videos over stripped export copies', async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), 'nikkisync-source-priority-'))
   try {
