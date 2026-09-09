@@ -10,6 +10,8 @@ export interface MetadataDictionaryEntry {
   category?: string
   rarity?: number
   thumbnail?: string
+  /** Ordered HTTPS image candidates used only when the canonical item thumbnail is unavailable. */
+  thumbnailFallbacks?: string[]
   raw?: Record<string, unknown>
 }
 
@@ -29,6 +31,7 @@ type DictionaryEntity = {
   category?: string
   rarity?: number
   thumbnail?: string
+  thumbnailFallbacks?: string[]
   [key: string]: unknown
 }
 
@@ -57,6 +60,14 @@ function applyDictionaryField(
   if (currentValue === undefined || currentValue === previousValue) target[field] = nextValue
 }
 
+function applyThumbnailFallbacks(target: DictionaryEntity, entry: MetadataDictionaryEntry | undefined): void {
+  if (!entry?.thumbnailFallbacks?.length) {
+    delete target.thumbnailFallbacks
+    return
+  }
+  target.thumbnailFallbacks = [...entry.thumbnailFallbacks]
+}
+
 function enrichEntity(
   value: unknown,
   kind: MetadataDictionaryKind,
@@ -77,6 +88,7 @@ function enrichEntity(
     applyDictionaryField(enriched, 'category', entry, previous)
     applyDictionaryField(enriched, 'rarity', entry, previous)
     applyDictionaryField(enriched, 'thumbnail', entry, previous)
+    applyThumbnailFallbacks(enriched, entry)
   }
   return enriched
 }
