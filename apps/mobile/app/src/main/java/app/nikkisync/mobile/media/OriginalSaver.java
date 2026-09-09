@@ -3,8 +3,10 @@ package app.nikkisync.mobile.media;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 
 import app.nikkisync.mobile.model.Models.AssetDetail;
@@ -23,9 +25,23 @@ import javax.net.ssl.HttpsURLConnection;
 
 public final class OriginalSaver {
     public Uri save(Context context, NikkiSyncClient client, AssetSummary asset) throws Exception {
+        return save(context, client, asset, 0);
+    }
+
+    /**
+     * Save an ordinary still while preserving the downloaded JPEG bytes. A non-zero
+     * rotation is written as EXIF orientation only after the signed download has passed
+     * SHA-256 verification, so NikkiSync does not recompress or degrade the source image.
+     */
+    public Uri save(Context context, NikkiSyncClient client, AssetSummary asset, int rotationDegrees) throws Exception {
+        int normalizedRotation = normalizeRotation(rotationDegrees);
         AssetDetail detail = client.asset(asset.assetId());
         MediaResource original = detail.originalStill();
         if (original == null) throw new IllegalStateException("这张照片没有可保存的原始静态资源");
+        if (normalizedRotation != 0 && !isJpeg(original.mimeType())) {
+            throw new IllegalStateException("当前仅支持 JPEG 普通照片旋转保存");
+        }
+
         HttpsURLConnection connection = client.resource(asset.assetId(), original.resourceId());
         int status = connection.getResponseCode();
         if (status != 200) throw new IllegalStateException("原图请求失败：HTTP " + status);
@@ -57,6 +73,7 @@ public final class OriginalSaver {
             if (!actualHash.equalsIgnoreCase(expectedHash)) {
                 throw new SecurityException("原图 SHA-256 校验失败，已取消保存");
             }
+            if (normalizedRotation != 0) applyExifRotation(resolver, uri, normalizedRotation);
             ContentValues ready = new ContentValues();
             ready.put(MediaStore.Images.Media.IS_PENDING, 0);
             resolver.update(uri, ready, null, null);
@@ -66,6 +83,33 @@ public final class OriginalSaver {
             throw error;
         } finally {
             connection.disconnect();
+        }
+    }
+
+    private static boolean isJpeg(String mimeType) {
+        return "image/jpeg".equalsIgnoreCase(mimeType) || "image/jpg".equalsIgnoreCase(mimeType);
+    }
+
+    private static int normalizeRotation(int rotationDegrees) {
+        int normalized = ((rotationDegrees % 360) + 360) % 360;
+        if (normalized != 0 && normalized != 90 && normalized != 180 && normalized != 270) {
+            throw new IllegalArgumentException("照片旋转角度必须为 0/90/180/270");
+        }
+        return normalized;
+    }
+
+    private static void applyExifRotation(ContentResolver resolver, Uri uri, int rotationDegrees) throws Exception {
+        int orientation = switch (rotationDegrees) {
+            case 90 -> ExifInterface.ORIENTATION_ROTATE_90;
+            case 180 -> ExifInterface.ORIENTATION_ROTATE_180;
+            case 270 -> ExifInterface.ORIENTATION_ROTATE_270;
+            default -> ExifInterface.ORIENTATION_NORMAL;
+        };
+        try (ParcelFileDescriptor descriptor = resolver.openFileDescriptor(uri, "rw")) {
+            if (descriptor == null) throw new IllegalStateException("系统相册无法更新照片方向");
+            ExifInterface exif = new ExifInterface(descriptor.getFileDescriptor());
+            exif.setAttribute(ExifInterface.TAG_ORIENTATION, Integer.toString(orientation));
+            exif.saveAttributes();
         }
     }
 }
