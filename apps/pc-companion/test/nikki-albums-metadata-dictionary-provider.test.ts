@@ -9,6 +9,7 @@ import {
   loadMetadataDictionaryRemoteConfigFile
 } from '../src/metadata/MetadataDictionaryRemoteConfigFile.js'
 import { NikkiAlbumsMetadataDictionaryProvider } from '../src/metadata/NikkiAlbumsMetadataDictionaryProvider.js'
+import { composeMetadataDictionaryProvider } from '../src/metadata/MetadataStartupComposition.js'
 
 const PACKAGE_KEY = Buffer.from('9C46C6BF431F5AFFF97A2002AEDFA8B7', 'ascii')
 
@@ -165,4 +166,14 @@ test('Nikki Albums dictionary source remains explicit opt-in and rejects insecur
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('clean-install dictionary composition defaults to the public Nikki Albums provider', () => {
+  const provider = composeMetadataDictionaryProvider(undefined)
+  assert.ok(provider instanceof NikkiAlbumsMetadataDictionaryProvider)
+  assert.equal(provider.id, 'nikki-albums-public')
+})
+
+test('explicit dictionary disable remains authoritative over the clean-install default', () => {
+  assert.equal(composeMetadataDictionaryProvider({ enabled: false }), undefined)
 })

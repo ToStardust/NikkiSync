@@ -49,7 +49,7 @@ function isProvider(value: unknown): value is MetadataProviderConfig {
   return provider.endpoint === undefined || (typeof provider.endpoint === 'string' && /^https:\/\//i.test(provider.endpoint))
 }
 
-/** Optional hot-update config. Invalid/missing files simply leave online enrichment disabled. */
+/** Optional hot-update config. Startup composition supplies the known NUAN5 default when absent. */
 export function loadMetadataResolverConfigFile(filePath: string): MetadataResolverConfigFile | undefined {
   try {
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as MetadataResolverConfigFile

@@ -3,13 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
 import { qrSvg } from './qr.js'
-import { RemoteJsonMetadataResolver } from './metadata/RemoteJsonMetadataResolver.js'
-import { createMetadataResolverFromConfig, loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
+import { loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
-import {
-  createMetadataDictionaryProviderFromConfig,
-  loadMetadataDictionaryRemoteConfigFile
-} from './metadata/MetadataDictionaryRemoteConfigFile.js'
+import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
+import { composeMetadataDictionaryProvider, composeMetadataResolver } from './metadata/MetadataStartupComposition.js'
 import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
@@ -61,13 +58,12 @@ async function main(): Promise<void> {
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
-  const metadataDictionaryRemote = createMetadataDictionaryProviderFromConfig(metadataDictionaryRemoteConfig)
+  const metadataDictionaryRemote = composeMetadataDictionaryProvider(metadataDictionaryRemoteConfig)
   const metadataThumbnailCache = new MetadataThumbnailCache({ cacheDir: METADATA_THUMBNAIL_CACHE_DIR })
   const cachedGameRoot = readCachedGameRoot()
   const gameRootCandidates = [cachedGameRoot, process.env.NIKKISYNC_GAME_ROOT, DEFAULT_GAME_ROOT]
     .filter((candidate): candidate is string => Boolean(candidate?.trim()))
 
-  const fileResolver = createMetadataResolverFromConfig(resolverFile)
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
     endpoint: process.env.NIKKISYNC_METADATA_RESOLVER_URL,
     id: process.env.NIKKISYNC_METADATA_RESOLVER_ID ?? 'remote-json',
@@ -75,13 +71,7 @@ async function main(): Promise<void> {
       ? { version: process.env.NIKKISYNC_METADATA_RESOLVER_VERSION }
       : {})
   } : undefined
-  // Local hot-config has precedence. Explicit enabled:false disables all online enrichment,
-  // including the legacy environment-variable fallback.
-  const resolver = resolverFile?.enabled === false
-    ? undefined
-    : fileResolver ?? (environmentResolverConfig
-        ? new RemoteJsonMetadataResolver(environmentResolverConfig)
-        : undefined)
+  const resolver = composeMetadataResolver(resolverFile, environmentResolverConfig)
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,

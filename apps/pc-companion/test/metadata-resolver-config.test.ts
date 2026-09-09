@@ -10,6 +10,8 @@ import {
 } from '../src/metadata/MetadataResolverConfigFile.js'
 import { MetadataResolverPipeline } from '../src/metadata/MetadataResolverPipeline.js'
 import { RemoteJsonMetadataResolver } from '../src/metadata/RemoteJsonMetadataResolver.js'
+import { Nuan5CompatibleResolver } from '../src/metadata/Nuan5CompatibleResolver.js'
+import { composeMetadataResolver } from '../src/metadata/MetadataStartupComposition.js'
 
 test('resolver config keeps legacy single-provider shape compatible', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-resolver-legacy-'))
@@ -68,4 +70,23 @@ test('resolver config rejects invalid providers arrays and insecure remote endpo
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('clean-install resolver composition defaults to NUAN5-compatible', () => {
+  const resolver = composeMetadataResolver(undefined, undefined)
+  assert.ok(resolver instanceof Nuan5CompatibleResolver)
+  assert.equal(resolver.id, 'nuan5-compatible')
+})
+
+test('explicit resolver disable remains authoritative over the clean-install default', () => {
+  assert.equal(composeMetadataResolver({ enabled: false }, undefined), undefined)
+})
+
+test('environment resolver still overrides the clean-install default when configured', () => {
+  const resolver = composeMetadataResolver(undefined, {
+    endpoint: 'https://metadata.example.test/resolve',
+    id: 'environment-provider'
+  })
+  assert.ok(resolver instanceof RemoteJsonMetadataResolver)
+  assert.equal(resolver.id, 'environment-provider')
 })

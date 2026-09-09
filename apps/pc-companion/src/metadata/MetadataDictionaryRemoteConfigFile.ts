@@ -38,8 +38,8 @@ function validHeaders(value: unknown): value is Record<string, string> {
 }
 
 /**
- * Optional, explicit opt-in for bodyless remote dictionary GETs.
- * Invalid, missing, or non-HTTPS configuration leaves remote updates disabled.
+ * Optional config for bodyless remote dictionary GETs. Invalid or non-HTTPS
+ * configuration is ignored; clean-install startup supplies the public default.
  */
 export function loadMetadataDictionaryRemoteConfigFile(filePath: string): MetadataDictionaryRemoteConfigFile | undefined {
   try {

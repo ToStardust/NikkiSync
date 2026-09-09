@@ -49,10 +49,10 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex')
 }
 
-async function md5Prefix(filePath: string, endExclusive: number): Promise<string> {
+async function md5Range(filePath: string, start: number, endExclusive: number): Promise<string> {
   const hash = createHash('md5')
   await new Promise<void>((resolve, reject) => {
-    const input = createReadStream(filePath, { start: 0, end: endExclusive - 1 })
+    const input = createReadStream(filePath, { start, end: endExclusive - 1 })
     input.on('data', (chunk) => hash.update(chunk))
     input.on('end', resolve)
     input.on('error', reject)
@@ -81,6 +81,10 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
     if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
     const suffix = trailer.subarray(44).toString('ascii')
     if (suffix !== '' && !/^\[V2\]\d{7}$/.test(suffix)) return {}
+    const boundary = windowStart + finalEoi
+    const versionedMatch = /^\[V2\](\d{7})$/.exec(suffix)
+    const hashLength = versionedMatch ? Number(versionedMatch[1]) : boundary
+    if (!Number.isSafeInteger(hashLength) || hashLength <= 0 || hashLength > boundary) return { token }
 
     const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), finalEoi - 1)
     if (previousEoi < 0) return { token }
@@ -90,8 +94,10 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
     const printable = /^[\x20-\x7e]+$/.test(payload)
     if (!printable) return { token }
     // NUAN5's current decode-photo2 contract hashes every source byte before the final EOI.
-    // The bytes remain local; only this 32-character digest is retained for the resolver.
-    return { token, payload, nuan5Md5: await md5Prefix(filePath, windowStart + finalEoi) }
+    // [V2]N changes that boundary to the final N bytes before the delimiter EOI. The bytes
+    // remain local; only this 32-character digest is retained for the resolver.
+    const hashStart = versionedMatch ? boundary - hashLength : 0
+    return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary) }
   } finally { await handle.close() }
 }
 

@@ -17,7 +17,7 @@
 
 - 旧版 EOF 尾部为 `FFD9 + 44-byte token`，总尾长 46 bytes。
 - 2.9 EOF 尾部为 `FFD9 + 44-byte token + [V2] + 7 位数字`，总尾长 57 bytes。
-- 因此 2.9 不能再用“从 EOF 固定回退 46 bytes”定位最终分隔符；NUAN5 MD5 边界应为最终 `FFD9` 起点（即最终分隔符之前的全部 JPEG/custom bytes）。
+- 因此 2.9 不能再用“从 EOF 固定回退 46 bytes”定位最终分隔符；真实 `[V2]N` 后缀中的 `N` 是 NUAN5 的 hash window，MD5 应取最终分隔符 `FFD9` 之前的最后 `N` bytes（本样本为 `N=2,383,250`）。
 
 ## 修复后真实重扫
 
@@ -26,3 +26,10 @@
 - 含 native token 的资产 `127 → 176`；含 payload 和本地 MD5 的资产均为 `176`。
 - 上述旧版和 2.9 样本重扫后均为 token 长度 44、payload 存在、MD5 存在。
 
+## NUAN5 / dictionary E2E
+
+- 旧版样本真实解析成功：相机参数 + 14 件服装。
+- 2.9 样本真实解析成功：相机参数 + 光照参数 + 16 件服装。
+- 公开服装字典 bodyless GET 成功更新；不包含照片 UID、token、payload 或媒体字节。
+- 现有图库 resolver 重跑最终为 `164 resolved / 12 failed`。12 个失败均为 NUAN5 返回“没有发现可用的元数据”，不是网络或扫描失败。
+- NUAN5 resolver 增加了串行请求节流，默认间隔 1 秒，避免服务端 0.5 秒/IP 限制触发批处理 429。

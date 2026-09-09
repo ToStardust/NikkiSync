@@ -6,6 +6,8 @@ export interface Nuan5CompatibleResolverConfig {
   id?: string
   version?: string
   timeoutMs?: number
+  /** Minimum delay between request starts; NUAN5 currently limits this to 0.5s per photo. */
+  minIntervalMs?: number
 }
 
 type DecodedPhoto = Record<string, unknown>
@@ -63,6 +65,8 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
   readonly id: string
   readonly version: string | undefined
   private readonly endpoint: string
+  private nextRequestAt = 0
+  private requestGate: Promise<void> = Promise.resolve()
 
   constructor(private readonly config: Nuan5CompatibleResolverConfig = {}) {
     this.id = config.id ?? 'nuan5-compatible'
@@ -70,7 +74,23 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
     this.endpoint = config.endpoint ?? 'https://nuan5.pro/api/decode-photo2'
   }
 
+  private async waitForRequestSlot(): Promise<void> {
+    const previous = this.requestGate
+    let release!: () => void
+    this.requestGate = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      const delay = this.nextRequestAt - Date.now()
+      if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay))
+      // Keep a conservative margin over the server's documented 0.5s window.
+      this.nextRequestAt = Date.now() + (this.config.minIntervalMs ?? 1000)
+    } finally {
+      release()
+    }
+  }
+
   async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+    await this.waitForRequestSlot()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 12_000)
     try {

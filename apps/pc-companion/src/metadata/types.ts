@@ -23,7 +23,7 @@ export interface PhotoMetadataResolveRequest {
   nativeParamPayload?: string
   /** MD5 of the ASCII payload, exposed because existing compatible resolvers derive a photo tuple hash. */
   nativeParamPayloadMd5?: string
-  /** MD5 of local JPEG bytes before the final metadata delimiter EOI, required by NUAN5 decode-photo2. */
+  /** MD5 of the legacy JPEG prefix or the final [V2]N bytes before the metadata delimiter EOI. */
   nativeParamNuan5Md5?: string
   /** Scanner-verified opaque Base64 envelope. Length is diagnostic only; small envelopes are valid too. */
   nativeParamPayloadFormat?: 'base64-envelope'

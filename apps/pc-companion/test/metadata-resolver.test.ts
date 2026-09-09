@@ -53,6 +53,30 @@ test('NUAN5 resolver sends the verified decode-photo2 tuple without source media
   }
 })
 
+test('NUAN5 resolver spaces sequential requests to respect the endpoint rate limit', async () => {
+  const requestTimes: number[] = []
+  const server = http.createServer(async (request, response) => {
+    requestTimes.push(Date.now())
+    for await (const _chunk of request) { /* drain request */ }
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify([['10001', [{}]]]))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address() as { port: number }
+    const resolver = new Nuan5CompatibleResolver({ endpoint: `http://127.0.0.1:${address.port}/api/decode-photo2`, minIntervalMs: 20 })
+    const request = {
+      assetId: 'asset_rate', uid: '10001', nativeParamPayload: Buffer.from('payload').toString('base64'),
+      nativeParamToken: Buffer.from('token').toString('base64'), nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef'
+    }
+    await resolver.resolve(request); await resolver.resolve(request)
+    assert.equal(requestTimes.length, 2)
+    assert.ok(requestTimes[1]! - requestTimes[0]! >= 15)
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
 test('metadata resolver enriches decoded IDs with the local dictionary without additional resolver calls', async () => {
   const db = new DatabaseManager(':memory:')
   db.initialize()

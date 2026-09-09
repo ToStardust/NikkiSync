@@ -26,7 +26,7 @@ export interface DiscoveredResource {
   nativeParamToken?: string
   /** Opaque printable parameter payload stored between the main JPEG EOI and the metadata delimiter EOI. PC-only resolver input. */
   nativeParamPayload?: string
-  /** NUAN5-compatible MD5 of local JPEG bytes before the final metadata delimiter EOI. */
+  /** NUAN5-compatible MD5 of the legacy JPEG prefix or the final [V2]N bytes before the delimiter EOI. */
   nativeParamNuan5Md5?: string
 }
 
