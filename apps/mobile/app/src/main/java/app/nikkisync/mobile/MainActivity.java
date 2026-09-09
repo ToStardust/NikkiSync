@@ -71,6 +71,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private final SamsungMotionPhotoSaver samsungMotionPhotoSaver = new SamsungMotionPhotoSaver();
     private final VivoLivePhotoSaver vivoLivePhotoSaver = new VivoLivePhotoSaver();
     private final HuaweiMovingPhotoSaver huaweiMovingPhotoSaver = new HuaweiMovingPhotoSaver();
+    private final Map<String, Integer> rotationByAssetId = new LinkedHashMap<>();
 
     private ServerStore serverStore;
     private DeviceIdentity identity;
@@ -280,14 +281,19 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                         else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) oppoLivePhotoSaver.save(this, current, asset);
                         else if (manufacturer.contains("samsung")) samsungMotionPhotoSaver.save(this, current, asset);
                         else motionPhotoSaver.save(this, current, asset);
-                    } else originalSaver.save(this, current, asset);
+                    } else {
+                        int rotationDegrees = rotationByAssetId.getOrDefault(asset.assetId(), 0);
+                        originalSaver.save(this, current, asset, rotationDegrees);
+                    }
                     success++;
                 }
                 catch (Exception ignored) { failure++; }
             }
             int saved = success, failed = failure; boolean motion = hadMotion;
             main.post(() -> {
-                setBusy(false); saveButton.setEnabled(true); adapter.clearSelection(); updateSelection();
+                setBusy(false); saveButton.setEnabled(true);
+                for (AssetSummary item : selected) rotationByAssetId.remove(item.assetId());
+                adapter.clearSelection(); updateSelection();
                 String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
                 if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
                 toast(result); setStatus("已连接 · 实时同步中");
@@ -301,8 +307,39 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(14), dp(14), dp(14), dp(20)); body.setBackgroundColor(Color.WHITE);
         scroll.addView(body, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(0xFFF0EDEA);
-        body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(480)));
+        int previewSize = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(28));
+        body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewSize));
         imageLoader.load(client, asset, image);
+
+        int[] rotationHolder = new int[]{rotationByAssetId.getOrDefault(asset.assetId(), 0)};
+        image.setRotation(rotationHolder[0]);
+        if (!asset.hasMotion()) {
+            LinearLayout rotationControls = new LinearLayout(this); rotationControls.setGravity(Gravity.CENTER_VERTICAL); rotationControls.setPadding(0, dp(8), 0, dp(2));
+            Button rotateLeft = button("左转 90°");
+            Button rotateRight = button("右转 90°");
+            TextView rotationLabel = text(rotationLabel(rotationHolder[0]), 12, true, getColor(R.color.text_secondary));
+            rotationLabel.setGravity(Gravity.CENTER);
+            rotateLeft.setOnClickListener(v -> {
+                rotationHolder[0] = normalizeRotation(rotationHolder[0] - 90);
+                rememberRotation(asset.assetId(), rotationHolder[0]);
+                image.setRotation(rotationHolder[0]);
+                rotationLabel.setText(rotationLabel(rotationHolder[0]));
+            });
+            rotateRight.setOnClickListener(v -> {
+                rotationHolder[0] = normalizeRotation(rotationHolder[0] + 90);
+                rememberRotation(asset.assetId(), rotationHolder[0]);
+                image.setRotation(rotationHolder[0]);
+                rotationLabel.setText(rotationLabel(rotationHolder[0]));
+            });
+            rotationControls.addView(rotateLeft);
+            rotationControls.addView(rotationLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            rotationControls.addView(rotateRight);
+            body.addView(rotationControls);
+        } else {
+            TextView rotationNote = text("LIVE 照片暂不单独旋转：后续需同时处理静态图与视频", 11, false, getColor(R.color.text_secondary));
+            rotationNote.setPadding(dp(4), dp(8), dp(4), dp(2)); body.addView(rotationNote);
+        }
+
         String description = (asset.hasMotion() ? "LIVE · " : "") + (asset.width() == null ? "" : asset.width() + " × " + asset.height()) +
                 (asset.capturedAt() == null ? "" : "\n" + asset.capturedAt());
         TextView info = text(description, 13, false, getColor(R.color.text_secondary)); info.setPadding(dp(4), dp(12), dp(4), dp(10)); body.addView(info);
@@ -325,6 +362,19 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         Button select = button("选择保存原图"); select.setOnClickListener(v -> { adapter.toggle(asset); updateSelection(); dialog.dismiss(); }); body.addView(select);
         dialog.setContentView(scroll); dialog.show();
         if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+    }
+
+    private void rememberRotation(String assetId, int rotationDegrees) {
+        if (rotationDegrees == 0) rotationByAssetId.remove(assetId);
+        else rotationByAssetId.put(assetId, rotationDegrees);
+    }
+
+    private static int normalizeRotation(int rotationDegrees) {
+        return ((rotationDegrees % 360) + 360) % 360;
+    }
+
+    private static String rotationLabel(int rotationDegrees) {
+        return rotationDegrees == 0 ? "原方向" : "旋转 " + rotationDegrees + "°";
     }
 
     private void renderClothingSection(AssetSummary asset, AssetDetail detail, LinearLayout section) {
@@ -364,11 +414,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 rowLp.setMargins(0, 0, 0, dp(7));
 
-                if (!clothing.optString("thumbnail", "").isBlank()) {
-                    ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER); icon.setBackground(roundRect(0xFFECE8E4, 10));
-                    row.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
-                    imageLoader.loadClothingThumbnail(client, asset.assetId(), id, cacheVersion, icon);
-                }
+                ImageView icon = new ImageView(this); icon.setScaleType(ImageView.ScaleType.FIT_CENTER); icon.setBackground(roundRect(0xFFECE8E4, 10));
+                row.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
+                imageLoader.loadClothingThumbnail(client, asset.assetId(), id, cacheVersion, icon);
 
                 LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL); labels.setPadding(dp(10), 0, 0, 0);
                 TextView nameView = text(name, 14, true, getColor(R.color.text_primary)); labels.addView(nameView);
