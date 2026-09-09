@@ -24,10 +24,12 @@ const CLOTH_TYPE_NAMES = new Map<number, string>([
 
 type HotUpdateFile = { path: string, downloadLink: string }
 type HotUpdateGroup = { id: string, versionId: string, files: HotUpdateFile[] }
+type NetworkImageTemplate = { baseUrl: string, replace: string }
 
 interface ParsedNuan5Database {
   clothTypes: Map<number, number>
-  clothImage?: { baseUrl: string, replace: string }
+  clothImage?: NetworkImageTemplate
+  clothTypeImage?: NetworkImageTemplate
 }
 
 export interface NikkiAlbumsMetadataDictionaryProviderConfig {
@@ -158,6 +160,12 @@ export function decryptNikkiAlbumsPackage(input: Buffer): Buffer {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()])
 }
 
+function renderTemplate(template: NetworkImageTemplate | undefined, value: string | number): string | undefined {
+  if (!template?.replace) return undefined
+  const rendered = template.baseUrl.split(template.replace).join(String(value))
+  return /^https:\/\//i.test(rendered) ? rendered : undefined
+}
+
 export function buildDictionaryManifest(input: {
   provider: string
   providerVersion: string
@@ -169,16 +177,16 @@ export function buildDictionaryManifest(input: {
   for (const [id, clothType] of [...input.database.clothTypes.entries()].sort((a, b) => a[0] - b[0])) {
     const name = names.get(String(id))
     const category = CLOTH_TYPE_NAMES.get(clothType)
-    const image = input.database.clothImage
-    const thumbnail = image && image.replace
-      ? image.baseUrl.split(image.replace).join(String(id))
-      : undefined
+    const thumbnail = renderTemplate(input.database.clothImage, id)
+    const typeThumbnail = renderTemplate(input.database.clothTypeImage, clothType)
+    const thumbnailFallbacks = typeThumbnail && typeThumbnail !== thumbnail ? [typeThumbnail] : undefined
     entries.push({
       kind: 'clothing',
       id: String(id),
       ...(name ? { name } : {}),
       ...(category ? { category } : {}),
-      ...(thumbnail && /^https:\/\//i.test(thumbnail) ? { thumbnail } : {}),
+      ...(thumbnail ? { thumbnail } : {}),
+      ...(thumbnailFallbacks ? { thumbnailFallbacks } : {}),
       raw: { clothType, source: 'nikki-albums-public' }
     })
   }
@@ -202,9 +210,20 @@ function getNestedStringMap(value: unknown, path: string[]): Map<string, string>
     .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
+function parseNetworkImageTemplate(buffer: Buffer): NetworkImageTemplate | undefined {
+  let baseUrl = ''
+  let replace = ''
+  for (const imageField of readProtobufFields(buffer)) {
+    if (imageField.number === 1 && Buffer.isBuffer(imageField.value)) baseUrl = imageField.value.toString('utf8')
+    if (imageField.number === 2 && Buffer.isBuffer(imageField.value)) replace = imageField.value.toString('utf8')
+  }
+  return baseUrl ? { baseUrl, replace } : undefined
+}
+
 function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
   const clothTypes = new Map<number, number>()
   let clothImage: ParsedNuan5Database['clothImage']
+  let clothTypeImage: ParsedNuan5Database['clothTypeImage']
   for (const field of readProtobufFields(buffer)) {
     if (field.number === 11 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
       let id: number | undefined
@@ -220,20 +239,18 @@ function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
       }
       if (id !== undefined && clothType !== undefined) clothTypes.set(id, clothType)
     } else if (field.number === 20001 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
-      const clothField = readProtobufFields(field.value)
-        .find((candidate) => candidate.number === 4 && candidate.wireType === 2 && Buffer.isBuffer(candidate.value))
-      if (clothField && Buffer.isBuffer(clothField.value)) {
-        let baseUrl = ''
-        let replace = ''
-        for (const imageField of readProtobufFields(clothField.value)) {
-          if (imageField.number === 1 && Buffer.isBuffer(imageField.value)) baseUrl = imageField.value.toString('utf8')
-          if (imageField.number === 2 && Buffer.isBuffer(imageField.value)) replace = imageField.value.toString('utf8')
-        }
-        if (baseUrl) clothImage = { baseUrl, replace }
+      for (const imageField of readProtobufFields(field.value)) {
+        if (imageField.wireType !== 2 || !Buffer.isBuffer(imageField.value)) continue
+        if (imageField.number === 4) clothImage = parseNetworkImageTemplate(imageField.value)
+        if (imageField.number === 7) clothTypeImage = parseNetworkImageTemplate(imageField.value)
       }
     }
   }
-  return { clothTypes, ...(clothImage ? { clothImage } : {}) }
+  return {
+    clothTypes,
+    ...(clothImage ? { clothImage } : {}),
+    ...(clothTypeImage ? { clothTypeImage } : {})
+  }
 }
 
 type ProtoField = { number: number, wireType: number, value: bigint | Buffer }
