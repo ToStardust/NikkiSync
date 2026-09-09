@@ -69,6 +69,10 @@ const saver = text('app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.j
 expect(saver.includes('X-NikkiSync-SHA256'), 'original download hash verification is missing')
 expect(saver.includes('MediaStore.Images'), 'MediaStore original export is missing')
 expect(saver.includes('IS_PENDING'), 'atomic MediaStore write is missing')
+expect(saver.includes('rotationDegrees'), 'ordinary-photo export must accept the selected rotation')
+expect(saver.includes('ExifInterface.ORIENTATION_ROTATE_90'), '90-degree JPEG orientation export is missing')
+expect(saver.includes('ExifInterface.ORIENTATION_ROTATE_180'), '180-degree JPEG orientation export is missing')
+expect(saver.includes('ExifInterface.ORIENTATION_ROTATE_270'), '270-degree JPEG orientation export is missing')
 
 const motionSaver = text('app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java')
 expect(motionSaver.includes('Camera:MotionPhoto'), 'Motion Photo camera XMP metadata is missing')
@@ -84,6 +88,10 @@ expect(mainActivity.includes('renderClothingSection'), 'M4.2.8 clothing detail r
 expect(mainActivity.includes('穿搭 · '), 'M4.2.8 clothing section heading is missing')
 expect(mainActivity.includes('baseMakeup') && mainActivity.includes('底妆'), 'M4.2.8 clothing category labels are missing')
 expect(mainActivity.includes('new ScrollView(this)'), 'photo detail must remain scrollable when clothing rows are present')
+expect(mainActivity.includes('rotationByAssetId'), 'ordinary-photo rotation state must survive until batch save')
+expect(mainActivity.includes('左转 90°') && mainActivity.includes('右转 90°'), 'photo viewer rotation controls are missing')
+expect(mainActivity.includes('asset.hasMotion()'), 'rotation UI must keep Live Photo separate from ordinary JPEG export')
+expect(mainActivity.includes('originalSaver.save(this, current, asset, rotationDegrees)'), 'selected ordinary-photo rotation is not wired into export')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
@@ -92,6 +100,7 @@ expect(client.includes('/clothing/'), 'M4.2.8 clothing thumbnail must be request
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
+expect(imageLoader.includes('showClothingPlaceholder'), 'missing clothing thumbnails must degrade to a visible placeholder instead of a blank tile')
 expect(!imageLoader.includes('https://images.'), 'mobile image loader must not embed a third-party clothing image host')
 
 const huaweiSaver = text('app/src/main/java/app/nikkisync/mobile/media/HuaweiMovingPhotoSaver.java')
@@ -106,5 +115,5 @@ for (const forbidden of ['firebase', 'retrofit', 'okhttp', 'cloudinary', 's3.ama
 console.log('M2 mobile source contract: OK')
 console.log(`validated files: ${required.length}`)
 console.log('transport: pinned HTTPS + Ed25519 signed requests + mDNS + WebSocket')
-console.log('original export: MediaStore + SHA-256 verification')
-console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy')
+console.log('original export: MediaStore + SHA-256 verification + selected JPEG rotation')
+console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
