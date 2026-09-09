@@ -64,6 +64,23 @@ test('classifier derives NUAN5 MD5 from local JPEG bytes before the final EOI', 
   await rm(f.root, { recursive: true, force: true })
 })
 
+test('classifier extracts the 2.9 trailer token and payload before the versioned suffix', async () => {
+  const f = await fixture(); const classifier = new ResourceClassifier()
+  const target = path.join(f.uid, 'NikkiPhotos_HighQuality', 'Nuan5-v29.jpeg')
+  const payload = Buffer.from('parameter-envelope-data-v29').toString('base64')
+  const token = Buffer.alloc(32, 11).toString('base64')
+  const prefix = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0xff, 0xd9])
+  const suffix = Buffer.from('[V2]1234567', 'ascii')
+  await writeFile(target, Buffer.concat([
+    prefix, Buffer.from(payload, 'ascii'), Buffer.from([0xff, 0xd9]), Buffer.from(token, 'ascii'), suffix
+  ]))
+  const resource = await classifier.classify(target, f.photos)
+  assert.equal(resource.nativeParamPayload, payload)
+  assert.equal(resource.nativeParamToken, token)
+  assert.equal(resource.nativeParamNuan5Md5, createHash('md5').update(Buffer.concat([prefix, Buffer.from(payload, 'ascii')])).digest('hex'))
+  await rm(f.root, { recursive: true, force: true })
+})
+
 test('scanner persists the local NUAN5 MD5 without persisting source bytes', async () => {
   const f = await fixture()
   const target = path.join(f.uid, 'NikkiPhotos_HighQuality', 'Persisted.jpeg')

@@ -64,31 +64,34 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
   if ((ext !== '.jpg' && ext !== '.jpeg') || size < 46) return {}
   const handle = await open(filePath, 'r')
   try {
-    const tail = Buffer.alloc(46)
-    const { bytesRead } = await handle.read(tail, 0, tail.length, size - tail.length)
-    if (bytesRead !== tail.length || tail[0] !== 0xff || tail[1] !== 0xd9) return {}
-    const token = tail.subarray(2).toString('ascii')
-    if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
-
     // Current Infinity Nikki photos place a printable parameter blob before the delimiter EOI
-    // immediately preceding the final 44-char token. Read a bounded tail window and locate the
-    // previous EOI; this avoids loading multi-megabyte source JPEGs into memory during scanning.
+    // immediately preceding the final token. Since game 2.9 appends a versioned suffix after
+    // the token, locate the final EOI inside a bounded tail window instead of assuming it is
+    // exactly 46 bytes from EOF.
     const windowSize = Math.min(size, 2 * 1024 * 1024)
     const windowStart = size - windowSize
     const window = Buffer.alloc(windowSize)
     const result = await handle.read(window, 0, window.length, windowStart)
-    if (result.bytesRead !== window.length) return { token }
-    const delimiterOffset = window.length - 46
-    const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), delimiterOffset - 1)
+    if (result.bytesRead !== window.length) return {}
+    const finalEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]))
+    if (finalEoi < 0) return {}
+    const trailer = window.subarray(finalEoi + 2)
+    if (trailer.length < 44) return {}
+    const token = trailer.subarray(0, 44).toString('ascii')
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
+    const suffix = trailer.subarray(44).toString('ascii')
+    if (suffix !== '' && !/^\[V2\]\d{7}$/.test(suffix)) return {}
+
+    const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), finalEoi - 1)
     if (previousEoi < 0) return { token }
-    const payloadBytes = window.subarray(previousEoi + 2, delimiterOffset)
+    const payloadBytes = window.subarray(previousEoi + 2, finalEoi)
     if (payloadBytes.length === 0 || payloadBytes.length > 2 * 1024 * 1024) return { token }
     const payload = payloadBytes.toString('ascii')
     const printable = /^[\x20-\x7e]+$/.test(payload)
     if (!printable) return { token }
     // NUAN5's current decode-photo2 contract hashes every source byte before the final EOI.
     // The bytes remain local; only this 32-character digest is retained for the resolver.
-    return { token, payload, nuan5Md5: await md5Prefix(filePath, size - 46) }
+    return { token, payload, nuan5Md5: await md5Prefix(filePath, windowStart + finalEoi) }
   } finally { await handle.close() }
 }
 
