@@ -72,11 +72,18 @@ function languageFixture(id: number, name: string): Buffer {
 }
 
 function databaseFixture(id: number, clothType: number): Buffer {
-  const imageItem = Buffer.concat([
+  const clothImageItem = Buffer.concat([
     protoBytesField(1, Buffer.from('https://icons.example.test/{id}.png')),
     protoBytesField(2, Buffer.from('{id}'))
   ])
-  const networkImage = protoBytesField(4, imageItem)
+  const clothTypeImageItem = Buffer.concat([
+    protoBytesField(1, Buffer.from('https://icons.example.test/type/{type}.png')),
+    protoBytesField(2, Buffer.from('{type}'))
+  ])
+  const networkImage = Buffer.concat([
+    protoBytesField(4, clothImageItem),
+    protoBytesField(7, clothTypeImageItem)
+  ])
   const cloth = protoVarintField(1, clothType)
   const mapEntry = Buffer.concat([
     protoVarintField(1, id),
@@ -128,6 +135,7 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
       name: '测试底妆',
       category: 'baseMakeup',
       thumbnail: `https://icons.example.test/${clothingId}.png`,
+      thumbnailFallbacks: ['https://icons.example.test/type/81.png'],
       raw: { clothType: 81, source: 'nikki-albums-public' }
     }])
     assert.deepEqual(requests.map((request) => request.url), [manifestUrl, langUrl, dbUrl])
