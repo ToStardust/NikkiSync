@@ -3,6 +3,9 @@ package app.nikkisync.mobile.media;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.LruCache;
@@ -49,20 +52,21 @@ public final class ImageLoader {
         String resourceId = asset.thumbnailResourceId() != null ? asset.thumbnailResourceId() : asset.previewResourceId();
         String key = asset.assetId() + ":" + resourceId + ":r" + asset.revision();
         if (resourceId == null) { target.setTag(key); target.setImageDrawable(null); return; }
-        loadNetwork(key, target, () -> client.resource(asset.assetId(), resourceId));
+        loadNetwork(key, target, () -> client.resource(asset.assetId(), resourceId), null);
     }
 
     public void loadClothingThumbnail(NikkiSyncClient client, String assetId, String clothingId, String cacheVersion, ImageView target) {
         String key = "clothing:" + assetId + ":" + clothingId + ":" + (cacheVersion == null ? "" : cacheVersion);
-        loadNetwork(key, target, () -> client.clothingThumbnail(assetId, clothingId));
+        loadNetwork(key, target, () -> client.clothingThumbnail(assetId, clothingId), () -> showClothingPlaceholder(target));
     }
 
-    private void loadNetwork(String key, ImageView target, ConnectionFactory connectionFactory) {
+    private void loadNetwork(String key, ImageView target, ConnectionFactory connectionFactory, Runnable onFailure) {
         target.setTag(key);
         target.setImageDrawable(null);
         Bitmap cached = cache.get(key);
         if (cached != null) { target.setImageBitmap(cached); return; }
         executor.execute(() -> {
+            HttpsURLConnection connection = null;
             try {
                 File disk = diskFile(key);
                 if (disk.isFile()) {
@@ -76,8 +80,9 @@ public final class ImageLoader {
                     }
                     disk.delete();
                 }
-                HttpsURLConnection connection = connectionFactory.open();
-                if (connection.getResponseCode() != 200) return;
+                connection = connectionFactory.open();
+                int responseCode = connection.getResponseCode();
+                if (responseCode != 200) throw new IllegalStateException("image request HTTP " + responseCode);
                 Bitmap bitmap;
                 File temp = new File(diskDir, disk.getName() + ".part");
                 try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(temp)) {
@@ -85,7 +90,7 @@ public final class ImageLoader {
                     while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
                 }
                 bitmap = BitmapFactory.decodeFile(temp.getAbsolutePath());
-                if (bitmap == null) { temp.delete(); return; }
+                if (bitmap == null) { temp.delete(); throw new IllegalStateException("image decode failed"); }
                 if (!temp.renameTo(disk)) {
                     try (InputStream input = new FileInputStream(temp); FileOutputStream output = new FileOutputStream(disk)) {
                         byte[] buffer = new byte[64 * 1024]; int read;
@@ -95,8 +100,26 @@ public final class ImageLoader {
                 }
                 cache.put(key, bitmap);
                 main.post(() -> { if (key.equals(target.getTag())) target.setImageBitmap(bitmap); });
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+                if (onFailure != null) main.post(() -> { if (key.equals(target.getTag())) onFailure.run(); });
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
         });
+    }
+
+    /** Keep a failed clothing image visible and diagnosable instead of leaving an empty grey tile. */
+    private void showClothingPlaceholder(ImageView target) {
+        final int size = 128;
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(Color.rgb(236, 232, 228));
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.rgb(112, 105, 100));
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(25f);
+        canvas.drawText("暂无图", size / 2f, size / 2f + 9f, paint);
+        target.setImageBitmap(bitmap);
     }
 
     private File diskFile(String key) throws Exception {
