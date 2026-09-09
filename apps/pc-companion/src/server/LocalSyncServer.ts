@@ -322,7 +322,7 @@ export class LocalSyncServer {
     json(res, 200, body)
   }
 
-  private clothingThumbnailSource(assetId: string, clothingId: string): { sourceUrl: string; versionKey: string } | undefined {
+  private clothingThumbnailSource(assetId: string, clothingId: string): { sourceUrls: string[]; versionKey: string } | undefined {
     const row = this.reads.getAsset(assetId)
     if (!row?.metadata_json) return undefined
     try {
@@ -332,10 +332,22 @@ export class LocalSyncServer {
       const clothing = clothes
         .map(objectOf)
         .find((item) => item && String(item.id ?? '') === clothingId)
-      if (!clothing || typeof clothing.thumbnail !== 'string' || !/^https:\/\//i.test(clothing.thumbnail)) return undefined
+      if (!clothing) return undefined
+
+      const sourceUrls: string[] = []
+      const addSource = (value: unknown) => {
+        if (typeof value !== 'string' || !/^https:\/\//i.test(value) || sourceUrls.includes(value)) return
+        sourceUrls.push(value)
+      }
+      addSource(clothing.thumbnail)
+      if (Array.isArray(clothing.thumbnailFallbacks)) {
+        for (const fallback of clothing.thumbnailFallbacks) addSource(fallback)
+      }
+      if (sourceUrls.length === 0) return undefined
+
       const dictionary = objectOf(objectOf(metadata?.raw)?.dictionary)
       const versionKey = typeof dictionary?.providerVersion === 'string' ? dictionary.providerVersion : ''
-      return { sourceUrl: clothing.thumbnail, versionKey }
+      return { sourceUrls, versionKey }
     } catch {
       return undefined
     }
@@ -345,17 +357,29 @@ export class LocalSyncServer {
     const cache = this.config.metadataThumbnailCache
     const source = this.clothingThumbnailSource(assetId, clothingId)
     if (!cache || !source) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
+
     let thumbnail
-    try {
-      thumbnail = await cache.get(source.sourceUrl, source.versionKey)
-    } catch {
-      return json(res, 503, errorBody('resource_not_ready', 'Clothing thumbnail source is temporarily unavailable'))
+    let sourceIndex = -1
+    const failures: string[] = []
+    for (let index = 0; index < source.sourceUrls.length; index++) {
+      try {
+        thumbnail = await cache.get(source.sourceUrls[index]!, source.versionKey)
+        sourceIndex = index
+        break
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+    if (!thumbnail) {
+      console.warn(`[NikkiSync] clothing thumbnail unavailable for ${clothingId}: ${failures.join(' | ')}`)
+      return json(res, 503, errorBody('resource_not_ready', 'Clothing thumbnail sources are temporarily unavailable'))
     }
     res.writeHead(200, {
       'Content-Type': thumbnail.mimeType,
       'Content-Length': thumbnail.sizeBytes,
       'ETag': `"sha256:${thumbnail.sha256}"`,
       'X-NikkiSync-SHA256': thumbnail.sha256,
+      'X-NikkiSync-Thumbnail-Source': sourceIndex === 0 ? 'primary' : 'fallback',
       'Cache-Control': 'private, max-age=86400'
     })
     if (req.method === 'HEAD') return void res.end()
