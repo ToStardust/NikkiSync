@@ -14,7 +14,11 @@ const manifest: MetadataDictionaryManifest = {
   entries: [
     { kind: 'filter', id: '7', name: '晨雾' },
     { kind: 'lighting', id: '9', name: '柔光' },
-    { kind: 'clothing', id: '101', name: '星夜长发', category: 'hair', rarity: 5, thumbnail: 'https://example.test/101.webp' },
+    {
+      kind: 'clothing', id: '101', name: '星夜长发', category: 'hair', rarity: 5,
+      thumbnail: 'https://example.test/101.webp',
+      thumbnailFallbacks: ['https://example.test/type/10.webp']
+    },
     { kind: 'pose', id: '12', name: '挥手' },
     { kind: 'location', id: '3001', name: '花愿镇' }
   ]
@@ -38,7 +42,11 @@ test('metadata dictionary enriches known IDs and preserves unknown IDs losslessl
   assert.equal(enriched.filter?.name, '晨雾')
   assert.equal(enriched.lighting?.name, '柔光')
   assert.deepEqual(enriched.dressing?.clothes, [
-    { id: '101', name: '星夜长发', category: 'hair', rarity: 5, thumbnail: 'https://example.test/101.webp' },
+    {
+      id: '101', name: '星夜长发', category: 'hair', rarity: 5,
+      thumbnail: 'https://example.test/101.webp',
+      thumbnailFallbacks: ['https://example.test/type/10.webp']
+    },
     { id: '999' }
   ])
   assert.deepEqual(enriched.interactions, [{ id: '12', name: '挥手' }, { id: '88' }])
@@ -75,7 +83,10 @@ test('dictionary updates replace prior dictionary values but preserve user overr
     providerVersion: '2',
     entries: [
       { kind: 'filter', id: '7', name: '新滤镜' },
-      { kind: 'clothing', id: '101', name: '新衣服名', category: 'hair', rarity: 5 }
+      {
+        kind: 'clothing', id: '101', name: '新衣服名', category: 'hair', rarity: 5,
+        thumbnailFallbacks: ['https://example.test/type/10-v2.webp']
+      }
     ]
   }
   const input = metadata()
@@ -87,7 +98,10 @@ test('dictionary updates replace prior dictionary values but preserve user overr
   const enriched = enrichPhotoMetadataWithDictionary(input, next, '2026-09-03T09:00:00.000Z', previous)
   assert.equal(enriched.filter?.name, '新滤镜')
   assert.deepEqual(enriched.dressing?.clothes, [
-    { id: '101', name: '新衣服名', category: 'hair', rarity: 5 },
+    {
+      id: '101', name: '新衣服名', category: 'hair', rarity: 5,
+      thumbnailFallbacks: ['https://example.test/type/10-v2.webp']
+    },
     { id: '777', name: '用户自定义衣服名' }
   ])
 })
