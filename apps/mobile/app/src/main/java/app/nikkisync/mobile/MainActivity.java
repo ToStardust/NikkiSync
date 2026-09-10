@@ -18,7 +18,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.GridView;
+import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -46,6 +46,7 @@ import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
+import app.nikkisync.mobile.ui.GalleryVersionGroups;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,6 +62,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity implements NsdDiscovery.Listener {
     private static final int NEARBY_PERMISSION = 401;
     private static final int PAIR_QR_SCAN = 402;
+    private static final int TAB_GALLERY = 0;
+    private static final int TAB_SAVED = 1;
+    private static final int TAB_MY = 2;
+
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final AtomicBoolean syncing = new AtomicBoolean(false);
@@ -80,13 +85,23 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private RealtimeWebSocket realtime;
     private PairedServer pairedServer;
 
+    private TextView titleLabel;
     private TextView status;
     private TextView countLabel;
     private TextView selectionLabel;
+    private TextView tabPlaceholder;
     private Button pairButton;
     private Button saveButton;
+    private Button galleryTabButton;
+    private Button savedTabButton;
+    private Button myTabButton;
     private ProgressBar progress;
     private GalleryAdapter adapter;
+    private LinearLayout galleryMeta;
+    private LinearLayout gallerySections;
+    private LinearLayout selectionBar;
+    private ScrollView galleryScroll;
+    private int activeTab = TAB_GALLERY;
     private final List<AssetSummary> assets = new ArrayList<>();
 
     @Override protected void onCreate(Bundle state) {
@@ -129,44 +144,134 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(2), dp(8), dp(2), dp(8));
         LinearLayout titleBox = new LinearLayout(this); titleBox.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("暖暖图库", 24, true, getColor(R.color.text_primary));
+        titleLabel = text("暖暖图库", 24, true, getColor(R.color.text_primary));
         status = text("准备中…", 12, false, getColor(R.color.text_secondary));
-        titleBox.addView(title); titleBox.addView(status);
+        titleBox.addView(titleLabel); titleBox.addView(status);
         header.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         pairButton = button("配对电脑"); pairButton.setOnClickListener(v -> startPairScanner());
         header.addView(pairButton);
         root.addView(header);
 
-        LinearLayout meta = new LinearLayout(this); meta.setGravity(Gravity.CENTER_VERTICAL); meta.setPadding(dp(2), dp(4), dp(2), dp(8));
+        galleryMeta = new LinearLayout(this); galleryMeta.setGravity(Gravity.CENTER_VERTICAL); galleryMeta.setPadding(dp(2), dp(4), dp(2), dp(8));
         countLabel = text("0 张", 13, true, getColor(R.color.text_primary));
-        meta.addView(countLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button refresh = button("刷新"); refresh.setOnClickListener(v -> loadLibrary("正在刷新图库…")); meta.addView(refresh);
-        root.addView(meta);
+        galleryMeta.addView(countLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button refresh = button("刷新"); refresh.setOnClickListener(v -> loadLibrary("正在刷新图库…")); galleryMeta.addView(refresh);
+        root.addView(galleryMeta);
 
-        FrameLayout galleryFrame = new FrameLayout(this);
-        GridView grid = new GridView(this);
-        grid.setNumColumns(3); grid.setHorizontalSpacing(dp(2)); grid.setVerticalSpacing(dp(2)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        grid.setVerticalScrollBarEnabled(false); grid.setClipToPadding(false); grid.setPadding(0, 0, 0, dp(12));
-        adapter = new GalleryAdapter(this, imageLoader, () -> client); grid.setAdapter(adapter);
-        grid.setOnItemLongClickListener((parent, view, position, id) -> { adapter.toggle(adapter.item(position)); updateSelection(); return true; });
-        grid.setOnItemClickListener((parent, view, position, id) -> {
-            AssetSummary asset = adapter.item(position);
-            if (adapter.hasSelection()) { adapter.toggle(asset); updateSelection(); }
-            else showViewer(asset);
-        });
-        galleryFrame.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        FrameLayout content = new FrameLayout(this);
+        galleryScroll = new ScrollView(this); galleryScroll.setFillViewport(true); galleryScroll.setVerticalScrollBarEnabled(false);
+        gallerySections = new LinearLayout(this); gallerySections.setOrientation(LinearLayout.VERTICAL); gallerySections.setPadding(0, 0, 0, dp(12));
+        galleryScroll.addView(gallerySections, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(galleryScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        tabPlaceholder = text("", 14, false, getColor(R.color.text_secondary));
+        tabPlaceholder.setGravity(Gravity.CENTER); tabPlaceholder.setVisibility(View.GONE); tabPlaceholder.setPadding(dp(28), dp(28), dp(28), dp(28));
+        content.addView(tabPlaceholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         progress = new ProgressBar(this); progress.setVisibility(View.GONE);
-        FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER); galleryFrame.addView(progress, progressLp);
-        root.addView(galleryFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER); content.addView(progress, progressLp);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        LinearLayout selection = new LinearLayout(this); selection.setGravity(Gravity.CENTER_VERTICAL); selection.setPadding(dp(12), dp(8), dp(8), dp(8));
-        selection.setBackground(roundRect(0xEFFFFFFF, 18));
+        adapter = new GalleryAdapter(this, imageLoader, () -> client);
+
+        selectionBar = new LinearLayout(this); selectionBar.setGravity(Gravity.CENTER_VERTICAL); selectionBar.setPadding(dp(12), dp(8), dp(8), dp(8));
+        selectionBar.setBackground(roundRect(0xEFFFFFFF, 18));
         selectionLabel = text("", 13, true, getColor(R.color.text_primary));
-        selection.addView(selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        saveButton = button("保存原图"); saveButton.setOnClickListener(v -> saveSelected()); selection.addView(saveButton);
-        selection.setTag("selectionBar"); selection.setVisibility(View.GONE);
-        root.addView(selection);
+        selectionBar.addView(selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        saveButton = button("保存原图"); saveButton.setOnClickListener(v -> saveSelected()); selectionBar.addView(saveButton);
+        selectionBar.setTag("selectionBar"); selectionBar.setVisibility(View.GONE);
+        root.addView(selectionBar);
+
+        LinearLayout bottomNav = new LinearLayout(this); bottomNav.setGravity(Gravity.CENTER); bottomNav.setPadding(0, dp(6), 0, 0);
+        bottomNav.setBackground(roundRect(0xEEFFFFFF, 20));
+        galleryTabButton = bottomTab("图库", TAB_GALLERY);
+        savedTabButton = bottomTab("已保存", TAB_SAVED);
+        myTabButton = bottomTab("我的", TAB_MY);
+        bottomNav.addView(galleryTabButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        bottomNav.addView(savedTabButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        bottomNav.addView(myTabButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        root.addView(bottomNav);
+
         setContentView(root);
+        switchTab(TAB_GALLERY);
+        renderGallerySections();
+    }
+
+    private Button bottomTab(String label, int tab) {
+        Button button = new Button(this); button.setText(label); button.setAllCaps(false); button.setTextSize(13);
+        button.setTextColor(getColor(R.color.text_primary)); button.setBackgroundColor(Color.TRANSPARENT);
+        button.setOnClickListener(v -> switchTab(tab)); return button;
+    }
+
+    private void switchTab(int tab) {
+        activeTab = tab;
+        boolean gallery = tab == TAB_GALLERY;
+        galleryScroll.setVisibility(gallery ? View.VISIBLE : View.GONE);
+        galleryMeta.setVisibility(gallery ? View.VISIBLE : View.GONE);
+        tabPlaceholder.setVisibility(gallery ? View.GONE : View.VISIBLE);
+        pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
+
+        if (tab == TAB_GALLERY) {
+            titleLabel.setText("暖暖图库");
+            tabPlaceholder.setText("");
+        } else if (tab == TAB_SAVED) {
+            titleLabel.setText("已保存");
+            tabPlaceholder.setText("已保存照片会在这里以保存后的原图展示。\n\n后续会补充二次修改后的图片重新与原 NikkiSync 照片建立信息关联的能力，同时保留来源关系，不覆盖原图。");
+        } else {
+            titleLabel.setText("我的");
+            tabPlaceholder.setText("这里将显示玩家 UID 与当前照片概况。\n\n后续可按散件或套装搜索相关照片；搜索使用 NikkiSync 已解析的穿搭信息，不上传照片内容。");
+        }
+        styleTab(galleryTabButton, tab == TAB_GALLERY);
+        styleTab(savedTabButton, tab == TAB_SAVED);
+        styleTab(myTabButton, tab == TAB_MY);
+        updateSelection();
+    }
+
+    private void styleTab(Button button, boolean selected) {
+        button.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        button.setAlpha(selected ? 1f : 0.55f);
+    }
+
+    private void renderGallerySections() {
+        if (gallerySections == null || adapter == null) return;
+        gallerySections.removeAllViews();
+        List<GalleryVersionGroups.Group> groups = GalleryVersionGroups.group(assets);
+        if (groups.isEmpty()) {
+            TextView empty = text(pairedServer == null ? "配对电脑后，这里会显示暖暖照片。" : "当前还没有同步到照片。", 14, false, getColor(R.color.text_secondary));
+            empty.setGravity(Gravity.CENTER); empty.setPadding(dp(12), dp(64), dp(12), dp(64)); gallerySections.addView(empty);
+            return;
+        }
+
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int cellWidth = Math.max(dp(92), (screenWidth - dp(32)) / 3);
+        for (GalleryVersionGroups.Group group : groups) {
+            LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(3), dp(14), dp(3), dp(7));
+            LinearLayout heading = new LinearLayout(this); heading.setOrientation(LinearLayout.VERTICAL);
+            TextView version = text(group.versionLabel(), 17, true, getColor(R.color.text_primary)); heading.addView(version);
+            if (group.inferred()) {
+                TextView inferred = text("自动推测", 11, false, getColor(R.color.text_secondary)); inferred.setPadding(0, dp(1), 0, 0); heading.addView(inferred);
+            }
+            header.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            TextView count = text(group.items().size() + " 张", 12, false, getColor(R.color.text_secondary)); header.addView(count);
+            gallerySections.addView(header);
+
+            GridLayout grid = new GridLayout(this); grid.setColumnCount(3); grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
+            for (AssetSummary asset : group.items()) {
+                View cell = adapter.viewForAsset(asset, null, grid);
+                cell.setOnLongClickListener(v -> {
+                    adapter.toggle(asset); updateSelection(); renderGallerySections(); return true;
+                });
+                cell.setOnClickListener(v -> {
+                    if (adapter.hasSelection()) {
+                        adapter.toggle(asset); updateSelection(); renderGallerySections();
+                    } else showViewer(asset);
+                });
+                GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+                lp.width = cellWidth; lp.height = dp(136); lp.setMargins(0, 0, dp(2), dp(2));
+                grid.addView(cell, lp);
+            }
+            gallerySections.addView(grid, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
     }
 
     private void handleIntent(Intent intent) {
@@ -232,7 +337,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 if (pairedServer != null) pairedServer = pairedServer.withRevision(finalRevision);
                 main.post(() -> {
                     assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText(next.size() + " 张");
-                    setBusy(false); setStatus("已连接 · 实时同步中"); updateSelection();
+                    renderGallerySections(); setBusy(false); setStatus("已连接 · 实时同步中"); updateSelection();
                 });
             } catch (Exception error) {
                 main.post(() -> { setBusy(false); setStatus("读取失败 · 等待电脑上线"); });
@@ -293,7 +398,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             main.post(() -> {
                 setBusy(false); saveButton.setEnabled(true);
                 for (AssetSummary item : selected) rotationByAssetId.remove(item.assetId());
-                adapter.clearSelection(); updateSelection();
+                adapter.clearSelection(); updateSelection(); renderGallerySections();
                 String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
                 if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
                 toast(result); setStatus("已连接 · 实时同步中");
@@ -359,7 +464,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             } catch (Exception error) { main.post(() -> params.setText("参数读取失败：" + message(error))); }
         });
         edit.setOnClickListener(v -> { if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder); });
-        Button select = button("选择保存原图"); select.setOnClickListener(v -> { adapter.toggle(asset); updateSelection(); dialog.dismiss(); }); body.addView(select);
+        Button select = button("选择保存原图"); select.setOnClickListener(v -> {
+            adapter.toggle(asset); updateSelection(); renderGallerySections(); dialog.dismiss();
+        }); body.addView(select);
         dialog.setContentView(scroll); dialog.show();
         if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
     }
@@ -560,21 +667,10 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     }
 
     private void updateSelection() {
-        View selectionBar = findViewWithTag(((ViewGroup) findViewById(android.R.id.content)).getChildAt(0), "selectionBar");
-        if (selectionBar == null) return;
-        int count = adapter.selectedCount(); selectionBar.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+        if (selectionBar == null || adapter == null) return;
+        int count = adapter.selectedCount();
+        selectionBar.setVisibility(activeTab == TAB_GALLERY && count > 0 ? View.VISIBLE : View.GONE);
         selectionLabel.setText("已选择 " + count + " 张"); saveButton.setText("保存原图");
-    }
-
-    private View findViewWithTag(View root, Object tag) {
-        if (tag.equals(root.getTag())) return root;
-        if (root instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) root;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                View found = findViewWithTag(group.getChildAt(i), tag); if (found != null) return found;
-            }
-        }
-        return null;
     }
 
     private void requestNearbyAndDiscover() {
