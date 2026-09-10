@@ -49,6 +49,7 @@ export const PROTOCOL_VERSION = 1 as const
 export type ProtocolVersion = typeof PROTOCOL_VERSION
 export type DeviceId = string
 export type ServerId = string
+export type GameVersionSource = 'explicit' | 'inferred' | 'unknown'
 
 export interface AssetSummary {
   assetId: AssetId
@@ -63,6 +64,10 @@ export interface AssetSummary {
   hasMetadata: boolean
   thumbnailResourceId?: ResourceId
   previewResourceId?: ResourceId
+  /** Resolved Infinity Nikki game version for version-first gallery grouping. */
+  gameVersion?: string
+  /** Provenance of gameVersion; unknown never forces a fabricated version. */
+  gameVersionSource?: GameVersionSource
 }
 
 export interface CursorPage<T> {
