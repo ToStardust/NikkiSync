@@ -9,6 +9,9 @@ const required = [
   'app/src/main/AndroidManifest.xml',
   'app/src/main/java/app/nikkisync/mobile/MainActivity.java',
   'app/src/main/java/app/nikkisync/mobile/PairQrScannerActivity.java',
+  'app/src/main/java/app/nikkisync/mobile/model/Models.java',
+  'app/src/main/java/app/nikkisync/mobile/protocol/JsonCodec.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
   'app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java',
   'app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java',
   'app/src/main/java/app/nikkisync/mobile/net/RealtimeWebSocket.java',
@@ -43,6 +46,18 @@ const pairing = text('app/src/main/java/app/nikkisync/mobile/protocol/PairingUri
 for (const key of ['serverId', 'host', 'port', 'token', 'protocol', 'expiresAt', 'tls']) {
   expect(pairing.includes(`"${key}"`), `pairing URI field missing: ${key}`)
 }
+
+const models = text('app/src/main/java/app/nikkisync/mobile/model/Models.java')
+expect(models.includes('gameVersion') && models.includes('gameVersionSource'), 'M2.3.1 AssetSummary game-version fields are missing')
+
+const jsonCodec = text('app/src/main/java/app/nikkisync/mobile/protocol/JsonCodec.java')
+expect(jsonCodec.includes('optionalString(row, "gameVersion")'), 'M2.3.1 gameVersion JSON parsing is missing')
+expect(jsonCodec.includes('optionalString(row, "gameVersionSource")'), 'M2.3.1 gameVersionSource JSON parsing is missing')
+
+const versionGroups = text('app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java')
+expect(versionGroups.includes('版本未知'), 'M2.3.1 unknown-version bucket is missing')
+expect(versionGroups.includes('compareSemanticVersions'), 'M2.3.1 semantic-version ordering is missing')
+expect(versionGroups.includes('gameVersionSource'), 'M2.3.1 grouping must retain version provenance')
 
 const auth = text('app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java')
 for (const header of ['X-NikkiSync-Device-Id', 'X-NikkiSync-Timestamp', 'X-NikkiSync-Nonce', 'X-NikkiSync-Signature']) {
@@ -92,6 +107,9 @@ expect(mainActivity.includes('rotationByAssetId'), 'ordinary-photo rotation stat
 expect(mainActivity.includes('左转 90°') && mainActivity.includes('右转 90°'), 'photo viewer rotation controls are missing')
 expect(mainActivity.includes('asset.hasMotion()'), 'rotation UI must keep Live Photo separate from ordinary JPEG export')
 expect(mainActivity.includes('originalSaver.save(this, current, asset, rotationDegrees)'), 'selected ordinary-photo rotation is not wired into export')
+expect(mainActivity.includes('"图库"') && mainActivity.includes('"已保存"') && mainActivity.includes('"我的"'), 'M2.3.1 three-tab bottom navigation is missing')
+expect(mainActivity.includes('GalleryVersionGroups.group'), 'M2.3.1 version-grouped gallery rendering is missing')
+expect(mainActivity.includes('二次修改') && mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 future Saved/My capability reservations are missing from UX placeholders')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
@@ -117,3 +135,4 @@ console.log(`validated files: ${required.length}`)
 console.log('transport: pinned HTTPS + Ed25519 signed requests + mDNS + WebSocket')
 console.log('original export: MediaStore + SHA-256 verification + selected JPEG rotation')
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
+console.log('M2.3.1 UX: three-tab shell + version-first gallery contract')
