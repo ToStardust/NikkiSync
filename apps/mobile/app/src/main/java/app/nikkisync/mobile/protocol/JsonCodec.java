@@ -34,7 +34,9 @@ public final class JsonCodec {
                     row.optBoolean("hasMotion", false),
                     row.optBoolean("hasMetadata", false),
                     optionalString(row, "thumbnailResourceId"),
-                    optionalString(row, "previewResourceId")
+                    optionalString(row, "previewResourceId"),
+                    optionalString(row, "gameVersion"),
+                    optionalString(row, "gameVersionSource")
             ));
         }
         return new AssetPage(items, optionalString(root, "nextCursor"), root.getLong("libraryRevision"));
