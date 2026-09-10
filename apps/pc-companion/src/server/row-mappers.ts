@@ -29,6 +29,21 @@ function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhoto
   return raw ? { ...value, raw } as InfinityPhotoMetadata : value
 }
 
+function summaryGameVersion(row: Record<string, unknown>): Pick<AssetSummary, 'gameVersion' | 'gameVersionSource'> {
+  const rawMetadata = optionalString(row.metadata_json)
+  if (!rawMetadata) return { gameVersionSource: 'unknown' }
+  try {
+    const metadata = JSON.parse(rawMetadata) as Partial<InfinityPhotoMetadata>
+    const value = typeof metadata.identity?.gameVersion === 'string'
+      ? metadata.identity.gameVersion.trim()
+      : ''
+    if (!value) return { gameVersionSource: 'unknown' }
+    return { gameVersion: value, gameVersionSource: 'explicit' }
+  } catch {
+    return { gameVersionSource: 'unknown' }
+  }
+}
+
 export function mapResourceRow(row: Record<string, unknown>): MediaResource {
   return {
     resourceId: String(row.resource_id),
@@ -112,7 +127,8 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),
-    ...(bestPreview?.resourceId ? { previewResourceId: bestPreview.resourceId } : {})
+    ...(bestPreview?.resourceId ? { previewResourceId: bestPreview.resourceId } : {}),
+    ...summaryGameVersion(row)
   }
 }
 
