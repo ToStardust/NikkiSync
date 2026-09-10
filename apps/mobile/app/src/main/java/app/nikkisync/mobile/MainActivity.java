@@ -18,13 +18,15 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.media.HuaweiMovingPhotoSaver;
@@ -46,7 +48,6 @@ import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
-import app.nikkisync.mobile.ui.GalleryVersionGroups;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -90,6 +91,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private TextView countLabel;
     private TextView selectionLabel;
     private TextView tabPlaceholder;
+    private TextView galleryEmpty;
     private Button pairButton;
     private Button saveButton;
     private Button galleryTabButton;
@@ -98,9 +100,8 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private ProgressBar progress;
     private GalleryAdapter adapter;
     private LinearLayout galleryMeta;
-    private LinearLayout gallerySections;
     private LinearLayout selectionBar;
-    private ScrollView galleryScroll;
+    private RecyclerView galleryList;
     private int activeTab = TAB_GALLERY;
     private final List<AssetSummary> assets = new ArrayList<>();
 
@@ -122,6 +123,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         if (pairedServer != null) connect(pairedServer, "正在连接已配对电脑…");
         else if (identity.wasRecovered()) setStatus("安全密钥已重建 · 请重新配对电脑");
         else setStatus("尚未配对 · 点击右上角配对电脑");
+        updateGalleryEmptyState();
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -159,10 +161,29 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         root.addView(galleryMeta);
 
         FrameLayout content = new FrameLayout(this);
-        galleryScroll = new ScrollView(this); galleryScroll.setFillViewport(true); galleryScroll.setVerticalScrollBarEnabled(false);
-        gallerySections = new LinearLayout(this); gallerySections.setOrientation(LinearLayout.VERTICAL); gallerySections.setPadding(0, 0, 0, dp(12));
-        galleryScroll.addView(gallerySections, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(galleryScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        galleryList = new RecyclerView(this);
+        galleryList.setVerticalScrollBarEnabled(false); galleryList.setClipToPadding(false); galleryList.setPadding(0, 0, 0, dp(12));
+        GridLayoutManager layout = new GridLayoutManager(this, 3);
+        galleryList.setLayoutManager(layout);
+        adapter = new GalleryAdapter(this, imageLoader, () -> client, new GalleryAdapter.Listener() {
+            @Override public void onPhotoClick(AssetSummary asset) {
+                if (adapter.hasSelection()) { adapter.toggle(asset); updateSelection(); }
+                else showViewer(asset);
+            }
+
+            @Override public boolean onPhotoLongClick(AssetSummary asset) {
+                adapter.toggle(asset); updateSelection(); return true;
+            }
+        });
+        layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override public int getSpanSize(int position) { return adapter.isHeader(position) ? 3 : 1; }
+        });
+        galleryList.setAdapter(adapter);
+        content.addView(galleryList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        galleryEmpty = text("", 14, false, getColor(R.color.text_secondary));
+        galleryEmpty.setGravity(Gravity.CENTER); galleryEmpty.setPadding(dp(28), dp(28), dp(28), dp(28)); galleryEmpty.setVisibility(View.GONE);
+        content.addView(galleryEmpty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         tabPlaceholder = text("", 14, false, getColor(R.color.text_secondary));
         tabPlaceholder.setGravity(Gravity.CENTER); tabPlaceholder.setVisibility(View.GONE); tabPlaceholder.setPadding(dp(28), dp(28), dp(28), dp(28));
@@ -171,8 +192,6 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         progress = new ProgressBar(this); progress.setVisibility(View.GONE);
         FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER); content.addView(progress, progressLp);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-
-        adapter = new GalleryAdapter(this, imageLoader, () -> client);
 
         selectionBar = new LinearLayout(this); selectionBar.setGravity(Gravity.CENTER_VERTICAL); selectionBar.setPadding(dp(12), dp(8), dp(8), dp(8));
         selectionBar.setBackground(roundRect(0xEFFFFFFF, 18));
@@ -194,7 +213,6 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
         setContentView(root);
         switchTab(TAB_GALLERY);
-        renderGallerySections();
     }
 
     private Button bottomTab(String label, int tab) {
@@ -206,7 +224,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private void switchTab(int tab) {
         activeTab = tab;
         boolean gallery = tab == TAB_GALLERY;
-        galleryScroll.setVisibility(gallery ? View.VISIBLE : View.GONE);
+        galleryList.setVisibility(gallery ? View.VISIBLE : View.GONE);
         galleryMeta.setVisibility(gallery ? View.VISIBLE : View.GONE);
         tabPlaceholder.setVisibility(gallery ? View.GONE : View.VISIBLE);
         pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
@@ -225,6 +243,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         styleTab(savedTabButton, tab == TAB_SAVED);
         styleTab(myTabButton, tab == TAB_MY);
         updateSelection();
+        updateGalleryEmptyState();
     }
 
     private void styleTab(Button button, boolean selected) {
@@ -232,46 +251,11 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         button.setAlpha(selected ? 1f : 0.55f);
     }
 
-    private void renderGallerySections() {
-        if (gallerySections == null || adapter == null) return;
-        gallerySections.removeAllViews();
-        List<GalleryVersionGroups.Group> groups = GalleryVersionGroups.group(assets);
-        if (groups.isEmpty()) {
-            TextView empty = text(pairedServer == null ? "配对电脑后，这里会显示暖暖照片。" : "当前还没有同步到照片。", 14, false, getColor(R.color.text_secondary));
-            empty.setGravity(Gravity.CENTER); empty.setPadding(dp(12), dp(64), dp(12), dp(64)); gallerySections.addView(empty);
-            return;
-        }
-
-        int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        int cellWidth = Math.max(dp(92), (screenWidth - dp(32)) / 3);
-        for (GalleryVersionGroups.Group group : groups) {
-            LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(3), dp(14), dp(3), dp(7));
-            LinearLayout heading = new LinearLayout(this); heading.setOrientation(LinearLayout.VERTICAL);
-            TextView version = text(group.versionLabel(), 17, true, getColor(R.color.text_primary)); heading.addView(version);
-            if (group.inferred()) {
-                TextView inferred = text("自动推测", 11, false, getColor(R.color.text_secondary)); inferred.setPadding(0, dp(1), 0, 0); heading.addView(inferred);
-            }
-            header.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            TextView count = text(group.items().size() + " 张", 12, false, getColor(R.color.text_secondary)); header.addView(count);
-            gallerySections.addView(header);
-
-            GridLayout grid = new GridLayout(this); grid.setColumnCount(3); grid.setAlignmentMode(GridLayout.ALIGN_BOUNDS);
-            for (AssetSummary asset : group.items()) {
-                View cell = adapter.viewForAsset(asset, null, grid);
-                cell.setOnLongClickListener(v -> {
-                    adapter.toggle(asset); updateSelection(); renderGallerySections(); return true;
-                });
-                cell.setOnClickListener(v -> {
-                    if (adapter.hasSelection()) {
-                        adapter.toggle(asset); updateSelection(); renderGallerySections();
-                    } else showViewer(asset);
-                });
-                GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
-                lp.width = cellWidth; lp.height = dp(136); lp.setMargins(0, 0, dp(2), dp(2));
-                grid.addView(cell, lp);
-            }
-            gallerySections.addView(grid, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
+    private void updateGalleryEmptyState() {
+        if (galleryEmpty == null) return;
+        boolean show = activeTab == TAB_GALLERY && assets.isEmpty();
+        galleryEmpty.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) galleryEmpty.setText(pairedServer == null ? "配对电脑后，这里会显示暖暖照片。" : "当前还没有同步到照片。");
     }
 
     private void handleIntent(Intent intent) {
@@ -300,7 +284,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             try {
                 PairedServer server = NikkiSyncClient.pair(payload, identity);
                 serverStore.save(server); pairedServer = server;
-                main.post(() -> { updatePairButton(); setBusy(false); connect(server, "配对成功 · 正在读取图库…"); });
+                main.post(() -> { updatePairButton(); setBusy(false); updateGalleryEmptyState(); connect(server, "配对成功 · 正在读取图库…"); });
             } catch (Exception error) {
                 main.post(() -> { setBusy(false); setStatus("配对失败"); toast("配对失败：" + message(error)); });
             }
@@ -337,10 +321,10 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 if (pairedServer != null) pairedServer = pairedServer.withRevision(finalRevision);
                 main.post(() -> {
                     assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText(next.size() + " 张");
-                    renderGallerySections(); setBusy(false); setStatus("已连接 · 实时同步中"); updateSelection();
+                    setBusy(false); setStatus("已连接 · 实时同步中"); updateSelection(); updateGalleryEmptyState();
                 });
             } catch (Exception error) {
-                main.post(() -> { setBusy(false); setStatus("读取失败 · 等待电脑上线"); });
+                main.post(() -> { setBusy(false); setStatus("读取失败 · 等待电脑上线"); updateGalleryEmptyState(); });
             }
         });
     }
@@ -398,7 +382,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             main.post(() -> {
                 setBusy(false); saveButton.setEnabled(true);
                 for (AssetSummary item : selected) rotationByAssetId.remove(item.assetId());
-                adapter.clearSelection(); updateSelection(); renderGallerySections();
+                adapter.clearSelection(); updateSelection();
                 String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
                 if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
                 toast(result); setStatus("已连接 · 实时同步中");
@@ -465,7 +449,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         });
         edit.setOnClickListener(v -> { if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder); });
         Button select = button("选择保存原图"); select.setOnClickListener(v -> {
-            adapter.toggle(asset); updateSelection(); renderGallerySections(); dialog.dismiss();
+            adapter.toggle(asset); updateSelection(); dialog.dismiss();
         }); body.addView(select);
         dialog.setContentView(scroll); dialog.show();
         if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
