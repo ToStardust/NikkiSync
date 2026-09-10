@@ -44,6 +44,7 @@ public final class GalleryAdapter extends BaseAdapter {
     public AssetSummary item(int position) { return items.get(position); }
     public int selectedCount() { return selected.size(); }
     public boolean hasSelection() { return !selected.isEmpty(); }
+    public boolean isSelected(AssetSummary asset) { return selected.contains(asset.assetId()); }
 
     public boolean toggle(AssetSummary asset) {
         if (!selected.add(asset.assetId())) selected.remove(asset.assetId());
@@ -63,8 +64,12 @@ public final class GalleryAdapter extends BaseAdapter {
     @Override public long getItemId(int position) { return position; }
 
     @Override public View getView(int position, View convertView, ViewGroup parent) {
+        return viewForAsset(items.get(position), convertView, parent);
+    }
+
+    /** Reusable cell factory for the sectioned M2.3.1 gallery without duplicating thumbnail behavior. */
+    public View viewForAsset(AssetSummary asset, View convertView, ViewGroup parent) {
         Cell cell = convertView instanceof Cell ? (Cell) convertView : new Cell(context);
-        AssetSummary asset = items.get(position);
         cell.bind(asset, selected.contains(asset.assetId()));
         NikkiSyncClient current = client.get();
         if (current != null) images.load(current, asset, cell.image);
