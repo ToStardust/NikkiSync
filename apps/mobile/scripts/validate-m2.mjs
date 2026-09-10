@@ -11,6 +11,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/PairQrScannerActivity.java',
   'app/src/main/java/app/nikkisync/mobile/model/Models.java',
   'app/src/main/java/app/nikkisync/mobile/protocol/JsonCodec.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/GalleryAdapter.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
   'app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java',
   'app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java',
@@ -53,11 +54,18 @@ expect(models.includes('gameVersion') && models.includes('gameVersionSource'), '
 const jsonCodec = text('app/src/main/java/app/nikkisync/mobile/protocol/JsonCodec.java')
 expect(jsonCodec.includes('optionalString(row, "gameVersion")'), 'M2.3.1 gameVersion JSON parsing is missing')
 expect(jsonCodec.includes('optionalString(row, "gameVersionSource")'), 'M2.3.1 gameVersionSource JSON parsing is missing')
+expect(jsonCodec.includes('gameVersionSource = "unknown"'), 'legacy clients must default missing game-version provenance to unknown')
 
 const versionGroups = text('app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java')
 expect(versionGroups.includes('版本未知'), 'M2.3.1 unknown-version bucket is missing')
 expect(versionGroups.includes('compareSemanticVersions'), 'M2.3.1 semantic-version ordering is missing')
 expect(versionGroups.includes('gameVersionSource'), 'M2.3.1 grouping must retain version provenance')
+expect(versionGroups.includes('allMatch'), 'M2.3.1 inferred label must only apply when the whole group is inferred')
+
+const galleryAdapter = text('app/src/main/java/app/nikkisync/mobile/ui/GalleryAdapter.java')
+expect(galleryAdapter.includes('RecyclerView.Adapter'), 'M2.3.1 gallery must use the recyclable sectioned list implementation')
+expect(galleryAdapter.includes('GalleryVersionGroups.group'), 'M2.3.1 adapter must render version groups')
+expect(galleryAdapter.includes('TYPE_HEADER') && galleryAdapter.includes('TYPE_PHOTO'), 'M2.3.1 section header/photo row types are missing')
 
 const auth = text('app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java')
 for (const header of ['X-NikkiSync-Device-Id', 'X-NikkiSync-Timestamp', 'X-NikkiSync-Nonce', 'X-NikkiSync-Signature']) {
@@ -108,7 +116,7 @@ expect(mainActivity.includes('左转 90°') && mainActivity.includes('右转 90�
 expect(mainActivity.includes('asset.hasMotion()'), 'rotation UI must keep Live Photo separate from ordinary JPEG export')
 expect(mainActivity.includes('originalSaver.save(this, current, asset, rotationDegrees)'), 'selected ordinary-photo rotation is not wired into export')
 expect(mainActivity.includes('"图库"') && mainActivity.includes('"已保存"') && mainActivity.includes('"我的"'), 'M2.3.1 three-tab bottom navigation is missing')
-expect(mainActivity.includes('GalleryVersionGroups.group'), 'M2.3.1 version-grouped gallery rendering is missing')
+expect(mainActivity.includes('GridLayoutManager') && mainActivity.includes('adapter.isHeader(position) ? 3 : 1'), 'M2.3.1 full-width RecyclerView version headers are missing')
 expect(mainActivity.includes('二次修改') && mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 future Saved/My capability reservations are missing from UX placeholders')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
@@ -135,4 +143,4 @@ console.log(`validated files: ${required.length}`)
 console.log('transport: pinned HTTPS + Ed25519 signed requests + mDNS + WebSocket')
 console.log('original export: MediaStore + SHA-256 verification + selected JPEG rotation')
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
-console.log('M2.3.1 UX: three-tab shell + version-first gallery contract')
+console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
