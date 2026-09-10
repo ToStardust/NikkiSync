@@ -22,6 +22,8 @@ public final class JsonCodec {
         List<AssetSummary> items = new ArrayList<>(rows.length());
         for (int i = 0; i < rows.length(); i++) {
             JSONObject row = rows.getJSONObject(i);
+            String gameVersionSource = optionalString(row, "gameVersionSource");
+            if (gameVersionSource == null || gameVersionSource.isBlank()) gameVersionSource = "unknown";
             items.add(new AssetSummary(
                     row.getString("assetId"),
                     row.getString("type"),
@@ -36,7 +38,7 @@ public final class JsonCodec {
                     optionalString(row, "thumbnailResourceId"),
                     optionalString(row, "previewResourceId"),
                     optionalString(row, "gameVersion"),
-                    optionalString(row, "gameVersionSource")
+                    gameVersionSource
             ));
         }
         return new AssetPage(items, optionalString(root, "nextCursor"), root.getLong("libraryRevision"));
