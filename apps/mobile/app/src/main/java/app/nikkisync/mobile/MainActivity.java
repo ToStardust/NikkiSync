@@ -18,13 +18,15 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.media.HuaweiMovingPhotoSaver;
@@ -142,16 +144,24 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         root.addView(meta);
 
         FrameLayout galleryFrame = new FrameLayout(this);
-        GridView grid = new GridView(this);
-        grid.setNumColumns(3); grid.setHorizontalSpacing(dp(2)); grid.setVerticalSpacing(dp(2)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        RecyclerView grid = new RecyclerView(this);
         grid.setVerticalScrollBarEnabled(false); grid.setClipToPadding(false); grid.setPadding(0, 0, 0, dp(12));
-        adapter = new GalleryAdapter(this, imageLoader, () -> client); grid.setAdapter(adapter);
-        grid.setOnItemLongClickListener((parent, view, position, id) -> { adapter.toggle(adapter.item(position)); updateSelection(); return true; });
-        grid.setOnItemClickListener((parent, view, position, id) -> {
-            AssetSummary asset = adapter.item(position);
-            if (adapter.hasSelection()) { adapter.toggle(asset); updateSelection(); }
-            else showViewer(asset);
+        GridLayoutManager layout = new GridLayoutManager(this, 3);
+        grid.setLayoutManager(layout);
+        adapter = new GalleryAdapter(this, imageLoader, () -> client, new GalleryAdapter.Listener() {
+            @Override public void onPhotoClick(AssetSummary asset) {
+                if (adapter.hasSelection()) { adapter.toggle(asset); updateSelection(); }
+                else showViewer(asset);
+            }
+
+            @Override public boolean onPhotoLongClick(AssetSummary asset) {
+                adapter.toggle(asset); updateSelection(); return true;
+            }
         });
+        layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override public int getSpanSize(int position) { return adapter.isHeader(position) ? 3 : 1; }
+        });
+        grid.setAdapter(adapter);
         galleryFrame.addView(grid, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         progress = new ProgressBar(this); progress.setVisibility(View.GONE);
         FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER); galleryFrame.addView(progress, progressLp);

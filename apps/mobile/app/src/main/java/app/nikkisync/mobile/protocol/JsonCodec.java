@@ -33,6 +33,8 @@ public final class JsonCodec {
                     optionalInt(row, "height"),
                     row.optBoolean("hasMotion", false),
                     row.optBoolean("hasMetadata", false),
+                    optionalString(row, "gameVersion"),
+                    gameVersionSource(row),
                     optionalString(row, "thumbnailResourceId"),
                     optionalString(row, "previewResourceId")
             ));
@@ -76,6 +78,12 @@ public final class JsonCodec {
 
     private static String optionalString(JSONObject object, String key) {
         return object.has(key) && !object.isNull(key) ? object.optString(key, null) : null;
+    }
+
+    private static String gameVersionSource(JSONObject row) {
+        String value = optionalString(row, "gameVersionSource");
+        if ("explicit".equals(value) || "inferred".equals(value)) return value;
+        return "unknown";
     }
 
     private static Integer optionalInt(JSONObject object, String key) {

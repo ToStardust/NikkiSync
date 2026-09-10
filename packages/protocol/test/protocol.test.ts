@@ -6,13 +6,31 @@ import {
   buildAssetsRoute,
   buildChangesRoute,
   buildPairingUri,
-  isProtocolVersionSupported
+  isProtocolVersionSupported,
+  type AssetSummary
 } from '../src/index.js'
 
 test('protocol version is frozen at v1', () => {
   assert.equal(PROTOCOL_VERSION, 1)
   assert.equal(isProtocolVersionSupported(1), true)
   assert.equal(isProtocolVersionSupported(2), false)
+})
+
+test('asset summaries carry resolved game-version provenance', () => {
+  const summary = {
+    assetId: 'asset_versioned',
+    type: 'photo',
+    state: 'ready',
+    capturedAt: '2026-09-01T00:00:00.000Z',
+    revision: 1,
+    hasMotion: false,
+    hasMetadata: true,
+    gameVersion: '2.9',
+    gameVersionSource: 'explicit'
+  } satisfies AssetSummary
+
+  assert.equal(summary.gameVersion, '2.9')
+  assert.equal(summary.gameVersionSource, 'explicit')
 })
 
 test('route builders encode identifiers and query values', () => {
