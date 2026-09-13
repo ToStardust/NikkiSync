@@ -14,6 +14,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryAdapter.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryUxStyle.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/SavedPhotoAdapter.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java',
   'app/src/main/java/app/nikkisync/mobile/ui/ClothingSearchGrid.java',
@@ -31,6 +32,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/net/NsdDiscovery.java',
   'app/src/main/java/app/nikkisync/mobile/security/DeviceIdentity.java',
   'app/src/main/java/app/nikkisync/mobile/security/PinnedTls.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoStore.java',
   'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
@@ -89,6 +91,15 @@ expect(galleryUxStyle.includes('bg_glass_card'), 'M2.3.2 shared glass card resou
 expect(galleryUxStyle.includes('bg_glass_chip'), 'M2.3.2 shared glass chip resource is not wired')
 expect(galleryUxStyle.includes('bg_selected_glass'), 'M2.3.2 selected overlay resource is not wired')
 
+const savedPhotoStore = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoStore.java')
+expect(savedPhotoStore.includes('assetId') && savedPhotoStore.includes('uri') && savedPhotoStore.includes('savedAt'), 'M2.4 saved provenance fields are missing')
+expect(savedPhotoStore.includes('rotationDegrees') && savedPhotoStore.includes('format'), 'M2.4 saved export presentation metadata is missing')
+expect(savedPhotoStore.includes('LIMIT = 2000'), 'M2.4 saved history must stay bounded')
+
+const savedPhotoAdapter = text('app/src/main/java/app/nikkisync/mobile/ui/SavedPhotoAdapter.java')
+expect(savedPhotoAdapter.includes('loadThumbnail'), 'M2.4 Saved grid must load MediaStore thumbnails off the main UI path')
+expect(savedPhotoAdapter.includes('"LIVE"') && savedPhotoAdapter.includes('"原图"'), 'M2.4 Saved grid state badges are missing')
+
 const auth = text('app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java')
 for (const header of ['X-NikkiSync-Device-Id', 'X-NikkiSync-Timestamp', 'X-NikkiSync-Nonce', 'X-NikkiSync-Signature']) {
   expect(auth.includes(header), `signed request header missing: ${header}`)
@@ -144,7 +155,10 @@ expect(mainActivity.includes('"已同步 "'), 'M2.3.2 gallery sync-count copy is
 expect(mainActivity.includes('SuitSearchDialog.show'), 'M2.3.3 gallery suit-search entry is missing')
 expect(mainActivity.includes('"搜索套装或散件"'), 'M2.3.4 unified search copy is missing')
 expect(mainActivity.includes('GridLayoutManager') && mainActivity.includes('adapter.isHeader(position) ? 3 : 1'), 'M2.3.1 full-width RecyclerView version headers are missing')
-expect(mainActivity.includes('二次修改') && mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 future Saved/My capability reservations are missing from UX placeholders')
+expect(mainActivity.includes('savedList') && mainActivity.includes('SavedPhotoAdapter'), 'M2.4 Saved tab must use a real saved-photo grid')
+expect(mainActivity.includes('savedPhotoStore.record'), 'M2.4 successful exports must retain source provenance')
+expect(mainActivity.includes('"在系统相册打开"') && mainActivity.includes('"查看源照片"'), 'M2.4 saved-photo detail actions are missing')
+expect(mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 unified search copy is missing')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
@@ -207,3 +221,4 @@ console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery con
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
 console.log('M2.3.3 search: ranked suit lookup + coverage + filters + history + preserved viewer context')
 console.log('M2.3.4 search: unified all/suit/clothing lookup + clothing photo grid contract')
+console.log('M2.4 Saved: local export provenance + three-column MediaStore history contract')
