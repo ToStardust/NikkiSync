@@ -196,6 +196,42 @@ public final class Models {
         public List<SuitSearchResult> items() { return items; }
     }
 
+    public static final class ClothingSearchPhoto {
+        private final AssetSummary asset;
+        public ClothingSearchPhoto(AssetSummary asset) { this.asset = asset; }
+        public AssetSummary asset() { return asset; }
+    }
+
+    public static final class ClothingSearchResult {
+        private final String clothingId, name, category, suitId, suitName;
+        private final int photoCount;
+        private final List<ClothingSearchPhoto> photos;
+
+        public ClothingSearchResult(String clothingId, String name, String category, String suitId, String suitName,
+                                    int photoCount, List<ClothingSearchPhoto> photos) {
+            this.clothingId = clothingId; this.name = name; this.category = category; this.suitId = suitId;
+            this.suitName = suitName; this.photoCount = photoCount; this.photos = photos;
+        }
+
+        public String clothingId() { return clothingId; }
+        public String name() { return name; }
+        public String category() { return category; }
+        public String suitId() { return suitId; }
+        public String suitName() { return suitName; }
+        public int photoCount() { return photoCount; }
+        public List<ClothingSearchPhoto> photos() { return photos; }
+    }
+
+    public static final class ClothingSearchResponse {
+        private final String query;
+        private final List<ClothingSearchResult> items;
+        public ClothingSearchResponse(String query, List<ClothingSearchResult> items) {
+            this.query = query; this.items = items;
+        }
+        public String query() { return query; }
+        public List<ClothingSearchResult> items() { return items; }
+    }
+
     public static final class Change {
         private final long revision;
         private final String type, assetId, occurredAt;
