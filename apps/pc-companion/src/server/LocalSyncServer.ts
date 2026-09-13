@@ -29,6 +29,7 @@ import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
 import { mapAssetDetail, mapAssetSummary, mapChangeRow } from './row-mappers.js'
 import { searchClothingLibrary } from './ClothingSearchIndex.js'
+import { buildProfileStats } from './ProfileStatsIndex.js'
 import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 
@@ -216,6 +217,7 @@ export class LocalSyncServer {
       if (req.method === 'GET' && url.pathname === API_ROUTES.assets) return this.listAssets(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.suitSearch) return this.searchSuits(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.clothingSearch) return this.searchClothing(url, res)
+      if (req.method === 'GET' && url.pathname === API_ROUTES.profileStats) return this.profileStats(res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.changes) return this.listChanges(url, res)
       const clothingThumbnailMatch = /^\/v1\/assets\/([^/]+)\/clothing\/([^/]+)\/thumbnail$/.exec(url.pathname)
       if ((req.method === 'GET' || req.method === 'HEAD') && clothingThumbnailMatch) {
@@ -244,7 +246,7 @@ export class LocalSyncServer {
       serverId: this.serverId,
       name: this.config.name,
       libraryRevision: this.reads.currentRevision(),
-      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true }
+      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true, profileStats: true }
     }
     json(res, 200, body)
   }
@@ -369,6 +371,16 @@ export class LocalSyncServer {
       if (oldestKey !== undefined) this.clothingSearchResponseCache.delete(oldestKey)
     }
     json(res, 200, response)
+  }
+
+  private profileStats(res: ServerResponse): void {
+    const libraryRevision = this.reads.currentRevision()
+    const body = buildProfileStats(
+      this.suitSearchSource(libraryRevision),
+      this.dictionary.getActiveManifest(),
+      libraryRevision
+    )
+    json(res, 200, body)
   }
 
   private assetDetail(assetId: string, res: ServerResponse): void {
