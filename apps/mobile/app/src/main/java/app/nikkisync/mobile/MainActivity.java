@@ -538,6 +538,115 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         loadRemoteProfileStats();
     }
 
+    private void renderRemoteProfileStats() {
+        if (client == null) {
+            addMyCard("常用穿搭", "连接已配对电脑后显示常用套装与散件。");
+            addMyCard("数据源状态", pairedServer == null ? "尚未配对电脑" : "电脑当前不可达");
+            return;
+        }
+
+        ProfileStatsResponse stats = profileStats;
+        if (stats == null) {
+            addMyCard("常用穿搭", "正在从电脑汇总本地穿搭数据…");
+            addMyCard("数据源状态", "正在读取服装字典与图库汇总状态…");
+            return;
+        }
+
+        StringBuilder suits = new StringBuilder();
+        int rank = 1;
+        for (ProfileSuitStat item : stats.topSuits()) {
+            if (suits.length() > 0) suits.append("\n");
+            suits.append(rank++).append(". ").append(item.suitName()).append(" · ").append(item.photoCount()).append(" 张");
+        }
+        addMyCard("常用套装", suits.length() == 0 ? "当前没有可统计的套装数据" : suits.toString());
+
+        StringBuilder clothing = new StringBuilder();
+        rank = 1;
+        for (ProfileClothingStat item : stats.topClothing()) {
+            if (clothing.length() > 0) clothing.append("\n");
+            String name = item.name() == null || item.name().isBlank() ? item.clothingId() : item.name();
+            clothing.append(rank++).append(". ").append(name);
+            if (item.category() != null && !item.category().isBlank()) {
+                clothing.append(" · ").append(ClothingSearchGrid.categoryLabel(item.category()));
+            }
+            clothing.append(" · ").append(item.photoCount()).append(" 张");
+        }
+        addMyCard("常用散件", clothing.length() == 0 ? "当前没有可统计的散件数据" : clothing.toString());
+
+        if (stats.dictionary() == null) {
+            addMyCard("数据源状态", "当前 PC 没有活动服装字典。照片基础参数仍可使用，但服装名称、套装归属和缩略图可能不完整。");
+        } else {
+            String source = "Provider：" + stats.dictionary().provider()
+                    + "\n版本：" + stats.dictionary().providerVersion()
+                    + (stats.dictionary().gameVersion() == null ? "" : "\n游戏版本：" + stats.dictionary().gameVersion())
+                    + "\n服装条目：" + stats.dictionary().clothingEntries()
+                    + (stats.dictionary().fetchedAt() == null ? "" : "\n更新时间：" + stats.dictionary().fetchedAt())
+                    + "\n汇总 revision：" + stats.libraryRevision();
+            addMyCard("数据源状态", source);
+        }
+    }
+
+    private void loadRemoteProfileStats() {
+        NikkiSyncClient current = client;
+        if (current == null || profileStatsLoading) return;
+
+        long expectedRevision = pairedServer == null ? 0 : pairedServer.lastRevision();
+        if (profileStats != null && (expectedRevision <= 0 || profileStats.libraryRevision() == expectedRevision)) return;
+
+        profileStatsLoading = true;
+        io.execute(() -> {
+            try {
+                ProfileStatsResponse next = current.profileStats();
+                main.post(() -> {
+                    profileStats = next;
+                    profileStatsLoading = false;
+                    if (activeTab == TAB_MY) refreshMyPage();
+                });
+            } catch (Exception ignored) {
+                main.post(() -> profileStatsLoading = false);
+            }
+        });
+    }
+
+    private void addMyActionCard(String title, String body, String action, Runnable onClick) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackgroundResource(R.drawable.bg_glass_card);
+
+        card.addView(text(title, 16, true, getColor(R.color.text_primary)));
+        TextView content = text(body, 13, false, getColor(R.color.text_secondary));
+        content.setPadding(0, dp(5), 0, 0);
+        card.addView(content);
+
+        Button actionButton = button(action);
+        LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(40)
+        );
+        actionLp.topMargin = dp(9);
+        actionButton.setOnClickListener(v -> onClick.run());
+        card.addView(actionButton, actionLp);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.setMargins(0, 0, 0, dp(10));
+        myContent.addView(card, lp);
+    }
+
+    private void copyText(String label, String value) {
+        android.content.ClipboardManager clipboard =
+                (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            toast("系统剪贴板不可用");
+            return;
+        }
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, value));
+        toast("已复制");
+    }
+
     private void addMyCard(String title, String body) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
