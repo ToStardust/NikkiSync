@@ -222,6 +222,60 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         galleryMeta.addView(refresh);
         root.addView(galleryMeta);
 
+        savedControls = new LinearLayout(this);
+        savedControls.setOrientation(LinearLayout.VERTICAL);
+        savedControls.setPadding(dp(2), dp(8), dp(2), dp(8));
+        savedControls.setVisibility(View.GONE);
+
+        savedSummary = text("0 条保存记录", 12, false, getColor(R.color.text_secondary));
+        savedSummary.setPadding(dp(2), 0, dp(2), dp(5));
+        savedControls.addView(savedSummary);
+
+        LinearLayout savedFilterRow = new LinearLayout(this);
+        savedFilterRow.setGravity(Gravity.CENTER_VERTICAL);
+        savedAllButton = button("全部");
+        savedLiveButton = button("LIVE");
+        savedPhotoButton = button("普通");
+        savedFilterRow.addView(savedAllButton, new LinearLayout.LayoutParams(0, dp(38), 1));
+        LinearLayout.LayoutParams savedMiddleLp = new LinearLayout.LayoutParams(0, dp(38), 1);
+        savedMiddleLp.setMargins(dp(6), 0, dp(6), 0);
+        savedFilterRow.addView(savedLiveButton, savedMiddleLp);
+        savedFilterRow.addView(savedPhotoButton, new LinearLayout.LayoutParams(0, dp(38), 1));
+        savedControls.addView(savedFilterRow);
+
+        savedSortButton = button("最近保存");
+        LinearLayout.LayoutParams savedSortLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(38)
+        );
+        savedSortLp.topMargin = dp(6);
+        savedControls.addView(savedSortButton, savedSortLp);
+
+        savedAllButton.setOnClickListener(v -> {
+            savedFilter = SavedViewState.FILTER_ALL;
+            styleSavedControls();
+            refreshSavedPhotos();
+        });
+        savedLiveButton.setOnClickListener(v -> {
+            savedFilter = SavedViewState.FILTER_MOTION;
+            styleSavedControls();
+            refreshSavedPhotos();
+        });
+        savedPhotoButton.setOnClickListener(v -> {
+            savedFilter = SavedViewState.FILTER_STILL;
+            styleSavedControls();
+            refreshSavedPhotos();
+        });
+        savedSortButton.setOnClickListener(v -> {
+            savedSort = savedSort == SavedViewState.SORT_SAVED
+                    ? SavedViewState.SORT_CAPTURED
+                    : SavedViewState.SORT_SAVED;
+            savedSortButton.setText(savedSort == SavedViewState.SORT_SAVED ? "最近保存" : "拍摄时间");
+            refreshSavedPhotos();
+        });
+        styleSavedControls();
+        root.addView(savedControls);
+
         FrameLayout content = new FrameLayout(this);
         galleryList = new RecyclerView(this);
         galleryList.setVerticalScrollBarEnabled(false); galleryList.setClipToPadding(false); galleryList.setPadding(0, 0, 0, dp(12));
