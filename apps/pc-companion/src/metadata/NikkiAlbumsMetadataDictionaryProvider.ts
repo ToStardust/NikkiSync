@@ -28,6 +28,7 @@ type NetworkImageTemplate = { baseUrl: string, replace: string }
 
 interface ParsedNuan5Database {
   clothTypes: Map<number, number>
+  clothOutfits: Map<number, number[]>
   clothImage?: NetworkImageTemplate
   clothTypeImage?: NetworkImageTemplate
 }
@@ -173,12 +174,21 @@ export function buildDictionaryManifest(input: {
   database: ParsedNuan5Database
 }): MetadataDictionaryManifest {
   const names = getNestedStringMap(input.language, ['infinity_nikki', 'cloth'])
+  const outfitNames = getNestedStringMap(input.language, ['infinity_nikki', 'cloth_outfit'])
+  const outfitByClothing = new Map<number, number>()
+  for (const [outfitId, components] of [...input.database.clothOutfits.entries()].sort((a, b) => a[0] - b[0])) {
+    for (const clothingId of components) {
+      if (!outfitByClothing.has(clothingId)) outfitByClothing.set(clothingId, outfitId)
+    }
+  }
   const entries: MetadataDictionaryEntry[] = []
   for (const [id, clothType] of [...input.database.clothTypes.entries()].sort((a, b) => a[0] - b[0])) {
     const name = names.get(String(id))
     const category = CLOTH_TYPE_NAMES.get(clothType)
     const thumbnail = renderTemplate(input.database.clothImage, id)
     const typeThumbnail = renderTemplate(input.database.clothTypeImage, clothType)
+    const outfitId = outfitByClothing.get(id)
+    const outfitName = outfitId === undefined ? undefined : outfitNames.get(String(outfitId))
     const thumbnailFallbacks = typeThumbnail && typeThumbnail !== thumbnail ? [typeThumbnail] : undefined
     entries.push({
       kind: 'clothing',
@@ -186,6 +196,8 @@ export function buildDictionaryManifest(input: {
       ...(name ? { name } : {}),
       ...(category ? { category } : {}),
       ...(thumbnail ? { thumbnail } : {}),
+      ...(outfitId === undefined ? {} : { suitId: String(outfitId) }),
+      ...(outfitName ? { suitName: outfitName } : {}),
       ...(thumbnailFallbacks ? { thumbnailFallbacks } : {}),
       raw: { clothType, source: 'nikki-albums-public' }
     })
@@ -222,6 +234,7 @@ function parseNetworkImageTemplate(buffer: Buffer): NetworkImageTemplate | undef
 
 function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
   const clothTypes = new Map<number, number>()
+  const clothOutfits = new Map<number, number[]>()
   let clothImage: ParsedNuan5Database['clothImage']
   let clothTypeImage: ParsedNuan5Database['clothTypeImage']
   for (const field of readProtobufFields(buffer)) {
@@ -238,6 +251,21 @@ function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
         }
       }
       if (id !== undefined && clothType !== undefined) clothTypes.set(id, clothType)
+    } else if (field.number === 12 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
+      let outfitId: number | undefined
+      const components: number[] = []
+      for (const entryField of readProtobufFields(field.value)) {
+        if (entryField.number === 1 && entryField.wireType === 0 && typeof entryField.value === 'bigint') {
+          outfitId = Number(entryField.value)
+        } else if (entryField.number === 2 && entryField.wireType === 2 && Buffer.isBuffer(entryField.value)) {
+          for (const outfitField of readProtobufFields(entryField.value)) {
+            if (outfitField.number === 1 && outfitField.wireType === 0 && typeof outfitField.value === 'bigint') {
+              components.push(Number(outfitField.value))
+            }
+          }
+        }
+      }
+      if (outfitId !== undefined && components.length > 0) clothOutfits.set(outfitId, components)
     } else if (field.number === 20001 && field.wireType === 2 && Buffer.isBuffer(field.value)) {
       for (const imageField of readProtobufFields(field.value)) {
         if (imageField.wireType !== 2 || !Buffer.isBuffer(imageField.value)) continue
@@ -248,6 +276,7 @@ function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
   }
   return {
     clothTypes,
+    clothOutfits,
     ...(clothImage ? { clothImage } : {}),
     ...(clothTypeImage ? { clothTypeImage } : {})
   }
