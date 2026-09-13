@@ -16,6 +16,7 @@ const manifest: MetadataDictionaryManifest = {
     { kind: 'lighting', id: '9', name: '柔光' },
     {
       kind: 'clothing', id: '101', name: '星夜长发', category: 'hair', rarity: 5,
+      suitId: 'suit-7', suitName: '星夜回响',
       thumbnail: 'https://example.test/101.webp',
       thumbnailFallbacks: ['https://example.test/type/10.webp']
     },
@@ -44,6 +45,7 @@ test('metadata dictionary enriches known IDs and preserves unknown IDs losslessl
   assert.deepEqual(enriched.dressing?.clothes, [
     {
       id: '101', name: '星夜长发', category: 'hair', rarity: 5,
+      suitId: 'suit-7', suitName: '星夜回响',
       thumbnail: 'https://example.test/101.webp',
       thumbnailFallbacks: ['https://example.test/type/10.webp']
     },
