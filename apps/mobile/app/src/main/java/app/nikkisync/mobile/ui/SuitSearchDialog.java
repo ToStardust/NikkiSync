@@ -282,14 +282,16 @@ public final class SuitSearchDialog {
     private static String matchedPartText(List<SuitSearchPart> parts) {
         List<String> labels = new ArrayList<>();
         for (SuitSearchPart part : parts) {
-            String value = part.name();
-            if (value == null || value.isBlank()) value = categoryLabel(part.category());
+            String value = categoryLabel(part.category());
+            if (value == null || value.isBlank()) value = part.name();
             if (value == null || value.isBlank()) value = "部件 " + part.clothingId();
             if (!labels.contains(value)) labels.add(value);
         }
         if (labels.isEmpty()) return "命中套装部件";
-        if (labels.size() <= 3) return String.join(" · ", labels);
-        return String.join(" · ", labels.subList(0, 3)) + " +" + (labels.size() - 3);
+        String joined = labels.size() <= 3
+                ? String.join(" · ", labels)
+                : String.join(" · ", labels.subList(0, 3)) + " +" + (labels.size() - 3);
+        return "命中：" + joined;
     }
 
     private static String categoryLabel(String category) {
