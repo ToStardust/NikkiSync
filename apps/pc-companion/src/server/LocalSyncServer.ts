@@ -17,6 +17,7 @@ import {
   type ApiErrorBody,
   type AssetListResponse,
   type ChangesResponse,
+  type ClothingSearchResponse,
   type PairRequest,
   type ServerInfoResponse,
   type SuitSearchResponse,
@@ -27,6 +28,7 @@ import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
 import { mapAssetDetail, mapAssetSummary, mapChangeRow } from './row-mappers.js'
+import { searchClothingLibrary } from './ClothingSearchIndex.js'
 import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 
@@ -137,6 +139,7 @@ export class LocalSyncServer {
   private address: LocalSyncServerAddress | undefined
   private suitSearchSourceCache: { libraryRevision: number; items: SuitSearchAsset[] } | undefined
   private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
+  private readonly clothingSearchResponseCache = new Map<string, ClothingSearchResponse>()
   private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
@@ -212,6 +215,7 @@ export class LocalSyncServer {
       if (!this.auth.verifyRequest(req)) return json(res, 401, errorBody('unauthorized', 'Request signature is missing or invalid'))
       if (req.method === 'GET' && url.pathname === API_ROUTES.assets) return this.listAssets(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.suitSearch) return this.searchSuits(url, res)
+      if (req.method === 'GET' && url.pathname === API_ROUTES.clothingSearch) return this.searchClothing(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.changes) return this.listChanges(url, res)
       const clothingThumbnailMatch = /^\/v1\/assets\/([^/]+)\/clothing\/([^/]+)\/thumbnail$/.exec(url.pathname)
       if ((req.method === 'GET' || req.method === 'HEAD') && clothingThumbnailMatch) {
@@ -240,7 +244,7 @@ export class LocalSyncServer {
       serverId: this.serverId,
       name: this.config.name,
       libraryRevision: this.reads.currentRevision(),
-      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true }
+      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true }
     }
     json(res, 200, body)
   }
@@ -317,6 +321,7 @@ export class LocalSyncServer {
 
     this.suitSearchSourceCache = { libraryRevision, items }
     this.suitSearchResponseCache.clear()
+    this.clothingSearchResponseCache.clear()
     return items
   }
 
@@ -339,6 +344,29 @@ export class LocalSyncServer {
     if (this.suitSearchResponseCache.size > 32) {
       const oldestKey = this.suitSearchResponseCache.keys().next().value
       if (oldestKey !== undefined) this.suitSearchResponseCache.delete(oldestKey)
+    }
+    json(res, 200, response)
+  }
+
+  private searchClothing(url: URL, res: ServerResponse): void {
+    const query = (url.searchParams.get('q') ?? '').trim()
+    if (!query) return json(res, 400, errorBody('bad_request', 'q is required'))
+    if (query.length > 80) return json(res, 400, errorBody('bad_request', 'q is too long'))
+
+    const libraryRevision = this.reads.currentRevision()
+    const manifest = this.dictionary.getActiveManifest()
+    const dictionaryKey = manifest
+      ? [manifest.provider, manifest.providerVersion, manifest.fetchedAt ?? manifest.generatedAt ?? ''].join(':')
+      : 'none'
+    const cacheKey = [libraryRevision, dictionaryKey, query.toLocaleLowerCase()].join('\u0000')
+    const cached = this.clothingSearchResponseCache.get(cacheKey)
+    if (cached) return json(res, 200, cached)
+
+    const response = searchClothingLibrary(this.suitSearchSource(libraryRevision), manifest, query)
+    this.clothingSearchResponseCache.set(cacheKey, response)
+    if (this.clothingSearchResponseCache.size > 32) {
+      const oldestKey = this.clothingSearchResponseCache.keys().next().value
+      if (oldestKey !== undefined) this.clothingSearchResponseCache.delete(oldestKey)
     }
     json(res, 200, response)
   }
