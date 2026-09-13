@@ -51,6 +51,7 @@ import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.SavedPhotoCollection;
 import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
+import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
 import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
@@ -117,6 +118,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private Button savedLiveButton;
     private Button savedPhotoButton;
     private Button savedSortButton;
+    private Button savedRecoverButton;
     private ProgressBar progress;
     private GalleryAdapter adapter;
     private SavedPhotoAdapter savedAdapter;
@@ -251,6 +253,14 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         savedSortLp.topMargin = dp(6);
         savedControls.addView(savedSortButton, savedSortLp);
 
+        savedRecoverButton = button("找回历史保存");
+        LinearLayout.LayoutParams recoverLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(38)
+        );
+        recoverLp.topMargin = dp(6);
+        savedControls.addView(savedRecoverButton, recoverLp);
+
         savedAllButton.setOnClickListener(v -> {
             savedFilter = SavedViewState.FILTER_ALL;
             styleSavedControls();
@@ -273,6 +283,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             savedSortButton.setText(savedSort == SavedViewState.SORT_SAVED ? "最近保存" : "拍摄时间");
             refreshSavedPhotos();
         });
+        savedRecoverButton.setOnClickListener(v -> recoverHistoricalSavedPhotos());
         styleSavedControls();
         root.addView(savedControls);
 
@@ -437,6 +448,47 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 savedHealth.putAll(checked);
                 updateSavedSummary(records);
             });
+        });
+    }
+
+    private void recoverHistoricalSavedPhotos() {
+        NikkiSyncClient current = client;
+        if (current == null) {
+            toast("请先连接电脑，再找回历史保存");
+            return;
+        }
+        if (assets.isEmpty()) {
+            toast("当前图库还没有可用于匹配的照片");
+            return;
+        }
+
+        savedRecoverButton.setEnabled(false);
+        savedSummary.setText("正在查找历史保存…");
+        List<AssetSummary> snapshot = new ArrayList<>(assets);
+
+        io.execute(() -> {
+            try {
+                SavedPhotoRecovery.Result result =
+                        SavedPhotoRecovery.recover(this, current, snapshot, savedPhotoStore);
+                main.post(() -> {
+                    savedRecoverButton.setEnabled(true);
+                    refreshSavedPhotos();
+                    String message = result.recovered() > 0
+                            ? "已找回 " + result.recovered() + " 条历史保存记录"
+                            : "没有发现可高置信关联的历史保存";
+                    if (result.skippedAmbiguous() > 0) {
+                        message += "，跳过 " + result.skippedAmbiguous() + " 条歧义匹配";
+                    }
+                    message += "。旧版 VIVO LIVE 因文件名不含来源信息，暂不自动关联。";
+                    toast(message);
+                });
+            } catch (Exception error) {
+                main.post(() -> {
+                    savedRecoverButton.setEnabled(true);
+                    refreshSavedPhotos();
+                    toast("历史保存找回失败：" + message(error));
+                });
+            }
         });
     }
 
