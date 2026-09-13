@@ -117,6 +117,11 @@ const savedCollection = text('app/src/main/java/app/nikkisync/mobile/storage/Sav
 expect(savedCollection.includes('FILTER_MOTION') && savedCollection.includes('FILTER_STILL'), 'M2.4.1 Saved filters are missing')
 expect(savedCollection.includes('SORT_CAPTURED') && savedCollection.includes('captureTime'), 'M2.4.1 Saved capture-time sorting is missing')
 
+const savedRecovery = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoRecovery.java')
+expect(savedRecovery.includes('Pictures/NikkiSync/') && savedRecovery.includes('DCIM/Camera/'), 'M2.4.2 historical recovery paths are missing')
+expect(savedRecovery.includes('matches.size() != 1'), 'M2.4.2 ambiguous historical matches must be skipped')
+expect(savedRecovery.includes('recordRecovered'), 'M2.4.2 recovered exports must preserve provenance')
+
 const auth = text('app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java')
 for (const header of ['X-NikkiSync-Device-Id', 'X-NikkiSync-Timestamp', 'X-NikkiSync-Nonce', 'X-NikkiSync-Signature']) {
   expect(auth.includes(header), `signed request header missing: ${header}`)
