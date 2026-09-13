@@ -144,20 +144,31 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         root.setPadding(dp(14), dp(8), dp(14), dp(10));
 
         LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(2), dp(8), dp(2), dp(8));
-        LinearLayout titleBox = new LinearLayout(this); titleBox.setOrientation(LinearLayout.VERTICAL);
-        titleLabel = text("暖暖图库", 24, true, getColor(R.color.text_primary));
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(14), dp(12), dp(10), dp(12));
+        header.setBackgroundResource(R.drawable.bg_glass_card);
+
+        LinearLayout titleBox = new LinearLayout(this);
+        titleBox.setOrientation(LinearLayout.VERTICAL);
+        titleLabel = text("暖暖相册", 25, true, getColor(R.color.text_primary));
         status = text("准备中…", 12, false, getColor(R.color.text_secondary));
-        titleBox.addView(titleLabel); titleBox.addView(status);
+        titleBox.addView(titleLabel);
+        titleBox.addView(status);
         header.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        pairButton = button("配对电脑"); pairButton.setOnClickListener(v -> startPairScanner());
+
+        pairButton = button("配对");
+        pairButton.setOnClickListener(v -> startPairScanner());
         header.addView(pairButton);
         root.addView(header);
 
-        galleryMeta = new LinearLayout(this); galleryMeta.setGravity(Gravity.CENTER_VERTICAL); galleryMeta.setPadding(dp(2), dp(4), dp(2), dp(8));
-        countLabel = text("0 张", 13, true, getColor(R.color.text_primary));
+        galleryMeta = new LinearLayout(this);
+        galleryMeta.setGravity(Gravity.CENTER_VERTICAL);
+        galleryMeta.setPadding(dp(4), dp(10), dp(4), dp(8));
+        countLabel = text("已同步 0 张", 13, true, getColor(R.color.text_primary));
         galleryMeta.addView(countLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button refresh = button("刷新"); refresh.setOnClickListener(v -> loadLibrary("正在刷新图库…")); galleryMeta.addView(refresh);
+        Button refresh = button("刷新");
+        refresh.setOnClickListener(v -> loadLibrary("正在刷新图库…"));
+        galleryMeta.addView(refresh);
         root.addView(galleryMeta);
 
         FrameLayout content = new FrameLayout(this);
@@ -194,15 +205,17 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         selectionBar = new LinearLayout(this); selectionBar.setGravity(Gravity.CENTER_VERTICAL); selectionBar.setPadding(dp(12), dp(8), dp(8), dp(8));
-        selectionBar.setBackground(roundRect(0xEFFFFFFF, 18));
+        selectionBar.setBackgroundResource(R.drawable.bg_glass_card);
         selectionLabel = text("", 13, true, getColor(R.color.text_primary));
         selectionBar.addView(selectionLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         saveButton = button("保存原图"); saveButton.setOnClickListener(v -> saveSelected()); selectionBar.addView(saveButton);
         selectionBar.setTag("selectionBar"); selectionBar.setVisibility(View.GONE);
         root.addView(selectionBar);
 
-        LinearLayout bottomNav = new LinearLayout(this); bottomNav.setGravity(Gravity.CENTER); bottomNav.setPadding(0, dp(6), 0, 0);
-        bottomNav.setBackground(roundRect(0xEEFFFFFF, 20));
+        LinearLayout bottomNav = new LinearLayout(this);
+        bottomNav.setGravity(Gravity.CENTER);
+        bottomNav.setPadding(dp(6), dp(6), dp(6), dp(6));
+        bottomNav.setBackgroundResource(R.drawable.bg_glass_card);
         galleryTabButton = bottomTab("图库", TAB_GALLERY);
         savedTabButton = bottomTab("已保存", TAB_SAVED);
         myTabButton = bottomTab("我的", TAB_MY);
@@ -230,7 +243,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
 
         if (tab == TAB_GALLERY) {
-            titleLabel.setText("暖暖图库");
+            titleLabel.setText("暖暖相册");
             tabPlaceholder.setText("");
         } else if (tab == TAB_SAVED) {
             titleLabel.setText("已保存");
@@ -248,7 +261,8 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
     private void styleTab(Button button, boolean selected) {
         button.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-        button.setAlpha(selected ? 1f : 0.55f);
+        button.setAlpha(selected ? 1f : 0.62f);
+        button.setBackground(selected ? getDrawable(R.drawable.bg_glass_chip) : null);
     }
 
     private void updateGalleryEmptyState() {
@@ -320,7 +334,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 long finalRevision = revision; serverStore.updateRevision(finalRevision);
                 if (pairedServer != null) pairedServer = pairedServer.withRevision(finalRevision);
                 main.post(() -> {
-                    assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText(next.size() + " 张");
+                    assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText("已同步 " + next.size() + " 张");
                     setBusy(false); setStatus("已连接 · 实时同步中"); updateSelection(); updateGalleryEmptyState();
                 });
             } catch (Exception error) {
@@ -683,7 +697,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private void realtimeStop() { if (realtime != null) realtime.stop(); realtime = null; }
     private void setBusy(boolean busy) { progress.setVisibility(busy ? View.VISIBLE : View.GONE); }
     private void setStatus(String value) { status.setText(value); }
-    private void updatePairButton() { pairButton.setText(pairedServer == null ? "配对电脑" : pairedServer.serverName()); }
+    private void updatePairButton() { pairButton.setText(pairedServer == null ? "配对" : "电脑"); }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }
     private static String message(Throwable error) { return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage(); }
 
