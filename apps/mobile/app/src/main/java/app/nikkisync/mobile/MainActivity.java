@@ -406,10 +406,31 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
     private void showViewer(AssetSummary asset) {
         Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
         ScrollView scroll = new ScrollView(this);
-        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(14), dp(14), dp(14), dp(20)); body.setBackgroundColor(Color.WHITE);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(getColor(R.color.app_background));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(12), dp(14), dp(24));
         scroll.addView(body, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setBackgroundColor(0xFFF0EDEA);
+
+        LinearLayout viewerHeader = new LinearLayout(this);
+        viewerHeader.setGravity(Gravity.CENTER_VERTICAL);
+        viewerHeader.setPadding(dp(4), 0, dp(2), dp(10));
+        TextView viewerTitle = text(asset.hasMotion() ? "LIVE 照片" : "照片详情", 20, true, getColor(R.color.text_primary));
+        viewerHeader.addView(viewerTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button close = button("完成");
+        close.setOnClickListener(v -> dialog.dismiss());
+        viewerHeader.addView(close);
+        body.addView(viewerHeader);
+
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundResource(R.drawable.bg_gallery_photo);
+        image.setClipToOutline(true);
         int previewSize = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(28));
         body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewSize));
         imageLoader.load(client, asset, image);
@@ -417,7 +438,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         int[] rotationHolder = new int[]{rotationByAssetId.getOrDefault(asset.assetId(), 0)};
         image.setRotation(rotationHolder[0]);
         if (!asset.hasMotion()) {
-            LinearLayout rotationControls = new LinearLayout(this); rotationControls.setGravity(Gravity.CENTER_VERTICAL); rotationControls.setPadding(0, dp(8), 0, dp(2));
+            LinearLayout rotationControls = new LinearLayout(this);
+            rotationControls.setGravity(Gravity.CENTER_VERTICAL);
+            rotationControls.setPadding(0, dp(10), 0, dp(8));
             Button rotateLeft = button("左转 90°");
             Button rotateRight = button("右转 90°");
             TextView rotationLabel = text(rotationLabel(rotationHolder[0]), 12, true, getColor(R.color.text_secondary));
@@ -440,33 +463,73 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             body.addView(rotationControls);
         } else {
             TextView rotationNote = text("LIVE 照片暂不单独旋转：后续需同时处理静态图与视频", 11, false, getColor(R.color.text_secondary));
-            rotationNote.setPadding(dp(4), dp(8), dp(4), dp(2)); body.addView(rotationNote);
+            rotationNote.setPadding(dp(4), dp(10), dp(4), dp(8));
+            body.addView(rotationNote);
         }
+
+        LinearLayout infoSheet = new LinearLayout(this);
+        infoSheet.setOrientation(LinearLayout.VERTICAL);
+        infoSheet.setPadding(dp(14), dp(14), dp(14), dp(14));
+        infoSheet.setBackgroundResource(R.drawable.bg_glass_card);
+        LinearLayout.LayoutParams sheetLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sheetLp.topMargin = dp(4);
+        body.addView(infoSheet, sheetLp);
 
         String description = (asset.hasMotion() ? "LIVE · " : "") + (asset.width() == null ? "" : asset.width() + " × " + asset.height()) +
                 (asset.capturedAt() == null ? "" : "\n" + asset.capturedAt());
-        TextView info = text(description, 13, false, getColor(R.color.text_secondary)); info.setPadding(dp(4), dp(12), dp(4), dp(10)); body.addView(info);
-        TextView params = text("正在读取照片参数…", 13, false, getColor(R.color.text_secondary)); params.setPadding(dp(4), dp(4), dp(4), dp(10)); body.addView(params);
-        LinearLayout clothingSection = new LinearLayout(this); clothingSection.setOrientation(LinearLayout.VERTICAL); clothingSection.setVisibility(View.GONE);
-        clothingSection.setPadding(dp(2), dp(6), dp(2), dp(8)); body.addView(clothingSection);
-        Button edit = button("编辑照片参数"); edit.setEnabled(false); body.addView(edit);
+        TextView info = text(description, 13, false, getColor(R.color.text_secondary));
+        info.setPadding(dp(2), 0, dp(2), dp(10));
+        infoSheet.addView(info);
+
+        TextView params = text("正在读取照片参数…", 13, false, getColor(R.color.text_secondary));
+        params.setPadding(dp(2), dp(4), dp(2), dp(10));
+        infoSheet.addView(params);
+
+        LinearLayout clothingSection = new LinearLayout(this);
+        clothingSection.setOrientation(LinearLayout.VERTICAL);
+        clothingSection.setVisibility(View.GONE);
+        clothingSection.setPadding(0, dp(6), 0, dp(8));
+        infoSheet.addView(clothingSection);
+
+        Button edit = button("编辑照片参数");
+        edit.setEnabled(false);
+        infoSheet.addView(edit);
+
         AssetDetail[] detailHolder = new AssetDetail[1];
         io.execute(() -> {
             try {
-                AssetDetail detail = client.asset(asset.assetId()); detailHolder[0] = detail;
+                AssetDetail detail = client.asset(asset.assetId());
+                detailHolder[0] = detail;
                 main.post(() -> {
                     params.setText(metadataSummary(detail));
                     renderClothingSection(asset, detail, clothingSection);
                     edit.setEnabled(true);
                 });
-            } catch (Exception error) { main.post(() -> params.setText("参数读取失败：" + message(error))); }
+            } catch (Exception error) {
+                main.post(() -> params.setText("参数读取失败：" + message(error)));
+            }
         });
-        edit.setOnClickListener(v -> { if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder); });
-        Button select = button("选择保存原图"); select.setOnClickListener(v -> {
-            adapter.toggle(asset); updateSelection(); dialog.dismiss();
-        }); body.addView(select);
-        dialog.setContentView(scroll); dialog.show();
-        if (dialog.getWindow() != null) dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+
+        edit.setOnClickListener(v -> {
+            if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder);
+        });
+
+        Button select = button("选择保存原图");
+        LinearLayout.LayoutParams selectLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        selectLp.topMargin = dp(8);
+        select.setOnClickListener(v -> {
+            adapter.toggle(asset);
+            updateSelection();
+            dialog.dismiss();
+        });
+        infoSheet.addView(select, selectLp);
+
+        dialog.setContentView(scroll);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
     }
 
     private void rememberRotation(String assetId, int rotationDegrees) {
