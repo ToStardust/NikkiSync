@@ -9,6 +9,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -90,6 +91,21 @@ public final class SuitSearchDialog {
         searchRow.addView(search);
         root.addView(searchRow);
 
+        TextView recentLabel = label(activity, "最近搜索", 11, true, activity.getColor(R.color.text_secondary));
+        recentLabel.setPadding(dp(activity, 2), dp(activity, 8), dp(activity, 2), dp(activity, 4));
+        root.addView(recentLabel);
+
+        HorizontalScrollView recentScroll = new HorizontalScrollView(activity);
+        recentScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout recentRow = new LinearLayout(activity);
+        recentRow.setOrientation(LinearLayout.HORIZONTAL);
+        recentRow.setPadding(0, 0, dp(activity, 8), dp(activity, 4));
+        recentScroll.addView(recentRow, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        root.addView(recentScroll);
+
         TextView status = label(activity, "输入套装名称开始搜索", 12, false, activity.getColor(R.color.text_secondary));
         status.setPadding(dp(activity, 4), dp(activity, 10), dp(activity, 4), dp(activity, 8));
         root.addView(status);
@@ -115,6 +131,8 @@ public final class SuitSearchDialog {
                     SuitSearchResponse response = client.searchSuits(value);
                     main.post(() -> {
                         search.setEnabled(true);
+                        SuitSearchHistory.record(activity, value);
+                        renderRecentSearches(activity, recentLabel, recentScroll, recentRow, query, search);
                         render(activity, client, images, response, results, status, listener, dialog);
                     });
                 } catch (Exception error) {
@@ -131,6 +149,7 @@ public final class SuitSearchDialog {
             runSearch.run();
             return true;
         });
+        renderRecentSearches(activity, recentLabel, recentScroll, recentRow, query, search);
 
         dialog.setContentView(root);
         dialog.show();
@@ -358,6 +377,36 @@ public final class SuitSearchDialog {
             case "skinTones" -> "肤色";
             default -> category;
         };
+    }
+
+    private static void renderRecentSearches(
+            Activity activity,
+            TextView recentLabel,
+            HorizontalScrollView recentScroll,
+            LinearLayout recentRow,
+            EditText query,
+            Button search
+    ) {
+        List<String> recent = SuitSearchHistory.load(activity);
+        boolean visible = !recent.isEmpty();
+        recentLabel.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.GONE);
+        recentScroll.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.GONE);
+        recentRow.removeAllViews();
+        for (String value : recent) {
+            Button chip = button(activity, value);
+            chip.setTextSize(11);
+            chip.setOnClickListener(v -> {
+                query.setText(value);
+                query.setSelection(value.length());
+                search.performClick();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    dp(activity, 36)
+            );
+            lp.rightMargin = dp(activity, 6);
+            recentRow.addView(chip, lp);
+        }
     }
 
     private static TextView label(Activity activity, String value, int sp, boolean bold, int color) {
