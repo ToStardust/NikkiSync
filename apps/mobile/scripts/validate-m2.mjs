@@ -20,6 +20,8 @@ const required = [
   'app/src/main/res/drawable/bg_glass_chip.xml',
   'app/src/main/res/drawable/bg_selected_glass.xml',
   'app/src/main/res/drawable/bg_gallery_photo.xml',
+  'app/src/main/res/drawable/bg_suit_coverage_track.xml',
+  'app/src/main/res/drawable/bg_suit_coverage_fill.xml',
   'app/src/main/res/values/dimens_gallery_ux.xml',
   'app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java',
   'app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java',
@@ -150,6 +152,8 @@ expect(client.includes('/v1/search/suits?q='), 'M2.3.3 suit search must use the 
 
 const suitSearchDialog = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java')
 expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includes('totalPartCount'), 'M2.3.3 suit coverage summary is missing')
+expect(suitSearchDialog.includes('"图库覆盖 "'), 'M2.3.3 suit coverage percentage is missing')
+expect(suitSearchDialog.includes('bg_suit_coverage_track') && suitSearchDialog.includes('bg_suit_coverage_fill'), 'M2.3.3 suit coverage bar is missing')
 expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
 
 const suitSearchGrid = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java')
@@ -158,6 +162,7 @@ expect(suitSearchGrid.includes('"全部 " + item.photoCount()'), 'M2.3.3 suit re
 expect(suitSearchGrid.includes('countCategories') && suitSearchGrid.includes('hasCategory'), 'M2.3.3 suit results must support part/category filtering')
 expect(suitSearchGrid.includes('compactPartText'), 'M2.3.3 photo cells must label matched suit slots')
 expect(suitSearchGrid.includes('"LIVE"'), 'M2.3.3 search grid must retain Live Photo visibility')
+expect(suitSearchGrid.includes('CATEGORY_ORDER'), 'M2.3.3 part filters must use a stable Infinity Nikki slot order')
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
@@ -180,4 +185,4 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
-console.log('M2.3.3 search: suit lookup + three-column matched-part filtering contract')
+console.log('M2.3.3 search: relevance-ranked suit lookup + coverage + three-column matched-part filtering contract')
