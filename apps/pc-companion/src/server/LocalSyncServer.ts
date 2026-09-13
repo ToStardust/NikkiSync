@@ -6,6 +6,7 @@ import type { Duplex } from 'node:stream'
 import { X509Certificate } from 'node:crypto'
 import {
   AssetRepository,
+  MetadataDictionaryRepository,
   SyncReadRepository,
   type DatabaseManager
 } from '@nikkisync/database'
@@ -25,6 +26,7 @@ import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
 import { mapAssetDetail, mapAssetSummary, mapChangeRow } from './row-mappers.js'
+import { searchSuitLibrary } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 
 export interface LocalSyncServerConfig {
@@ -123,6 +125,7 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 export class LocalSyncServer {
   private readonly reads: SyncReadRepository
   private readonly assets: AssetRepository
+  private readonly dictionary: MetadataDictionaryRepository
   private readonly auth: AuthService
   private readonly pairing: PairingService
   private readonly sockets = new WebSocketHub()
@@ -136,6 +139,7 @@ export class LocalSyncServer {
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
     this.assets = new AssetRepository(database)
+    this.dictionary = new MetadataDictionaryRepository(database)
     this.auth = new AuthService(database)
     this.pairing = new PairingService(database)
     this.config = {
@@ -204,6 +208,7 @@ export class LocalSyncServer {
       }
       if (!this.auth.verifyRequest(req)) return json(res, 401, errorBody('unauthorized', 'Request signature is missing or invalid'))
       if (req.method === 'GET' && url.pathname === API_ROUTES.assets) return this.listAssets(url, res)
+      if (req.method === 'GET' && url.pathname === API_ROUTES.suitSearch) return this.searchSuits(url, res)
       if (req.method === 'GET' && url.pathname === API_ROUTES.changes) return this.listChanges(url, res)
       const clothingThumbnailMatch = /^\/v1\/assets\/([^/]+)\/clothing\/([^/]+)\/thumbnail$/.exec(url.pathname)
       if ((req.method === 'GET' || req.method === 'HEAD') && clothingThumbnailMatch) {
@@ -232,7 +237,7 @@ export class LocalSyncServer {
       serverId: this.serverId,
       name: this.config.name,
       libraryRevision: this.reads.currentRevision(),
-      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true }
+      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true }
     }
     json(res, 200, body)
   }
@@ -284,6 +289,19 @@ export class LocalSyncServer {
       libraryRevision: this.reads.currentRevision()
     }
     json(res, 200, body)
+  }
+
+  private searchSuits(url: URL, res: ServerResponse): void {
+    const query = (url.searchParams.get('q') ?? '').trim()
+    if (!query) return json(res, 400, errorBody('bad_request', 'q is required'))
+    if (query.length > 80) return json(res, 400, errorBody('bad_request', 'q is too long'))
+
+    const rows = this.reads.listAssets({ limit: 50_000 })
+    const searchable = rows.map((row) => ({
+      asset: mapAssetSummary(row, this.reads.listResources(String(row.asset_id))),
+      ...(row.metadata_json ? { metadataJson: String(row.metadata_json) } : {})
+    }))
+    json(res, 200, searchSuitLibrary(searchable, this.dictionary.getActiveManifest(), query))
   }
 
   private assetDetail(assetId: string, res: ServerResponse): void {
