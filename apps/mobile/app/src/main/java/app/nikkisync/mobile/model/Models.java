@@ -148,6 +148,54 @@ public final class Models {
         }
     }
 
+    public static final class SuitSearchPart {
+        private final String clothingId, name, category;
+        public SuitSearchPart(String clothingId, String name, String category) {
+            this.clothingId = clothingId; this.name = name; this.category = category;
+        }
+        public String clothingId() { return clothingId; }
+        public String name() { return name; }
+        public String category() { return category; }
+    }
+
+    public static final class SuitSearchPhoto {
+        private final AssetSummary asset;
+        private final List<SuitSearchPart> matchedParts;
+        public SuitSearchPhoto(AssetSummary asset, List<SuitSearchPart> matchedParts) {
+            this.asset = asset; this.matchedParts = matchedParts;
+        }
+        public AssetSummary asset() { return asset; }
+        public List<SuitSearchPart> matchedParts() { return matchedParts; }
+    }
+
+    public static final class SuitSearchResult {
+        private final String suitId, suitName;
+        private final int observedPartCount, photoCount;
+        private final Integer totalPartCount;
+        private final List<SuitSearchPhoto> photos;
+        public SuitSearchResult(String suitId, String suitName, int observedPartCount, Integer totalPartCount,
+                                int photoCount, List<SuitSearchPhoto> photos) {
+            this.suitId = suitId; this.suitName = suitName; this.observedPartCount = observedPartCount;
+            this.totalPartCount = totalPartCount; this.photoCount = photoCount; this.photos = photos;
+        }
+        public String suitId() { return suitId; }
+        public String suitName() { return suitName; }
+        public int observedPartCount() { return observedPartCount; }
+        public Integer totalPartCount() { return totalPartCount; }
+        public int photoCount() { return photoCount; }
+        public List<SuitSearchPhoto> photos() { return photos; }
+    }
+
+    public static final class SuitSearchResponse {
+        private final String query;
+        private final List<SuitSearchResult> items;
+        public SuitSearchResponse(String query, List<SuitSearchResult> items) {
+            this.query = query; this.items = items;
+        }
+        public String query() { return query; }
+        public List<SuitSearchResult> items() { return items; }
+    }
+
     public static final class Change {
         private final long revision;
         private final String type, assetId, occurredAt;
