@@ -15,6 +15,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryUxStyle.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java',
   'app/src/main/res/drawable/bg_glass_card.xml',
   'app/src/main/res/drawable/bg_glass_chip.xml',
   'app/src/main/res/drawable/bg_selected_glass.xml',
@@ -150,7 +151,13 @@ expect(client.includes('/v1/search/suits?q='), 'M2.3.3 suit search must use the 
 const suitSearchDialog = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java')
 expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includes('totalPartCount'), 'M2.3.3 suit coverage summary is missing')
 expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
-expect(suitSearchDialog.includes('命中：'), 'M2.3.3 photo rows must label matched suit slots')
+
+const suitSearchGrid = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java')
+expect(suitSearchGrid.includes('for (int column = 0; column < 3; column++)'), 'M2.3.3 suit results must use a three-column album grid')
+expect(suitSearchGrid.includes('"全部 " + item.photoCount()'), 'M2.3.3 suit results must provide an all-photo filter')
+expect(suitSearchGrid.includes('countCategories') && suitSearchGrid.includes('hasCategory'), 'M2.3.3 suit results must support part/category filtering')
+expect(suitSearchGrid.includes('compactPartText'), 'M2.3.3 photo cells must label matched suit slots')
+expect(suitSearchGrid.includes('"LIVE"'), 'M2.3.3 search grid must retain Live Photo visibility')
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
@@ -173,4 +180,4 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
-console.log('M2.3.3 search: suit lookup + matched photo parts contract')
+console.log('M2.3.3 search: suit lookup + three-column matched-part filtering contract')
