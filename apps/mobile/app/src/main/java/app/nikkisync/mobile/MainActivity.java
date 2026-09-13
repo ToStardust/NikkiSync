@@ -552,26 +552,38 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             return;
         }
 
-        StringBuilder suits = new StringBuilder();
-        int rank = 1;
-        for (ProfileSuitStat item : stats.topSuits()) {
-            if (suits.length() > 0) suits.append("\n");
-            suits.append(rank++).append(". ").append(item.suitName()).append(" · ").append(item.photoCount()).append(" 张");
-        }
-        addMyCard("常用套装", suits.length() == 0 ? "当前没有可统计的套装数据" : suits.toString());
-
-        StringBuilder clothing = new StringBuilder();
-        rank = 1;
-        for (ProfileClothingStat item : stats.topClothing()) {
-            if (clothing.length() > 0) clothing.append("\n");
-            String name = item.name() == null || item.name().isBlank() ? item.clothingId() : item.name();
-            clothing.append(rank++).append(". ").append(name);
-            if (item.category() != null && !item.category().isBlank()) {
-                clothing.append(" · ").append(ClothingSearchGrid.categoryLabel(item.category()));
+        if (stats.topSuits().isEmpty()) {
+            addMyCard("常用套装", "当前没有可统计的套装数据");
+        } else {
+            List<String> labels = new ArrayList<>();
+            List<Runnable> actions = new ArrayList<>();
+            int rank = 1;
+            for (ProfileSuitStat item : stats.topSuits()) {
+                labels.add(rank++ + ". " + item.suitName() + " · " + item.photoCount() + " 张");
+                actions.add(() -> openProfileSearch(item.suitName(), false));
             }
-            clothing.append(" · ").append(item.photoCount()).append(" 张");
+            addMyLinkCard("常用套装", labels, actions);
         }
-        addMyCard("常用散件", clothing.length() == 0 ? "当前没有可统计的散件数据" : clothing.toString());
+
+        if (stats.topClothing().isEmpty()) {
+            addMyCard("常用散件", "当前没有可统计的散件数据");
+        } else {
+            List<String> labels = new ArrayList<>();
+            List<Runnable> actions = new ArrayList<>();
+            int rank = 1;
+            for (ProfileClothingStat item : stats.topClothing()) {
+                String name = item.name() == null || item.name().isBlank() ? item.clothingId() : item.name();
+                String label = rank++ + ". " + name;
+                if (item.category() != null && !item.category().isBlank()) {
+                    label += " · " + ClothingSearchGrid.categoryLabel(item.category());
+                }
+                label += " · " + item.photoCount() + " 张";
+                labels.add(label);
+                String query = name;
+                actions.add(() -> openProfileSearch(query, true));
+            }
+            addMyLinkCard("常用散件", labels, actions);
+        }
 
         if (stats.dictionary() == null) {
             addMyCard("数据源状态", "当前 PC 没有活动服装字典。照片基础参数仍可使用，但服装名称、套装归属和缩略图可能不完整。");
@@ -606,6 +618,49 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 main.post(() -> profileStatsLoading = false);
             }
         });
+    }
+
+    private void openProfileSearch(String query, boolean clothing) {
+        NikkiSyncClient current = client;
+        if (current == null) {
+            toast("请先连接电脑");
+            return;
+        }
+        switchTab(TAB_GALLERY);
+        if (clothing) {
+            SuitSearchDialog.showClothing(this, current, imageLoader, io, main, this::showViewer, query);
+        } else {
+            SuitSearchDialog.showSuit(this, current, imageLoader, io, main, this::showViewer, query);
+        }
+    }
+
+    private void addMyLinkCard(String title, List<String> labels, List<Runnable> actions) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackgroundResource(R.drawable.bg_glass_card);
+        card.addView(text(title, 16, true, getColor(R.color.text_primary)));
+
+        int count = Math.min(labels.size(), actions.size());
+        for (int index = 0; index < count; index++) {
+            Button row = button(labels.get(index));
+            row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            row.setOnClickListener(v -> actions.get((Integer) v.getTag()).run());
+            row.setTag(index);
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(42)
+            );
+            rowLp.topMargin = dp(6);
+            card.addView(row, rowLp);
+        }
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.setMargins(0, 0, 0, dp(10));
+        myContent.addView(card, lp);
     }
 
     private void addMyActionCard(String title, String body, String action, Runnable onClick) {
