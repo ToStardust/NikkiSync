@@ -508,8 +508,11 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         infoLp.topMargin = dp(10);
         body.addView(info, infoLp);
 
+        SavedPhotoHealthStore.Entry healthEntry = savedHealth.get(record.uri());
+        boolean missing = healthEntry != null && healthEntry.isMissing();
         String savedAt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(record.savedAt()));
-        String detail = "保存时间：" + savedAt
+        String detail = "状态：" + (missing ? "文件不存在" : "可访问")
+                + "\n保存时间：" + savedAt
                 + "\n格式：" + (record.format() == null ? (record.hasMotion() ? "LIVE" : "原图") : record.format())
                 + (record.rotationDegrees() == 0 ? "" : "\n保存旋转：" + record.rotationDegrees() + "°")
                 + (record.gameVersion() == null ? "" : "\n游戏版本：" + record.gameVersion())
@@ -517,7 +520,8 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 + "\n来源 Asset：" + record.assetId();
         info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
 
-        Button openSystem = button("在系统相册打开");
+        Button openSystem = button(missing ? "系统相册文件已不存在" : "在系统相册打开");
+        openSystem.setEnabled(!missing);
         LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         buttonLp.topMargin = dp(10);
         openSystem.setOnClickListener(v -> {
@@ -540,6 +544,23 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             sourceButton.setOnClickListener(v -> showViewer(source));
             info.addView(sourceButton, sourceLp);
         }
+
+        Button removeRecord = button("仅移除 NikkiSync 记录");
+        LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        removeLp.topMargin = dp(6);
+        removeRecord.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("移除保存记录？")
+                .setMessage("只会从 NikkiSync 的“已保存”中移除记录，不会删除系统相册里的照片。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("移除", (d, which) -> {
+                    savedPhotoStore.removeUri(record.uri());
+                    savedPhotoHealthStore.remove(record.uri());
+                    savedHealth.remove(record.uri());
+                    dialog.dismiss();
+                    refreshSavedPhotos();
+                })
+                .show());
+        info.addView(removeRecord, removeLp);
 
         dialog.setContentView(scroll);
         dialog.show();
