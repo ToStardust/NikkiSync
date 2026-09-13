@@ -232,6 +232,60 @@ public final class Models {
         public List<ClothingSearchResult> items() { return items; }
     }
 
+    public static final class ProfileSuitStat {
+        private final String suitId, suitName;
+        private final int photoCount;
+        public ProfileSuitStat(String suitId, String suitName, int photoCount) {
+            this.suitId = suitId; this.suitName = suitName; this.photoCount = photoCount;
+        }
+        public String suitId() { return suitId; }
+        public String suitName() { return suitName; }
+        public int photoCount() { return photoCount; }
+    }
+
+    public static final class ProfileClothingStat {
+        private final String clothingId, name, category, suitName;
+        private final int photoCount;
+        public ProfileClothingStat(String clothingId, String name, String category, String suitName, int photoCount) {
+            this.clothingId = clothingId; this.name = name; this.category = category; this.suitName = suitName; this.photoCount = photoCount;
+        }
+        public String clothingId() { return clothingId; }
+        public String name() { return name; }
+        public String category() { return category; }
+        public String suitName() { return suitName; }
+        public int photoCount() { return photoCount; }
+    }
+
+    public static final class ProfileDictionaryStatus {
+        private final String provider, providerVersion, gameVersion, fetchedAt;
+        private final int clothingEntries;
+        public ProfileDictionaryStatus(String provider, String providerVersion, String gameVersion, String fetchedAt, int clothingEntries) {
+            this.provider = provider; this.providerVersion = providerVersion; this.gameVersion = gameVersion;
+            this.fetchedAt = fetchedAt; this.clothingEntries = clothingEntries;
+        }
+        public String provider() { return provider; }
+        public String providerVersion() { return providerVersion; }
+        public String gameVersion() { return gameVersion; }
+        public String fetchedAt() { return fetchedAt; }
+        public int clothingEntries() { return clothingEntries; }
+    }
+
+    public static final class ProfileStatsResponse {
+        private final long libraryRevision;
+        private final ProfileDictionaryStatus dictionary;
+        private final List<ProfileSuitStat> topSuits;
+        private final List<ProfileClothingStat> topClothing;
+        public ProfileStatsResponse(long libraryRevision, ProfileDictionaryStatus dictionary,
+                                    List<ProfileSuitStat> topSuits, List<ProfileClothingStat> topClothing) {
+            this.libraryRevision = libraryRevision; this.dictionary = dictionary;
+            this.topSuits = topSuits; this.topClothing = topClothing;
+        }
+        public long libraryRevision() { return libraryRevision; }
+        public ProfileDictionaryStatus dictionary() { return dictionary; }
+        public List<ProfileSuitStat> topSuits() { return topSuits; }
+        public List<ProfileClothingStat> topClothing() { return topClothing; }
+    }
+
     public static final class Change {
         private final long revision;
         private final String type, assetId, occurredAt;
