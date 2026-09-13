@@ -1,0 +1,60 @@
+name: NikkiSync Deliverables
+
+on:
+  push:
+    branches:
+      - feature/m4-2-8-clothing-detail
+    paths:
+      - '.github/workflows/package-deliverables.yml'
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: npm ci
+      - run: npm run pc:exe
+      - name: Verify Windows bundle
+        shell: powershell
+        run: |
+          Test-Path release/NikkiSync/NikkiSync-PC.exe | Should -BeTrue
+          Test-Path release/NikkiSync/NikkiSync-PC-service.exe | Should -BeTrue
+          Test-Path release/NikkiSync/migrations/0001_initial.sql | Should -BeTrue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NikkiSync-Windows
+          path: release/NikkiSync/**
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: chmod +x gradlew
+      - run: ./gradlew testDebugUnitTest assembleDebug
+      - run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/NikkiSync-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NikkiSync-Android
+          path: apps/mobile/app/build/outputs/apk/debug/NikkiSync-Android.apk
+          if-no-files-found: error
