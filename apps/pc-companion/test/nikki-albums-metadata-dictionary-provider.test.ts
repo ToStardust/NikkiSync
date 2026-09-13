@@ -90,7 +90,7 @@ function databaseFixture(id: number, clothType: number, outfitId: number): Buffe
     protoVarintField(1, id),
     protoBytesField(2, cloth)
   ])
-  const outfit = protoVarintField(1, id)
+  const outfit = protoBytesField(1, varint(id))
   const outfitMapEntry = Buffer.concat([
     protoVarintField(1, outfitId),
     protoBytesField(2, outfit)
