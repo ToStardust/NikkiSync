@@ -413,9 +413,46 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
     private void refreshSavedPhotos() {
         if (savedAdapter == null || savedPhotoStore == null) return;
+
         List<SavedPhotoStore.Record> records = savedPhotoStore.load();
-        savedAdapter.setItems(records);
+        List<SavedPhotoStore.Record> visible = SavedPhotoCollection.select(records, savedFilter, savedSort);
+        savedAdapter.setItems(visible);
+
+        savedHealth.clear();
+        savedHealth.putAll(savedPhotoHealthStore.load());
+        updateSavedSummary(records);
         updateSavedEmptyState();
+
+        long newestCheck = 0L;
+        for (SavedPhotoHealthStore.Entry entry : savedHealth.values()) {
+            newestCheck = Math.max(newestCheck, entry.lastCheckedAt());
+        }
+        if (records.isEmpty() || System.currentTimeMillis() - newestCheck < 30_000L) return;
+
+        io.execute(() -> {
+            Map<String, SavedPhotoHealthStore.Entry> checked =
+                    SavedPhotoVerifier.verify(this, savedPhotoHealthStore, records);
+            main.post(() -> {
+                savedHealth.clear();
+                savedHealth.putAll(checked);
+                updateSavedSummary(records);
+            });
+        });
+    }
+
+    private void updateSavedSummary(List<SavedPhotoStore.Record> allRecords) {
+        if (savedSummary == null) return;
+        int missing = 0;
+        for (SavedPhotoStore.Record record : allRecords) {
+            SavedPhotoHealthStore.Entry entry = savedHealth.get(record.uri());
+            if (entry != null && entry.isMissing()) missing++;
+        }
+
+        String summary = allRecords.size() + " 条保存记录";
+        if (savedFilter == SavedViewState.FILTER_MOTION) summary += " · LIVE";
+        else if (savedFilter == SavedViewState.FILTER_STILL) summary += " · 普通照片";
+        if (missing > 0) summary += " · " + missing + " 条文件缺失";
+        savedSummary.setText(summary);
     }
 
     private void updateSavedEmptyState() {
