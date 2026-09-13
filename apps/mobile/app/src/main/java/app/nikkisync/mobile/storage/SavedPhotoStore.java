@@ -54,13 +54,21 @@ public final class SavedPhotoStore {
     }
 
     public synchronized void record(AssetSummary asset, Uri uri, int rotationDegrees, String format) {
+        recordInternal(asset, uri, System.currentTimeMillis(), rotationDegrees, format);
+    }
+
+    public synchronized void recordRecovered(AssetSummary asset, Uri uri, long savedAt, String format) {
+        recordInternal(asset, uri, savedAt > 0 ? savedAt : System.currentTimeMillis(), 0, format);
+    }
+
+    private void recordInternal(AssetSummary asset, Uri uri, long savedAt, int rotationDegrees, String format) {
         List<Record> next = load();
         String uriText = uri.toString();
         next.removeIf(record -> uriText.equals(record.uri()));
         next.add(new Record(
                 asset.assetId(),
                 uriText,
-                System.currentTimeMillis(),
+                savedAt,
                 asset.hasMotion(),
                 rotationDegrees,
                 asset.capturedAt(),
