@@ -194,7 +194,7 @@ expect(mainActivity.includes('"找回历史保存"') && mainActivity.includes('S
 expect(mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 unified search copy is missing')
 expect(mainActivity.includes('refreshMyPage()') && mainActivity.includes('myContent'), 'M2.5 real My page is missing')
 expect(mainActivity.includes('asset.uid()') && mainActivity.includes('"玩家 UID"'), 'M2.5 UID aggregation is missing')
-expect(mainActivity.includes('"图库概况"') && mainActivity.includes('"LIVE："') && mainActivity.includes('"已解析参数："'), 'M2.5 library statistics are missing')
+expect(mainActivity.includes('"图库概况"') && mainActivity.includes('LIVE：') && mainActivity.includes('已解析参数：'), 'M2.5 library statistics are missing')
 expect(mainActivity.includes('"同步与设备"') && mainActivity.includes('pairedServer.serverName()'), 'M2.5 paired PC summary is missing')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
