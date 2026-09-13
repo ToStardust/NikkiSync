@@ -74,7 +74,9 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
   try {
     const info = await fetch(`${base}/v1/server`)
     assert.equal(info.status, 200)
-    assert.equal((await info.json() as { libraryRevision: number }).libraryRevision, 1)
+    const infoJson = await info.json() as { libraryRevision: number; capabilities: { profileStats?: boolean } }
+    assert.equal(infoJson.libraryRevision, 1)
+    assert.equal(infoJson.capabilities.profileStats, true)
 
     const deviceKeys = generateKeyPairSync('ed25519', {
       publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
@@ -135,6 +137,24 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     assert.equal(clothingSearchJson.items[0]?.category, 'dresses')
     assert.equal(clothingSearchJson.items[0]?.photoCount, 1)
     assert.equal(clothingSearchJson.items[0]?.photos[0]?.asset.assetId, 'asset_test')
+
+    const profileStatsPath = '/v1/profile/stats'
+    const profileStats = await fetch(`${base}${profileStatsPath}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', profileStatsPath)
+    })
+    assert.equal(profileStats.status, 200)
+    const profileStatsJson = await profileStats.json() as {
+      libraryRevision: number
+      topSuits: Array<{ suitName: string; photoCount: number }>
+      topClothing: Array<{ clothingId: string; name?: string; category?: string; photoCount: number }>
+    }
+    assert.equal(profileStatsJson.libraryRevision, 1)
+    assert.equal(profileStatsJson.topSuits[0]?.suitName, '天鹅童话')
+    assert.equal(profileStatsJson.topSuits[0]?.photoCount, 1)
+    assert.equal(profileStatsJson.topClothing[0]?.clothingId, 'cloth_swan_dress')
+    assert.equal(profileStatsJson.topClothing[0]?.name, '天鹅之梦')
+    assert.equal(profileStatsJson.topClothing[0]?.category, 'dresses')
+    assert.equal(profileStatsJson.topClothing[0]?.photoCount, 1)
 
     const detailPath = '/v1/assets/asset_test'
     const detail = await fetch(`${base}${detailPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', detailPath) })
