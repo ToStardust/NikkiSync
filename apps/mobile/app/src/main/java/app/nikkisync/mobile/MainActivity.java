@@ -433,6 +433,90 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         savedControls.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
+    private void refreshMyPage() {
+        if (myContent == null) return;
+        myContent.removeAllViews();
+
+        Map<String, Integer> uidCounts = new LinkedHashMap<>();
+        java.util.Set<String> versions = new java.util.LinkedHashSet<>();
+        int liveCount = 0;
+        int metadataCount = 0;
+
+        for (AssetSummary asset : assets) {
+            if (asset.hasMotion()) liveCount++;
+            if (asset.hasMetadata()) metadataCount++;
+            if (asset.gameVersion() != null && !asset.gameVersion().isBlank()) versions.add(asset.gameVersion());
+            if (asset.uid() != null && !asset.uid().isBlank()) {
+                uidCounts.put(asset.uid(), uidCounts.getOrDefault(asset.uid(), 0) + 1);
+            }
+        }
+
+        String uidBody;
+        if (uidCounts.isEmpty()) {
+            uidBody = "尚未从当前图库照片中解析到 UID";
+        } else if (uidCounts.size() == 1) {
+            Map.Entry<String, Integer> entry = uidCounts.entrySet().iterator().next();
+            uidBody = entry.getKey() + "\n来自 " + entry.getValue() + " 张照片";
+        } else {
+            StringBuilder builder = new StringBuilder("发现 " + uidCounts.size() + " 个 UID，当前图库可能包含多个账号");
+            int shown = 0;
+            for (Map.Entry<String, Integer> entry : uidCounts.entrySet()) {
+                builder.append("\n").append(entry.getKey()).append(" · ").append(entry.getValue()).append(" 张");
+                if (++shown >= 4) break;
+            }
+            if (uidCounts.size() > shown) builder.append("\n另有 ").append(uidCounts.size() - shown).append(" 个 UID");
+            uidBody = builder.toString();
+        }
+        addMyCard("玩家 UID", uidBody);
+
+        List<SavedPhotoStore.Record> savedRecords = savedPhotoStore == null ? List.of() : savedPhotoStore.load();
+        Map<String, SavedPhotoHealthStore.Entry> health = savedPhotoHealthStore == null
+                ? Map.of()
+                : savedPhotoHealthStore.load();
+        int missingSaved = 0;
+        for (SavedPhotoStore.Record record : savedRecords) {
+            SavedPhotoHealthStore.Entry entry = health.get(record.uri());
+            if (entry != null && entry.isMissing()) missingSaved++;
+        }
+
+        String stats = "图库照片：" + assets.size()
+                + "\nLIVE：" + liveCount
+                + "\n已解析参数：" + metadataCount
+                + "\n识别版本：" + versions.size()
+                + "\n已保存记录：" + savedRecords.size()
+                + (missingSaved == 0 ? "" : "\n文件缺失：" + missingSaved);
+        addMyCard("图库概况", stats);
+
+        String device = pairedServer == null
+                ? "尚未配对电脑"
+                : "已配对：" + pairedServer.serverName() + "\n图库 revision：" + pairedServer.lastRevision();
+        addMyCard("同步与设备", device);
+
+        addMyCard(
+                "数据说明",
+                "UID 与图库统计来自 NikkiSync 已解析的照片数据。发现多个 UID 时不会自动猜测主账号；照片内容不会因为本页统计而上传到第三方。"
+        );
+    }
+
+    private void addMyCard(String title, String body) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackgroundResource(R.drawable.bg_glass_card);
+
+        card.addView(text(title, 16, true, getColor(R.color.text_primary)));
+        TextView content = text(body, 13, false, getColor(R.color.text_secondary));
+        content.setPadding(0, dp(5), 0, 0);
+        card.addView(content);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.setMargins(0, 0, 0, dp(10));
+        myContent.addView(card, lp);
+    }
+
     private void updateGalleryEmptyState() {
         if (galleryEmpty == null) return;
         boolean show = activeTab == TAB_GALLERY && assets.isEmpty();
