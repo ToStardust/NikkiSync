@@ -10,6 +10,9 @@ export interface MetadataDictionaryEntry {
   category?: string
   rarity?: number
   thumbnail?: string
+  /** Optional outfit/suit membership used by library search. */
+  suitId?: string
+  suitName?: string
   /** Ordered HTTPS image candidates used only when the canonical item thumbnail is unavailable. */
   thumbnailFallbacks?: string[]
   raw?: Record<string, unknown>
@@ -31,6 +34,8 @@ type DictionaryEntity = {
   category?: string
   rarity?: number
   thumbnail?: string
+  suitId?: string
+  suitName?: string
   thumbnailFallbacks?: string[]
   [key: string]: unknown
 }
@@ -49,7 +54,7 @@ function previousEntry(
 
 function applyDictionaryField(
   target: Record<string, unknown>,
-  field: 'name' | 'category' | 'rarity' | 'thumbnail',
+  field: 'name' | 'category' | 'rarity' | 'thumbnail' | 'suitId' | 'suitName',
   entry: MetadataDictionaryEntry | undefined,
   previous: MetadataDictionaryEntry | undefined
 ): void {
@@ -88,6 +93,8 @@ function enrichEntity(
     applyDictionaryField(enriched, 'category', entry, previous)
     applyDictionaryField(enriched, 'rarity', entry, previous)
     applyDictionaryField(enriched, 'thumbnail', entry, previous)
+    applyDictionaryField(enriched, 'suitId', entry, previous)
+    applyDictionaryField(enriched, 'suitName', entry, previous)
     applyThumbnailFallbacks(enriched, entry)
   }
   return enriched
