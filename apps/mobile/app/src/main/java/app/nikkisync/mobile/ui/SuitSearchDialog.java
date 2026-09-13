@@ -198,23 +198,16 @@ public final class SuitSearchDialog {
             summary.setPadding(0, dp(activity, 3), 0, dp(activity, 9));
             card.addView(summary);
 
-            int limit = Math.min(item.photos().size(), MAX_PHOTOS_PER_SUIT);
-            for (int index = 0; index < limit; index++) {
-                SuitSearchPhoto photo = item.photos().get(index);
-                card.addView(photoRow(activity, client, images, photo, listener, dialog));
-            }
-
-            if (item.photos().size() > limit) {
-                TextView more = label(
-                        activity,
-                        "还有 " + (item.photos().size() - limit) + " 张照片，后续会接入分页浏览",
-                        11,
-                        false,
-                        activity.getColor(R.color.text_secondary)
-                );
-                more.setPadding(dp(activity, 4), dp(activity, 8), dp(activity, 4), 0);
-                card.addView(more);
-            }
+            card.addView(SuitSearchGrid.create(
+                    activity,
+                    client,
+                    images,
+                    item,
+                    asset -> {
+                        dialog.dismiss();
+                        listener.onPhotoClick(asset);
+                    }
+            ));
 
             results.addView(card, cardLp);
         }
