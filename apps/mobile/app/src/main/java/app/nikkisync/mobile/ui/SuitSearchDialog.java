@@ -205,22 +205,30 @@ public final class SuitSearchDialog {
         query.requestFocus();
     }
 
-    private static void render(
+    private static void renderSearchResults(
             Activity activity,
             NikkiSyncClient client,
             ImageLoader images,
-            SuitSearchResponse response,
+            SuitSearchResponse suitResponse,
+            ClothingSearchResponse clothingResponse,
+            int mode,
             LinearLayout results,
             TextView status,
-            Listener listener,
-            Dialog dialog
+            Listener listener
     ) {
         results.removeAllViews();
-        if (response.items().isEmpty()) {
-            status.setText("没有找到包含该套装信息的照片");
+
+        int suitCount = suitResponse == null ? 0 : suitResponse.items().size();
+        int clothingCount = clothingResponse == null ? 0 : clothingResponse.items().size();
+        if (suitCount == 0 && clothingCount == 0) {
+            status.setText(mode == MODE_SUIT
+                    ? "没有找到包含该套装信息的照片"
+                    : mode == MODE_CLOTHING ? "没有找到使用该散件的照片" : "没有找到相关套装或散件");
             TextView empty = label(
                     activity,
-                    "当前照片需要已经解析出套装归属。旧照片在字典重新丰富后也会进入搜索结果。",
+                    mode == MODE_SUIT
+                            ? "当前照片需要已经解析出套装归属。旧照片在字典重新丰富后也会进入搜索结果。"
+                            : "搜索基于 NikkiSync 已解析的穿搭信息，不进行图片识别。",
                     13,
                     false,
                     activity.getColor(R.color.text_secondary)
@@ -231,83 +239,189 @@ public final class SuitSearchDialog {
             return;
         }
 
-        int totalPhotos = 0;
-        for (SuitSearchResult item : response.items()) totalPhotos += item.photoCount();
-        status.setText("找到 " + response.items().size() + " 个套装结果 · " + totalPhotos + " 张照片");
+        if (mode == MODE_ALL) {
+            status.setText("套装 " + suitCount + " · 散件 " + clothingCount);
+        } else if (mode == MODE_SUIT) {
+            int photos = 0;
+            for (SuitSearchResult item : suitResponse.items()) photos += item.photoCount();
+            status.setText("找到 " + suitCount + " 个套装结果 · " + photos + " 张照片");
+        } else {
+            int photos = 0;
+            for (ClothingSearchResult item : clothingResponse.items()) photos += item.photoCount();
+            status.setText("找到 " + clothingCount + " 个散件结果 · " + photos + " 条使用记录");
+        }
 
-        for (SuitSearchResult item : response.items()) {
-            LinearLayout card = new LinearLayout(activity);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(activity, 14), dp(activity, 13), dp(activity, 14), dp(activity, 14));
-            card.setBackgroundResource(R.drawable.bg_glass_card);
-            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-            );
-            cardLp.setMargins(0, 0, 0, dp(activity, 12));
+        if (suitCount > 0) {
+            if (mode == MODE_ALL) results.addView(sectionTitle(activity, "套装"));
+            for (SuitSearchResult item : suitResponse.items()) {
+                results.addView(suitCard(activity, client, images, item, listener), resultCardParams(activity));
+            }
+        }
 
-            TextView name = label(activity, item.suitName(), 18, true, activity.getColor(R.color.text_primary));
-            card.addView(name);
+        if (clothingCount > 0) {
+            if (mode == MODE_ALL) results.addView(sectionTitle(activity, "散件"));
+            for (ClothingSearchResult item : clothingResponse.items()) {
+                results.addView(clothingCard(activity, client, images, item, listener), resultCardParams(activity));
+            }
+        }
+    }
 
-            String coverage = item.totalPartCount() == null
-                    ? "已发现 " + item.observedPartCount() + " 个部件"
-                    : "已发现 " + item.observedPartCount() + " / " + item.totalPartCount() + " 个部件";
-            TextView summary = label(
+    private static LinearLayout suitCard(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            SuitSearchResult item,
+            Listener listener
+    ) {
+        LinearLayout card = resultCard(activity);
+
+        TextView name = label(activity, item.suitName(), 18, true, activity.getColor(R.color.text_primary));
+        card.addView(name);
+
+        String coverage = item.totalPartCount() == null
+                ? "已发现 " + item.observedPartCount() + " 个部件"
+                : "已发现 " + item.observedPartCount() + " / " + item.totalPartCount() + " 个部件";
+        TextView summary = label(
+                activity,
+                coverage + " · " + item.photoCount() + " 张照片",
+                12,
+                false,
+                activity.getColor(R.color.text_secondary)
+        );
+        summary.setPadding(0, dp(activity, 3), 0, dp(activity, 5));
+        card.addView(summary);
+
+        if (item.totalPartCount() != null && item.totalPartCount() > 0) {
+            int totalParts = item.totalPartCount();
+            int observedParts = Math.max(0, Math.min(item.observedPartCount(), totalParts));
+            int percentage = Math.round(observedParts * 100f / totalParts);
+
+            TextView coverageLabel = label(
                     activity,
-                    coverage + " · " + item.photoCount() + " 张照片",
-                    12,
-                    false,
+                    "图库覆盖 " + percentage + "%",
+                    11,
+                    true,
                     activity.getColor(R.color.text_secondary)
             );
-            summary.setPadding(0, dp(activity, 3), 0, dp(activity, 5));
-            card.addView(summary);
+            coverageLabel.setPadding(0, 0, 0, dp(activity, 4));
+            card.addView(coverageLabel);
 
-            if (item.totalPartCount() != null && item.totalPartCount() > 0) {
-                int totalParts = item.totalPartCount();
-                int observedParts = Math.max(0, Math.min(item.observedPartCount(), totalParts));
-                int percentage = Math.round(observedParts * 100f / totalParts);
-
-                TextView coverageLabel = label(
-                        activity,
-                        "图库覆盖 " + percentage + "%",
-                        11,
-                        true,
-                        activity.getColor(R.color.text_secondary)
-                );
-                coverageLabel.setPadding(0, 0, 0, dp(activity, 4));
-                card.addView(coverageLabel);
-
-                LinearLayout coverageTrack = new LinearLayout(activity);
-                coverageTrack.setOrientation(LinearLayout.HORIZONTAL);
-                coverageTrack.setBackgroundResource(R.drawable.bg_suit_coverage_track);
-
-                if (observedParts > 0) {
-                    android.view.View fill = new android.view.View(activity);
-                    fill.setBackgroundResource(R.drawable.bg_suit_coverage_fill);
-                    coverageTrack.addView(fill, new LinearLayout.LayoutParams(0, dp(activity, 6), observedParts));
-                }
-                int remainingParts = totalParts - observedParts;
-                if (remainingParts > 0) {
-                    coverageTrack.addView(new android.view.View(activity), new LinearLayout.LayoutParams(0, dp(activity, 6), remainingParts));
-                }
-
-                LinearLayout.LayoutParams coverageLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        dp(activity, 6)
-                );
-                coverageLp.setMargins(0, 0, 0, dp(activity, 10));
-                card.addView(coverageTrack, coverageLp);
+            LinearLayout coverageTrack = new LinearLayout(activity);
+            coverageTrack.setOrientation(LinearLayout.HORIZONTAL);
+            coverageTrack.setBackgroundResource(R.drawable.bg_suit_coverage_track);
+            if (observedParts > 0) {
+                android.view.View fill = new android.view.View(activity);
+                fill.setBackgroundResource(R.drawable.bg_suit_coverage_fill);
+                coverageTrack.addView(fill, new LinearLayout.LayoutParams(0, dp(activity, 6), observedParts));
+            }
+            int remainingParts = totalParts - observedParts;
+            if (remainingParts > 0) {
+                coverageTrack.addView(new android.view.View(activity), new LinearLayout.LayoutParams(0, dp(activity, 6), remainingParts));
             }
 
-            card.addView(SuitSearchGrid.create(
-                    activity,
-                    client,
-                    images,
-                    item,
-                    listener::onPhotoClick
-            ));
+            LinearLayout.LayoutParams coverageLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(activity, 6)
+            );
+            coverageLp.setMargins(0, 0, 0, dp(activity, 10));
+            card.addView(coverageTrack, coverageLp);
+        }
 
-            results.addView(card, cardLp);
+        card.addView(SuitSearchGrid.create(activity, client, images, item, listener::onPhotoClick));
+        return card;
+    }
+
+    private static LinearLayout clothingCard(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ClothingSearchResult item,
+            Listener listener
+    ) {
+        LinearLayout card = resultCard(activity);
+
+        LinearLayout header = new LinearLayout(activity);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        ImageView clothingImage = new ImageView(activity);
+        clothingImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        clothingImage.setBackgroundResource(R.drawable.bg_gallery_photo);
+        clothingImage.setClipToOutline(true);
+        header.addView(clothingImage, new LinearLayout.LayoutParams(dp(activity, 58), dp(activity, 58)));
+        if (!item.photos().isEmpty()) {
+            images.loadClothingThumbnail(
+                    client,
+                    item.photos().get(0).asset().assetId(),
+                    item.clothingId(),
+                    "",
+                    clothingImage
+            );
+        }
+
+        LinearLayout copy = new LinearLayout(activity);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setPadding(dp(activity, 10), 0, 0, 0);
+
+        String displayName = item.name() == null || item.name().isBlank()
+                ? "服装 " + item.clothingId()
+                : item.name();
+        copy.addView(label(activity, displayName, 17, true, activity.getColor(R.color.text_primary)));
+
+        String category = ClothingSearchGrid.categoryLabel(item.category());
+        String meta = category
+                + (item.suitName() == null || item.suitName().isBlank() ? "" : " · " + item.suitName())
+                + " · " + item.photoCount() + " 张照片";
+        TextView metaLabel = label(activity, meta, 12, false, activity.getColor(R.color.text_secondary));
+        metaLabel.setPadding(0, dp(activity, 2), 0, 0);
+        copy.addView(metaLabel);
+
+        TextView idLabel = label(activity, "ID " + item.clothingId(), 10, false, activity.getColor(R.color.text_secondary));
+        idLabel.setPadding(0, dp(activity, 2), 0, 0);
+        copy.addView(idLabel);
+
+        header.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        card.addView(header);
+
+        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        gridLp.topMargin = dp(activity, 10);
+        card.addView(ClothingSearchGrid.create(activity, client, images, item, listener::onPhotoClick), gridLp);
+        return card;
+    }
+
+    private static LinearLayout resultCard(Activity activity) {
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(activity, 14), dp(activity, 13), dp(activity, 14), dp(activity, 14));
+        card.setBackgroundResource(R.drawable.bg_glass_card);
+        return card;
+    }
+
+    private static LinearLayout.LayoutParams resultCardParams(Activity activity) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.setMargins(0, 0, 0, dp(activity, 12));
+        return lp;
+    }
+
+    private static TextView sectionTitle(Activity activity, String value) {
+        TextView title = label(activity, value, 14, true, activity.getColor(R.color.text_primary));
+        title.setPadding(dp(activity, 4), dp(activity, 5), dp(activity, 4), dp(activity, 8));
+        return title;
+    }
+
+    private static void styleModeButtons(LinearLayout row, Button selected) {
+        for (int index = 0; index < row.getChildCount(); index++) {
+            android.view.View child = row.getChildAt(index);
+            if (!(child instanceof Button button)) continue;
+            boolean active = child == selected;
+            button.setTypeface(active ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            button.setAlpha(active ? 1f : 0.58f);
+            button.setBackgroundResource(active ? R.drawable.bg_glass_chip : android.R.color.transparent);
         }
     }
 
