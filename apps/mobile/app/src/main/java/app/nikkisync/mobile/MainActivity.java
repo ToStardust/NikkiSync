@@ -108,6 +108,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private TextView galleryEmpty;
     private TextView savedEmpty;
     private TextView savedSummary;
+    private LinearLayout myContent;
     private Button pairButton;
     private Button searchButton;
     private Button saveButton;
@@ -127,6 +128,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private LinearLayout selectionBar;
     private RecyclerView galleryList;
     private RecyclerView savedList;
+    private ScrollView myScroll;
     private int activeTab = TAB_GALLERY;
     private int savedFilter = SavedViewState.FILTER_ALL;
     private int savedSort = SavedViewState.SORT_SAVED;
@@ -317,6 +319,21 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         savedList.setAdapter(savedAdapter);
         savedList.setVisibility(View.GONE);
         content.addView(savedList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        myScroll = new ScrollView(this);
+        myScroll.setFillViewport(true);
+        myScroll.setVisibility(View.GONE);
+        myContent = new LinearLayout(this);
+        myContent.setOrientation(LinearLayout.VERTICAL);
+        myContent.setPadding(0, dp(8), 0, dp(24));
+        myScroll.addView(myContent, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        content.addView(myScroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
 
         galleryEmpty = text("", 14, false, getColor(R.color.text_secondary));
         galleryEmpty.setGravity(Gravity.CENTER); galleryEmpty.setPadding(dp(28), dp(28), dp(28), dp(28)); galleryEmpty.setVisibility(View.GONE);
