@@ -147,7 +147,11 @@ expect(mainActivity.includes('new ScrollView(this)'), 'photo detail must remain 
 expect(mainActivity.includes('rotationByAssetId'), 'ordinary-photo rotation state must survive until batch save')
 expect(mainActivity.includes('左转 90°') && mainActivity.includes('右转 90°'), 'photo viewer rotation controls are missing')
 expect(mainActivity.includes('asset.hasMotion()'), 'rotation UI must keep Live Photo separate from ordinary JPEG export')
-expect(mainActivity.includes('originalSaver.save(this, current, asset, rotationDegrees)'), 'selected ordinary-photo rotation is not wired into export')
+expect(
+  mainActivity.includes('originalSaver.save(this, current, asset, savedRotation)')
+    || mainActivity.includes('originalSaver.save(this, current, asset, rotationDegrees)'),
+  'selected ordinary-photo rotation is not wired into export'
+)
 expect(mainActivity.includes('"图库"') && mainActivity.includes('"已保存"') && mainActivity.includes('"我的"'), 'M2.3.1 three-tab bottom navigation is missing')
 expect(mainActivity.includes('"暖暖相册"'), 'M2.3.2 gallery shell title is missing')
 expect(mainActivity.includes('bg_glass_card') && mainActivity.includes('bg_glass_chip'), 'M2.3.2 shell glass styling is missing')
