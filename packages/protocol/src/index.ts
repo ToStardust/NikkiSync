@@ -86,7 +86,33 @@ export interface ServerInfoResponse {
     rangeRequests: true
     metadataV1: true
     motionAssets: true
+    suitSearch?: true
   }
+}
+
+export interface SuitSearchPart {
+  clothingId: string
+  name?: string
+  category?: string
+}
+
+export interface SuitSearchPhoto {
+  asset: AssetSummary
+  matchedParts: SuitSearchPart[]
+}
+
+export interface SuitSearchResult {
+  suitId?: string
+  suitName: string
+  observedPartCount: number
+  totalPartCount?: number
+  photoCount: number
+  photos: SuitSearchPhoto[]
+}
+
+export interface SuitSearchResponse {
+  query: string
+  items: SuitSearchResult[]
 }
 
 export interface AssetListQuery {
@@ -192,6 +218,7 @@ export const API_ROUTES = {
     `/v1/assets/${encodeURIComponent(assetId)}/resources/${encodeURIComponent(resourceId)}`,
   clothingThumbnail: (assetId: AssetId, clothingId: string) =>
     `/v1/assets/${encodeURIComponent(assetId)}/clothing/${encodeURIComponent(clothingId)}/thumbnail`,
+  suitSearch: '/v1/search/suits',
   changes: '/v1/changes',
   websocket: '/ws/v1'
 } as const
@@ -247,4 +274,8 @@ export function buildChangesRoute(after: Revision): string {
 export function buildPairingUri(payload: PairingQrPayload): string {
   const expiresEpochSeconds = Math.floor(Date.parse(payload.expiresAt) / 1000)
   return `NS1|${payload.serverId}|${payload.host}|${payload.port}|${payload.pairingToken}|${expiresEpochSeconds}|${payload.tlsFingerprintSha256}`
+}
+
+export function buildSuitSearchRoute(query: string): string {
+  return `${API_ROUTES.suitSearch}?q=${encodeURIComponent(query)}`
 }
