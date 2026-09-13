@@ -202,6 +202,8 @@ expect(mainActivity.includes('livePercent') && mainActivity.includes('metadataPe
 expect(mainActivity.includes('"常用套装"') && mainActivity.includes('"常用散件"'), 'M2.5.1 top outfit summaries are missing')
 expect(mainActivity.includes('"数据源状态"') && mainActivity.includes('providerVersion()'), 'M2.5.1 dictionary source status is missing')
 expect(mainActivity.includes('current.profileStats()'), 'M2.5.1 remote profile stats loading is missing')
+expect(mainActivity.includes('openProfileSearch(') && mainActivity.includes('addMyLinkCard('), 'M2.5.2 profile trend links are missing')
+expect(mainActivity.includes('switchTab(TAB_GALLERY)') && mainActivity.includes('SuitSearchDialog.showSuit') && mainActivity.includes('SuitSearchDialog.showClothing'), 'M2.5.2 profile trends must deep-link into gallery search')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
@@ -220,6 +222,8 @@ expect(suitSearchDialog.includes('client.searchClothing'), 'M2.3.4 clothing quer
 expect(suitSearchDialog.includes('ClothingSearchGrid.create'), 'M2.3.4 clothing results are not rendered')
 expect(suitSearchDialog.includes('"最近搜索"') && suitSearchDialog.includes('SuitSearchHistory.record'), 'M2.3.3 recent suit search UX is missing')
 expect(suitSearchDialog.includes('listener::onPhotoClick'), 'M2.3.3 photo viewer must preserve search results behind it')
+expect(suitSearchDialog.includes('showSuit(') && suitSearchDialog.includes('showClothing('), 'M2.5.2 search deep-link entry points are missing')
+expect(suitSearchDialog.includes('initialQuery') && suitSearchDialog.includes('autoSearch'), 'M2.5.2 deep-link search must prefill and auto-run')
 expect(!suitSearchDialog.includes('private static LinearLayout photoRow'), 'M2.3.3 legacy vertical result renderer must stay removed')
 
 const suitSearchHistory = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchHistory.java')
@@ -272,3 +276,4 @@ console.log('M2.4.1 Saved: MediaStore health + filters + sorting + safe local re
 console.log('M2.4.2 Saved: high-confidence historical export recovery')
 console.log('M2.5 profile: UID + library + paired-device summary')
 console.log('M2.5.1 profile: UID copy + version/coverage trends + top outfits + dictionary status')
+console.log('M2.5.2 profile: clickable top outfit trends deep-link into gallery search')
