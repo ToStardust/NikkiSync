@@ -32,14 +32,14 @@ test('dictionary service loads a local manifest and re-enriches resolved photos 
   service.replaceManifest({
     schemaVersion: 1, provider: 'fixture-dictionary', providerVersion: '1', entries: [
       { kind: 'filter', id: '7', name: '晨雾' },
-      { kind: 'clothing', id: '101', name: '星夜长发', category: 'hair', rarity: 5 }
+      { kind: 'clothing', id: '101', name: '星夜长发', category: 'hair', rarity: 5, suitId: 'suit-7', suitName: '星夜回响' }
     ]
   })
   assert.equal(service.reenrichResolvedAssets(), 1)
   const metadata = JSON.parse(String(assets.getById('asset_dictionary')?.metadata_json))
   assert.equal(metadata.filter.name, '晨雾')
   assert.deepEqual(metadata.dressing.clothes, [
-    { id: '101', name: '星夜长发', category: 'hair', rarity: 5 },
+    { id: '101', name: '星夜长发', category: 'hair', rarity: 5, suitId: 'suit-7', suitName: '星夜回响' },
     { id: '999' }
   ])
   assert.equal(metadata.raw.dictionary.provider, 'fixture-dictionary')
