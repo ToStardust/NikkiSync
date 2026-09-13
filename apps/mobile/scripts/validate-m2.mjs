@@ -190,6 +190,7 @@ expect(mainActivity.includes('"文件不存在"'), 'M2.4.1 missing saved-file de
 expect(mainActivity.includes('"仅移除 NikkiSync 记录"'), 'M2.4.1 local record removal action is missing')
 expect(mainActivity.includes('"全部"') && mainActivity.includes('"LIVE"') && mainActivity.includes('"普通"'), 'M2.4.1 Saved filter controls are missing')
 expect(mainActivity.includes('"最近保存"') && mainActivity.includes('"拍摄时间"'), 'M2.4.1 Saved sort controls are missing')
+expect(mainActivity.includes('"找回历史保存"') && mainActivity.includes('SavedPhotoRecovery.recover'), 'M2.4.2 historical recovery action is missing')
 expect(mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 unified search copy is missing')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
