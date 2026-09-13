@@ -63,15 +63,16 @@ function responseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
   return copy
 }
 
-function languageFixture(id: number, name: string): Buffer {
+function languageFixture(id: number, name: string, outfitId: number, outfitName: string): Buffer {
   return msgpackMap([
     ['infinity_nikki', msgpackMap([
-      ['cloth', msgpackMap([[String(id), msgpackString(name)]])]
+      ['cloth', msgpackMap([[String(id), msgpackString(name)]])],
+      ['cloth_outfit', msgpackMap([[String(outfitId), msgpackString(outfitName)]])]
     ])]
   ])
 }
 
-function databaseFixture(id: number, clothType: number): Buffer {
+function databaseFixture(id: number, clothType: number, outfitId: number): Buffer {
   const clothImageItem = Buffer.concat([
     protoBytesField(1, Buffer.from('https://icons.example.test/{id}.png')),
     protoBytesField(2, Buffer.from('{id}'))
@@ -89,14 +90,21 @@ function databaseFixture(id: number, clothType: number): Buffer {
     protoVarintField(1, id),
     protoBytesField(2, cloth)
   ])
+  const outfit = protoVarintField(1, id)
+  const outfitMapEntry = Buffer.concat([
+    protoVarintField(1, outfitId),
+    protoBytesField(2, outfit)
+  ])
   return Buffer.concat([
     protoBytesField(20001, networkImage),
-    protoBytesField(11, mapEntry)
+    protoBytesField(11, mapEntry),
+    protoBytesField(12, outfitMapEntry)
   ])
 }
 
 test('Nikki Albums adapter converts public hot-update packages into canonical clothing entries without sending photo data', async () => {
   const clothingId = 1020810145
+  const outfitId = 700123
   const manifestUrl = 'https://fixture.test/hot_update.json'
   const langUrl = 'https://fixture.test/zh-CN.bin'
   const dbUrl = 'https://fixture.test/v1.db'
@@ -117,8 +125,8 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
         }
       ]), { status: 200, headers: { 'content-type': 'application/json', etag: '"fixture-v1"' } })
     }
-    if (url === langUrl) return new Response(responseBytes(encryptPackage(languageFixture(clothingId, '测试底妆'))), { status: 200 })
-    if (url === dbUrl) return new Response(responseBytes(encryptPackage(databaseFixture(clothingId, 81))), { status: 200 })
+    if (url === langUrl) return new Response(responseBytes(encryptPackage(languageFixture(clothingId, '测试底妆', outfitId, '测试套装'))), { status: 200 })
+    if (url === dbUrl) return new Response(responseBytes(encryptPackage(databaseFixture(clothingId, 81, outfitId))), { status: 200 })
     return new Response('not found', { status: 404 })
   }) as typeof fetch
 
@@ -135,6 +143,8 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
       name: '测试底妆',
       category: 'baseMakeup',
       thumbnail: `https://icons.example.test/${clothingId}.png`,
+      suitId: String(outfitId),
+      suitName: '测试套装',
       thumbnailFallbacks: ['https://icons.example.test/type/81.png'],
       raw: { clothType: 81, source: 'nikki-albums-public' }
     }])
