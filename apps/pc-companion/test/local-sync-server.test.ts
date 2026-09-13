@@ -54,7 +54,11 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
   assets.reconcile({
     assetId: 'asset_test', assetType: 'photo', assetState: 'ready', uid: '10001', discoveredAt: '2026-09-02T00:00:00.000Z',
     metadataSchemaVersion: 1,
-    metadata: { schemaVersion: 1, raw: { nativeParamToken: 'token-visible', nativeParamPayload: 'pc-only-secret-payload', nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef' } },
+    metadata: {
+      schemaVersion: 1,
+      dressing: { clothes: [{ id: 'cloth_swan_dress', name: '天鹅之梦', category: 'dresses', suitId: 'suit_swan', suitName: '天鹅童话' }] },
+      raw: { nativeParamToken: 'token-visible', nativeParamPayload: 'pc-only-secret-payload', nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef' }
+    },
     resources: [{
       resourceId: 'resource_test', assetId: 'asset_test', role: 'source_high_quality', fileName: 'photo.jpeg',
       sourcePath: mediaPath, pathKey: mediaPath.replaceAll('\\', '/').toLowerCase(), mimeType: 'image/jpeg', fileExt: '.jpeg',
@@ -99,6 +103,21 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     const listJson = await assetList.json() as { items: Array<{ assetId: string; hasMotion: boolean; previewResourceId?: string }>; libraryRevision: number }
     assert.equal(listJson.items.length, 1); assert.equal(listJson.items[0]?.assetId, 'asset_test'); assert.equal(listJson.items[0]?.hasMotion, false)
     assert.equal(listJson.items[0]?.previewResourceId, 'resource_test')
+
+    const suitSearchPath = '/v1/search/suits?q=' + encodeURIComponent('天鹅童话')
+    const suitSearch = await fetch(`${base}${suitSearchPath}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', suitSearchPath)
+    })
+    assert.equal(suitSearch.status, 200)
+    const suitSearchJson = await suitSearch.json() as {
+      items: Array<{ suitName: string; photoCount: number; observedPartCount: number; photos: Array<{ asset: { assetId: string }; matchedParts: Array<{ category?: string }> }> }>
+    }
+    assert.equal(suitSearchJson.items.length, 1)
+    assert.equal(suitSearchJson.items[0]?.suitName, '天鹅童话')
+    assert.equal(suitSearchJson.items[0]?.photoCount, 1)
+    assert.equal(suitSearchJson.items[0]?.observedPartCount, 1)
+    assert.equal(suitSearchJson.items[0]?.photos[0]?.asset.assetId, 'asset_test')
+    assert.equal(suitSearchJson.items[0]?.photos[0]?.matchedParts[0]?.category, 'dresses')
 
     const detailPath = '/v1/assets/asset_test'
     const detail = await fetch(`${base}${detailPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', detailPath) })
