@@ -28,9 +28,9 @@ jobs:
       - name: Verify Windows bundle
         shell: powershell
         run: |
-          Test-Path release/NikkiSync/NikkiSync-PC.exe | Should -BeTrue
-          Test-Path release/NikkiSync/NikkiSync-PC-service.exe | Should -BeTrue
-          Test-Path release/NikkiSync/migrations/0001_initial.sql | Should -BeTrue
+          if (-not (Test-Path 'release/NikkiSync/NikkiSync-PC.exe')) { throw 'Missing NikkiSync-PC.exe' }
+          if (-not (Test-Path 'release/NikkiSync/NikkiSync-PC-service.exe')) { throw 'Missing NikkiSync-PC-service.exe' }
+          if (-not (Test-Path 'release/NikkiSync/migrations/0001_initial.sql')) { throw 'Missing migration' }
       - uses: actions/upload-artifact@v4
         with:
           name: NikkiSync-Windows
