@@ -8,6 +8,7 @@ import app.nikkisync.mobile.model.Models.AssetPage;
 import app.nikkisync.mobile.model.Models.Changes;
 import app.nikkisync.mobile.model.Models.PairedServer;
 import app.nikkisync.mobile.model.Models.PairingPayload;
+import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 import app.nikkisync.mobile.protocol.JsonCodec;
 import app.nikkisync.mobile.security.DeviceIdentity;
 
@@ -65,6 +66,10 @@ public final class NikkiSyncClient {
         byte[] body = patch.toString().getBytes(StandardCharsets.UTF_8);
         HttpsURLConnection connection = http.open("PATCH", "/v1/assets/" + encode(assetId) + "/metadata", body, true);
         return JsonCodec.assetDetail(SignedHttpClient.readUtf8(connection));
+    }
+
+    public SuitSearchResponse searchSuits(String query) throws Exception {
+        return JsonCodec.suitSearch(http.json("GET", "/v1/search/suits?q=" + encode(query)));
     }
 
     public Changes changes(long after) throws Exception {
