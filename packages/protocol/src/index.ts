@@ -88,6 +88,7 @@ export interface ServerInfoResponse {
     motionAssets: true
     suitSearch?: true
     clothingSearch?: true
+    profileStats?: true
   }
 }
 
@@ -133,6 +134,35 @@ export interface ClothingSearchResult {
 export interface ClothingSearchResponse {
   query: string
   items: ClothingSearchResult[]
+}
+
+export interface ProfileSuitStat {
+  suitId?: string
+  suitName: string
+  photoCount: number
+}
+
+export interface ProfileClothingStat {
+  clothingId: string
+  name?: string
+  category?: string
+  suitName?: string
+  photoCount: number
+}
+
+export interface ProfileDictionaryStatus {
+  provider: string
+  providerVersion: string
+  gameVersion?: string
+  fetchedAt?: string
+  clothingEntries: number
+}
+
+export interface ProfileStatsResponse {
+  libraryRevision: Revision
+  dictionary?: ProfileDictionaryStatus
+  topSuits: ProfileSuitStat[]
+  topClothing: ProfileClothingStat[]
 }
 
 export interface AssetListQuery {
@@ -240,6 +270,7 @@ export const API_ROUTES = {
     `/v1/assets/${encodeURIComponent(assetId)}/clothing/${encodeURIComponent(clothingId)}/thumbnail`,
   suitSearch: '/v1/search/suits',
   clothingSearch: '/v1/search/clothing',
+  profileStats: '/v1/profile/stats',
   changes: '/v1/changes',
   websocket: '/ws/v1'
 } as const
