@@ -10,22 +10,17 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import app.nikkisync.mobile.R;
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.model.Models.AssetSummary;
-import app.nikkisync.mobile.model.Models.SuitSearchPart;
-import app.nikkisync.mobile.model.Models.SuitSearchPhoto;
 import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 import app.nikkisync.mobile.model.Models.SuitSearchResult;
 import app.nikkisync.mobile.net.NikkiSyncClient;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 
@@ -33,8 +28,6 @@ public final class SuitSearchDialog {
     public interface Listener {
         void onPhotoClick(AssetSummary asset);
     }
-
-    private static final int MAX_PHOTOS_PER_SUIT = 40;
 
     private SuitSearchDialog() {}
 
@@ -264,116 +257,6 @@ public final class SuitSearchDialog {
 
             results.addView(card, cardLp);
         }
-    }
-
-    private static LinearLayout photoRow(
-            Activity activity,
-            NikkiSyncClient client,
-            ImageLoader images,
-            SuitSearchPhoto photo,
-            Listener listener,
-            Dialog dialog
-    ) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(activity, 7), dp(activity, 7), dp(activity, 7), dp(activity, 7));
-        row.setBackgroundResource(R.drawable.bg_glass_chip);
-
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        rowLp.setMargins(0, 0, 0, dp(activity, 7));
-        row.setLayoutParams(rowLp);
-
-        ImageView image = new ImageView(activity);
-        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        image.setBackgroundResource(R.drawable.bg_gallery_photo);
-        image.setClipToOutline(true);
-        row.addView(image, new LinearLayout.LayoutParams(dp(activity, 88), dp(activity, 88)));
-        images.load(client, photo.asset(), image);
-
-        LinearLayout labels = new LinearLayout(activity);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setPadding(dp(activity, 10), 0, dp(activity, 2), 0);
-
-        TextView parts = label(
-                activity,
-                matchedPartText(photo.matchedParts()),
-                13,
-                true,
-                activity.getColor(R.color.text_primary)
-        );
-        labels.addView(parts);
-
-        String capturedAt = photo.asset().capturedAt();
-        TextView detail = label(
-                activity,
-                capturedAt == null || capturedAt.isBlank() ? "点击查看照片详情" : capturedAt,
-                11,
-                false,
-                activity.getColor(R.color.text_secondary)
-        );
-        detail.setPadding(0, dp(activity, 4), 0, 0);
-        labels.addView(detail);
-
-        row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        row.setOnClickListener(v -> {
-            dialog.dismiss();
-            listener.onPhotoClick(photo.asset());
-        });
-        return row;
-    }
-
-    private static String matchedPartText(List<SuitSearchPart> parts) {
-        List<String> labels = new ArrayList<>();
-        for (SuitSearchPart part : parts) {
-            String value = categoryLabel(part.category());
-            if (value == null || value.isBlank()) value = part.name();
-            if (value == null || value.isBlank()) value = "部件 " + part.clothingId();
-            if (!labels.contains(value)) labels.add(value);
-        }
-        if (labels.isEmpty()) return "命中套装部件";
-        String joined = labels.size() <= 3
-                ? String.join(" · ", labels)
-                : String.join(" · ", labels.subList(0, 3)) + " +" + (labels.size() - 3);
-        return "命中：" + joined;
-    }
-
-    private static String categoryLabel(String category) {
-        if (category == null) return "";
-        return switch (category) {
-            case "hair" -> "发型";
-            case "dresses" -> "连衣裙";
-            case "outerwear" -> "外套";
-            case "tops" -> "上衣";
-            case "bottoms" -> "下装";
-            case "socks" -> "袜子";
-            case "shoes" -> "鞋子";
-            case "hairAccessories" -> "发饰";
-            case "headwear" -> "帽子";
-            case "earrings" -> "耳饰";
-            case "neckwear" -> "颈饰";
-            case "bracelets" -> "腕饰";
-            case "chokers" -> "项圈";
-            case "gloves" -> "手套";
-            case "faceDecorations" -> "面饰";
-            case "chestAccessories" -> "胸饰";
-            case "pendants" -> "挂饰";
-            case "backpieces" -> "背饰";
-            case "rings" -> "戒指";
-            case "armDecorations" -> "臂饰";
-            case "handhelds" -> "手持物";
-            case "bodyPaint" -> "肤绘";
-            case "fullMakeup" -> "全妆";
-            case "baseMakeup" -> "底妆";
-            case "eyebrows" -> "眉妆";
-            case "eyelashes" -> "睫毛";
-            case "contacts" -> "美瞳";
-            case "lips" -> "唇妆";
-            case "skinTones" -> "肤色";
-            default -> category;
-        };
     }
 
     private static void renderRecentSearches(
