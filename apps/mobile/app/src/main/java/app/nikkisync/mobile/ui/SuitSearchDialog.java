@@ -259,10 +259,7 @@ public final class SuitSearchDialog {
                     client,
                     images,
                     item,
-                    asset -> {
-                        dialog.dismiss();
-                        listener.onPhotoClick(asset);
-                    }
+                    listener::onPhotoClick
             ));
 
             results.addView(card, cardLp);
