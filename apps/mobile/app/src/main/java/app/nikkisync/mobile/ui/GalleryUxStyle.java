@@ -1,11 +1,8 @@
 package app.nikkisync.mobile.ui;
 
+import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-
-import android.content.Context;
-
-import androidx.core.content.ContextCompat;
 
 import app.nikkisync.mobile.R;
 
@@ -17,15 +14,15 @@ public final class GalleryUxStyle {
     private GalleryUxStyle() {}
 
     public static Drawable glassCard(Context context) {
-        return ContextCompat.getDrawable(context, R.drawable.bg_glass_card);
+        return context.getDrawable(R.drawable.bg_glass_card);
     }
 
     public static Drawable glassChip(Context context) {
-        return ContextCompat.getDrawable(context, R.drawable.bg_glass_chip);
+        return context.getDrawable(R.drawable.bg_glass_chip);
     }
 
     public static Drawable selectedOverlay(Context context) {
-        return ContextCompat.getDrawable(context, R.drawable.bg_selected_glass);
+        return context.getDrawable(R.drawable.bg_selected_glass);
     }
 
     public static GradientDrawable fallbackRound(int color, float radius) {
