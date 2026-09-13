@@ -157,6 +157,8 @@ expect(suitSearchDialog.includes('"图库覆盖 "'), 'M2.3.3 suit coverage perce
 expect(suitSearchDialog.includes('bg_suit_coverage_track') && suitSearchDialog.includes('bg_suit_coverage_fill'), 'M2.3.3 suit coverage bar is missing')
 expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
 expect(suitSearchDialog.includes('"最近搜索"') && suitSearchDialog.includes('SuitSearchHistory.record'), 'M2.3.3 recent suit search UX is missing')
+expect(suitSearchDialog.includes('listener::onPhotoClick'), 'M2.3.3 photo viewer must preserve search results behind it')
+expect(!suitSearchDialog.includes('private static LinearLayout photoRow'), 'M2.3.3 legacy vertical result renderer must stay removed')
 
 const suitSearchHistory = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchHistory.java')
 expect(suitSearchHistory.includes('LIMIT = 5'), 'M2.3.3 recent suit search history must stay bounded')
@@ -191,4 +193,4 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
-console.log('M2.3.3 search: relevance-ranked lookup + coverage + filters + bounded recent-query history')
+console.log('M2.3.3 search: ranked lookup + coverage + filters + history + preserved viewer context')
