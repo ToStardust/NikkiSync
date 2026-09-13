@@ -5,6 +5,9 @@ import app.nikkisync.mobile.model.Models.AssetPage;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.model.Models.Change;
 import app.nikkisync.mobile.model.Models.Changes;
+import app.nikkisync.mobile.model.Models.ClothingSearchPhoto;
+import app.nikkisync.mobile.model.Models.ClothingSearchResponse;
+import app.nikkisync.mobile.model.Models.ClothingSearchResult;
 import app.nikkisync.mobile.model.Models.MediaResource;
 import app.nikkisync.mobile.model.Models.SuitSearchPart;
 import app.nikkisync.mobile.model.Models.SuitSearchPhoto;
@@ -82,6 +85,31 @@ public final class JsonCodec {
             ));
         }
         return new SuitSearchResponse(root.optString("query", ""), items);
+    }
+
+    public static ClothingSearchResponse clothingSearch(String json) throws Exception {
+        JSONObject root = new JSONObject(json);
+        JSONArray rows = root.getJSONArray("items");
+        List<ClothingSearchResult> items = new ArrayList<>(rows.length());
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            JSONArray photoRows = row.getJSONArray("photos");
+            List<ClothingSearchPhoto> photos = new ArrayList<>(photoRows.length());
+            for (int p = 0; p < photoRows.length(); p++) {
+                JSONObject photo = photoRows.getJSONObject(p);
+                photos.add(new ClothingSearchPhoto(assetSummary(photo.getJSONObject("asset"))));
+            }
+            items.add(new ClothingSearchResult(
+                    row.getString("clothingId"),
+                    optionalString(row, "name"),
+                    optionalString(row, "category"),
+                    optionalString(row, "suitId"),
+                    optionalString(row, "suitName"),
+                    row.getInt("photoCount"),
+                    photos
+            ));
+        }
+        return new ClothingSearchResponse(root.optString("query", ""), items);
     }
 
     public static Changes changes(String json) throws Exception {
