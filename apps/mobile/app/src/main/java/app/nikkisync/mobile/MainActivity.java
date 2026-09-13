@@ -393,6 +393,12 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         button.setBackground(selected ? getDrawable(R.drawable.bg_glass_chip) : null);
     }
 
+    private void styleSavedControls() {
+        styleTab(savedAllButton, savedFilter == SavedViewState.FILTER_ALL);
+        styleTab(savedLiveButton, savedFilter == SavedViewState.FILTER_MOTION);
+        styleTab(savedPhotoButton, savedFilter == SavedViewState.FILTER_STILL);
+    }
+
     private void updateGalleryEmptyState() {
         if (galleryEmpty == null) return;
         boolean show = activeTab == TAB_GALLERY && assets.isEmpty();
