@@ -395,7 +395,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         galleryMeta.setVisibility(gallery ? View.VISIBLE : View.GONE);
         updateSavedControlsVisibility(saved);
         searchButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
-        tabPlaceholder.setVisibility(my ? View.VISIBLE : View.GONE);
+        tabPlaceholder.setVisibility(View.GONE);
         pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
 
         if (gallery) {
