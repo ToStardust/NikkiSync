@@ -33,6 +33,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/security/DeviceIdentity.java',
   'app/src/main/java/app/nikkisync/mobile/security/PinnedTls.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoStore.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoRecovery.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoHealthStore.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoVerifier.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoCollection.java',
