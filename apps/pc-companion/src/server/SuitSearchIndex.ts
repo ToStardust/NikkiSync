@@ -72,6 +72,15 @@ function matches(query: string, suit: SuitIdentity): boolean {
   return suit.name.toLocaleLowerCase().includes(q) || Boolean(suit.id?.toLocaleLowerCase().includes(q))
 }
 
+function relevanceRank(query: string, suitName: string, suitId?: string): number {
+  const q = query.toLocaleLowerCase()
+  const name = suitName.toLocaleLowerCase()
+  const id = suitId?.toLocaleLowerCase()
+  if (name === q || id === q) return 0
+  if (name.startsWith(q) || id?.startsWith(q)) return 1
+  return 2
+}
+
 function partOf(value: Record<string, unknown>, fallback?: MetadataDictionaryEntry): SuitSearchPart | undefined {
   const clothingId = stringOf(value.id ?? fallback?.id)
   if (!clothingId) return undefined
@@ -164,7 +173,12 @@ export function searchSuitLibrary(
       photoCount: aggregate.photos.length,
       photos: aggregate.photos
     }))
-    .sort((left, right) => right.photoCount - left.photoCount || left.suitName.localeCompare(right.suitName, 'zh-CN'))
+    .sort((left, right) => {
+      const relevance = relevanceRank(trimmed, left.suitName, left.suitId)
+        - relevanceRank(trimmed, right.suitName, right.suitId)
+      if (relevance !== 0) return relevance
+      return right.photoCount - left.photoCount || left.suitName.localeCompare(right.suitName, 'zh-CN')
+    })
 
   return { query: trimmed, items }
 }
