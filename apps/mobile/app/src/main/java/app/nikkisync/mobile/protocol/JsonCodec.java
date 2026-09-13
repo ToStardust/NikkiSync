@@ -9,6 +9,10 @@ import app.nikkisync.mobile.model.Models.ClothingSearchPhoto;
 import app.nikkisync.mobile.model.Models.ClothingSearchResponse;
 import app.nikkisync.mobile.model.Models.ClothingSearchResult;
 import app.nikkisync.mobile.model.Models.MediaResource;
+import app.nikkisync.mobile.model.Models.ProfileClothingStat;
+import app.nikkisync.mobile.model.Models.ProfileDictionaryStatus;
+import app.nikkisync.mobile.model.Models.ProfileStatsResponse;
+import app.nikkisync.mobile.model.Models.ProfileSuitStat;
 import app.nikkisync.mobile.model.Models.SuitSearchPart;
 import app.nikkisync.mobile.model.Models.SuitSearchPhoto;
 import app.nikkisync.mobile.model.Models.SuitSearchResponse;
@@ -110,6 +114,53 @@ public final class JsonCodec {
             ));
         }
         return new ClothingSearchResponse(root.optString("query", ""), items);
+    }
+
+    public static ProfileStatsResponse profileStats(String json) throws Exception {
+        JSONObject root = new JSONObject(json);
+
+        ProfileDictionaryStatus dictionary = null;
+        JSONObject dictionaryRow = root.optJSONObject("dictionary");
+        if (dictionaryRow != null) {
+            dictionary = new ProfileDictionaryStatus(
+                    dictionaryRow.getString("provider"),
+                    dictionaryRow.getString("providerVersion"),
+                    optionalString(dictionaryRow, "gameVersion"),
+                    optionalString(dictionaryRow, "fetchedAt"),
+                    dictionaryRow.optInt("clothingEntries", 0)
+            );
+        }
+
+        JSONArray suitRows = root.getJSONArray("topSuits");
+        List<ProfileSuitStat> topSuits = new ArrayList<>(suitRows.length());
+        for (int i = 0; i < suitRows.length(); i++) {
+            JSONObject row = suitRows.getJSONObject(i);
+            topSuits.add(new ProfileSuitStat(
+                    optionalString(row, "suitId"),
+                    row.getString("suitName"),
+                    row.getInt("photoCount")
+            ));
+        }
+
+        JSONArray clothingRows = root.getJSONArray("topClothing");
+        List<ProfileClothingStat> topClothing = new ArrayList<>(clothingRows.length());
+        for (int i = 0; i < clothingRows.length(); i++) {
+            JSONObject row = clothingRows.getJSONObject(i);
+            topClothing.add(new ProfileClothingStat(
+                    row.getString("clothingId"),
+                    optionalString(row, "name"),
+                    optionalString(row, "category"),
+                    optionalString(row, "suitName"),
+                    row.getInt("photoCount")
+            ));
+        }
+
+        return new ProfileStatsResponse(
+                root.getLong("libraryRevision"),
+                dictionary,
+                topSuits,
+                topClothing
+        );
     }
 
     public static Changes changes(String json) throws Exception {
