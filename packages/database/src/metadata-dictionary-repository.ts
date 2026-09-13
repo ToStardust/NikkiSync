@@ -25,6 +25,7 @@ type EntryRow = {
 }
 
 function entryFromRow(row: EntryRow): MetadataDictionaryEntry {
+  const raw = row.raw_json === null ? undefined : JSON.parse(row.raw_json) as Record<string, unknown>
   return {
     kind: row.kind,
     id: row.entity_id,
@@ -32,7 +33,9 @@ function entryFromRow(row: EntryRow): MetadataDictionaryEntry {
     ...(row.category === null ? {} : { category: row.category }),
     ...(row.rarity === null ? {} : { rarity: row.rarity }),
     ...(row.thumbnail === null ? {} : { thumbnail: row.thumbnail }),
-    ...(row.raw_json === null ? {} : { raw: JSON.parse(row.raw_json) as Record<string, unknown> })
+    ...(typeof raw?.suitId === 'string' ? { suitId: raw.suitId } : {}),
+    ...(typeof raw?.suitName === 'string' ? { suitName: raw.suitName } : {}),
+    ...(raw === undefined ? {} : { raw })
   }
 }
 
@@ -55,7 +58,13 @@ export class MetadataDictionaryRepository {
           entry.category ?? null,
           entry.rarity ?? null,
           entry.thumbnail ?? null,
-          entry.raw === undefined ? null : JSON.stringify(entry.raw)
+          entry.raw === undefined && entry.suitId === undefined && entry.suitName === undefined
+            ? null
+            : JSON.stringify({
+                ...(entry.raw ?? {}),
+                ...(entry.suitId === undefined ? {} : { suitId: entry.suitId }),
+                ...(entry.suitName === undefined ? {} : { suitName: entry.suitName })
+              })
         )
       }
       this.database.connection.prepare(`
