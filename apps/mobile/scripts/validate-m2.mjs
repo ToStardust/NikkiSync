@@ -33,6 +33,10 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/security/DeviceIdentity.java',
   'app/src/main/java/app/nikkisync/mobile/security/PinnedTls.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoStore.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoHealthStore.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoVerifier.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoCollection.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedViewState.java',
   'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
@@ -100,6 +104,18 @@ const savedPhotoAdapter = text('app/src/main/java/app/nikkisync/mobile/ui/SavedP
 expect(savedPhotoAdapter.includes('loadThumbnail'), 'M2.4 Saved grid must load MediaStore thumbnails off the main UI path')
 expect(savedPhotoAdapter.includes('"LIVE"') && savedPhotoAdapter.includes('"原图"'), 'M2.4 Saved grid state badges are missing')
 
+const savedHealthStore = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoHealthStore.java')
+expect(savedHealthStore.includes('ACTIVE') && savedHealthStore.includes('MISSING'), 'M2.4.1 Saved health states are missing')
+expect(savedHealthStore.includes('lastCheckedAt'), 'M2.4.1 Saved health timestamps are missing')
+
+const savedVerifier = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoVerifier.java')
+expect(savedVerifier.includes('openFileDescriptor'), 'M2.4.1 MediaStore existence verification is missing')
+expect(savedVerifier.includes('SavedPhotoHealthStore.State.MISSING'), 'M2.4.1 missing-file state is not persisted')
+
+const savedCollection = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoCollection.java')
+expect(savedCollection.includes('FILTER_MOTION') && savedCollection.includes('FILTER_STILL'), 'M2.4.1 Saved filters are missing')
+expect(savedCollection.includes('SORT_CAPTURED') && savedCollection.includes('captureTime'), 'M2.4.1 Saved capture-time sorting is missing')
+
 const auth = text('app/src/main/java/app/nikkisync/mobile/net/SignedHttpClient.java')
 for (const header of ['X-NikkiSync-Device-Id', 'X-NikkiSync-Timestamp', 'X-NikkiSync-Nonce', 'X-NikkiSync-Signature']) {
   expect(auth.includes(header), `signed request header missing: ${header}`)
@@ -162,6 +178,12 @@ expect(mainActivity.includes('GridLayoutManager') && mainActivity.includes('adap
 expect(mainActivity.includes('savedList') && mainActivity.includes('SavedPhotoAdapter'), 'M2.4 Saved tab must use a real saved-photo grid')
 expect(mainActivity.includes('savedPhotoStore.record'), 'M2.4 successful exports must retain source provenance')
 expect(mainActivity.includes('"在系统相册打开"') && mainActivity.includes('"查看源照片"'), 'M2.4 saved-photo detail actions are missing')
+expect(mainActivity.includes('SavedPhotoCollection.select'), 'M2.4.1 Saved filter/sort application is missing')
+expect(mainActivity.includes('SavedPhotoVerifier.verify'), 'M2.4.1 Saved MediaStore health refresh is missing')
+expect(mainActivity.includes('"文件不存在"'), 'M2.4.1 missing saved-file detail state is missing')
+expect(mainActivity.includes('"仅移除 NikkiSync 记录"'), 'M2.4.1 local record removal action is missing')
+expect(mainActivity.includes('"全部"') && mainActivity.includes('"LIVE"') && mainActivity.includes('"普通"'), 'M2.4.1 Saved filter controls are missing')
+expect(mainActivity.includes('"最近保存"') && mainActivity.includes('"拍摄时间"'), 'M2.4.1 Saved sort controls are missing')
 expect(mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 unified search copy is missing')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
@@ -226,3 +248,4 @@ console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection
 console.log('M2.3.3 search: ranked suit lookup + coverage + filters + history + preserved viewer context')
 console.log('M2.3.4 search: unified all/suit/clothing lookup + clothing photo grid contract')
 console.log('M2.4 Saved: local export provenance + three-column MediaStore history contract')
+console.log('M2.4.1 Saved: MediaStore health + filters + sorting + safe local record removal')
