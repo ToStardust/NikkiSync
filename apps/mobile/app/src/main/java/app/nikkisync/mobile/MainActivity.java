@@ -399,6 +399,10 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         styleTab(savedPhotoButton, savedFilter == SavedViewState.FILTER_STILL);
     }
 
+    private void updateSavedControlsVisibility(boolean show) {
+        savedControls.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
     private void updateGalleryEmptyState() {
         if (galleryEmpty == null) return;
         boolean show = activeTab == TAB_GALLERY && assets.isEmpty();
