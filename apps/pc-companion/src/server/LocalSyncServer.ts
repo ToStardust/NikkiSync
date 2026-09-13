@@ -19,6 +19,7 @@ import {
   type ChangesResponse,
   type PairRequest,
   type ServerInfoResponse,
+  type SuitSearchResponse,
   type WsEvent
 } from '@nikkisync/protocol'
 import type { MetadataThumbnailCache } from '../metadata/MetadataThumbnailCache.js'
@@ -26,7 +27,7 @@ import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
 import { mapAssetDetail, mapAssetSummary, mapChangeRow } from './row-mappers.js'
-import { searchSuitLibrary } from './SuitSearchIndex.js'
+import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 
 export interface LocalSyncServerConfig {
@@ -134,6 +135,8 @@ export class LocalSyncServer {
   private pollTimer: NodeJS.Timeout | undefined
   private lastBroadcastRevision = 0
   private address: LocalSyncServerAddress | undefined
+  private suitSearchSourceCache: { libraryRevision: number; items: SuitSearchAsset[] } | undefined
+  private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
   private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
@@ -291,17 +294,53 @@ export class LocalSyncServer {
     json(res, 200, body)
   }
 
+  private suitSearchSource(libraryRevision: number): SuitSearchAsset[] {
+    if (this.suitSearchSourceCache?.libraryRevision === libraryRevision) {
+      return this.suitSearchSourceCache.items
+    }
+
+    const resourcesByAsset = new Map<string, Record<string, unknown>[]>()
+    for (const resource of this.reads.listSuitSearchResources()) {
+      const assetId = String(resource.asset_id)
+      const resources = resourcesByAsset.get(assetId) ?? []
+      resources.push(resource)
+      resourcesByAsset.set(assetId, resources)
+    }
+
+    const items = this.reads.listSuitSearchAssets().map((row) => {
+      const assetId = String(row.asset_id)
+      return {
+        asset: mapAssetSummary(row, resourcesByAsset.get(assetId) ?? []),
+        metadataJson: String(row.metadata_json)
+      }
+    })
+
+    this.suitSearchSourceCache = { libraryRevision, items }
+    this.suitSearchResponseCache.clear()
+    return items
+  }
+
   private searchSuits(url: URL, res: ServerResponse): void {
     const query = (url.searchParams.get('q') ?? '').trim()
     if (!query) return json(res, 400, errorBody('bad_request', 'q is required'))
     if (query.length > 80) return json(res, 400, errorBody('bad_request', 'q is too long'))
 
-    const rows = this.reads.listAssets({ limit: 50_000 })
-    const searchable = rows.map((row) => ({
-      asset: mapAssetSummary(row, this.reads.listResources(String(row.asset_id))),
-      ...(row.metadata_json ? { metadataJson: String(row.metadata_json) } : {})
-    }))
-    json(res, 200, searchSuitLibrary(searchable, this.dictionary.getActiveManifest(), query))
+    const libraryRevision = this.reads.currentRevision()
+    const manifest = this.dictionary.getActiveManifest()
+    const dictionaryKey = manifest
+      ? [manifest.provider, manifest.providerVersion, manifest.fetchedAt ?? manifest.generatedAt ?? ''].join(':')
+      : 'none'
+    const cacheKey = [libraryRevision, dictionaryKey, query.toLocaleLowerCase()].join('\u0000')
+    const cached = this.suitSearchResponseCache.get(cacheKey)
+    if (cached) return json(res, 200, cached)
+
+    const response = searchSuitLibrary(this.suitSearchSource(libraryRevision), manifest, query)
+    this.suitSearchResponseCache.set(cacheKey, response)
+    if (this.suitSearchResponseCache.size > 32) {
+      const oldestKey = this.suitSearchResponseCache.keys().next().value
+      if (oldestKey !== undefined) this.suitSearchResponseCache.delete(oldestKey)
+    }
+    json(res, 200, response)
   }
 
   private assetDetail(assetId: string, res: ServerResponse): void {
