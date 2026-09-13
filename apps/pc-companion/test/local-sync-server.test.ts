@@ -7,6 +7,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import { PairingService } from '../src/server/PairingService.js'
+import { searchClothingLibrary } from '../src/server/ClothingSearchIndex.js'
 import { LocalSyncServer } from '../src/server/LocalSyncServer.js'
 import { searchSuitLibrary } from '../src/server/SuitSearchIndex.js'
 import { LocalTlsIdentityService } from '../src/server/LocalTlsIdentityService.js'
@@ -119,6 +120,21 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     assert.equal(suitSearchJson.items[0]?.observedPartCount, 1)
     assert.equal(suitSearchJson.items[0]?.photos[0]?.asset.assetId, 'asset_test')
     assert.equal(suitSearchJson.items[0]?.photos[0]?.matchedParts[0]?.category, 'dresses')
+
+    const clothingSearchPath = '/v1/search/clothing?q=' + encodeURIComponent('天鹅之梦')
+    const clothingSearch = await fetch(`${base}${clothingSearchPath}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', clothingSearchPath)
+    })
+    assert.equal(clothingSearch.status, 200)
+    const clothingSearchJson = await clothingSearch.json() as {
+      items: Array<{ clothingId: string; name?: string; category?: string; photoCount: number; photos: Array<{ asset: { assetId: string } }> }>
+    }
+    assert.equal(clothingSearchJson.items.length, 1)
+    assert.equal(clothingSearchJson.items[0]?.clothingId, 'cloth_swan_dress')
+    assert.equal(clothingSearchJson.items[0]?.name, '天鹅之梦')
+    assert.equal(clothingSearchJson.items[0]?.category, 'dresses')
+    assert.equal(clothingSearchJson.items[0]?.photoCount, 1)
+    assert.equal(clothingSearchJson.items[0]?.photos[0]?.asset.assetId, 'asset_test')
 
     const detailPath = '/v1/assets/asset_test'
     const detail = await fetch(`${base}${detailPath}`, { headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', detailPath) })
@@ -276,5 +292,31 @@ test('suit search ranks exact names before broader matches and keeps photo-count
   assert.equal(result.items[0]?.photoCount, 1)
   assert.equal(result.items[1]?.photoCount, 2)
   assert.equal(result.items[2]?.photoCount, 3)
+})
+
+
+test('clothing search ranks exact names before prefix and contains matches', () => {
+  const summary = (assetId: string) => ({
+    assetId,
+    type: 'photo' as const,
+    state: 'ready' as const,
+    revision: 1,
+    hasMotion: false,
+    hasMetadata: true,
+    gameVersionSource: 'unknown' as const
+  })
+
+  const assets = [
+    { asset: summary('exact'), metadataJson: JSON.stringify({ dressing: { clothes: [{ id: '1', name: '星夜长发', category: 'hair' }] } }) },
+    { asset: summary('prefix'), metadataJson: JSON.stringify({ dressing: { clothes: [{ id: '2', name: '星夜长发·晨曦', category: 'hair' }] } }) },
+    { asset: summary('contains'), metadataJson: JSON.stringify({ dressing: { clothes: [{ id: '3', name: '梦境·星夜长发·回声', category: 'hair' }] } }) }
+  ]
+
+  const result = searchClothingLibrary(assets, undefined, '星夜长发')
+  assert.deepEqual(result.items.map((item) => item.name), [
+    '星夜长发',
+    '星夜长发·晨曦',
+    '梦境·星夜长发·回声'
+  ])
 })
 
