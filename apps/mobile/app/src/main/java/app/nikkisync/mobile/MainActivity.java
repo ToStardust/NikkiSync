@@ -9,6 +9,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.util.Size;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -46,14 +48,18 @@ import app.nikkisync.mobile.net.NsdDiscovery;
 import app.nikkisync.mobile.net.RealtimeWebSocket;
 import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
+import app.nikkisync.mobile.storage.SavedPhotoStore;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
+import app.nikkisync.mobile.ui.SavedPhotoAdapter;
 import app.nikkisync.mobile.ui.SuitSearchDialog;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,6 +87,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private final Map<String, Integer> rotationByAssetId = new LinkedHashMap<>();
 
     private ServerStore serverStore;
+    private SavedPhotoStore savedPhotoStore;
     private DeviceIdentity identity;
     private NsdDiscovery discovery;
     private NikkiSyncClient client;
@@ -93,6 +100,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private TextView selectionLabel;
     private TextView tabPlaceholder;
     private TextView galleryEmpty;
+    private TextView savedEmpty;
     private Button pairButton;
     private Button searchButton;
     private Button saveButton;
@@ -101,9 +109,11 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private Button myTabButton;
     private ProgressBar progress;
     private GalleryAdapter adapter;
+    private SavedPhotoAdapter savedAdapter;
     private LinearLayout galleryMeta;
     private LinearLayout selectionBar;
     private RecyclerView galleryList;
+    private RecyclerView savedList;
     private int activeTab = TAB_GALLERY;
     private final List<AssetSummary> assets = new ArrayList<>();
 
@@ -111,6 +121,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         super.onCreate(state);
         imageLoader = new ImageLoader(this);
         serverStore = new ServerStore(this);
+        savedPhotoStore = new SavedPhotoStore(this);
         try { identity = DeviceIdentity.getOrCreate(this); }
         catch (Exception error) {
             new AlertDialog.Builder(this).setTitle("设备身份初始化失败").setMessage(error.toString()).setPositiveButton("退出", (d, w) -> finish()).show();
@@ -135,7 +146,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     @Override protected void onDestroy() {
         realtimeStop();
         if (discovery != null) discovery.stop();
-        if (imageLoader != null) imageLoader.shutdown(); io.shutdownNow();
+        if (imageLoader != null) imageLoader.shutdown();
+        if (savedAdapter != null) savedAdapter.shutdown();
+        io.shutdownNow();
         super.onDestroy();
     }
 
@@ -215,9 +228,25 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         galleryList.setAdapter(adapter);
         content.addView(galleryList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        savedList = new RecyclerView(this);
+        savedList.setVerticalScrollBarEnabled(false);
+        savedList.setClipToPadding(false);
+        savedList.setPadding(0, 0, 0, dp(12));
+        savedList.setLayoutManager(new GridLayoutManager(this, 3));
+        savedAdapter = new SavedPhotoAdapter(this, this::showSavedPhotoDetails);
+        savedList.setAdapter(savedAdapter);
+        savedList.setVisibility(View.GONE);
+        content.addView(savedList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         galleryEmpty = text("", 14, false, getColor(R.color.text_secondary));
         galleryEmpty.setGravity(Gravity.CENTER); galleryEmpty.setPadding(dp(28), dp(28), dp(28), dp(28)); galleryEmpty.setVisibility(View.GONE);
         content.addView(galleryEmpty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        savedEmpty = text("还没有保存记录。\n从图库选择照片并保存原图后，会出现在这里。", 14, false, getColor(R.color.text_secondary));
+        savedEmpty.setGravity(Gravity.CENTER);
+        savedEmpty.setPadding(dp(28), dp(28), dp(28), dp(28));
+        savedEmpty.setVisibility(View.GONE);
+        content.addView(savedEmpty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         tabPlaceholder = text("", 14, false, getColor(R.color.text_secondary));
         tabPlaceholder.setGravity(Gravity.CENTER); tabPlaceholder.setVisibility(View.GONE); tabPlaceholder.setPadding(dp(28), dp(28), dp(28), dp(28));
@@ -260,27 +289,33 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private void switchTab(int tab) {
         activeTab = tab;
         boolean gallery = tab == TAB_GALLERY;
+        boolean saved = tab == TAB_SAVED;
+        boolean my = tab == TAB_MY;
+
         galleryList.setVisibility(gallery ? View.VISIBLE : View.GONE);
+        savedList.setVisibility(saved ? View.VISIBLE : View.GONE);
         galleryMeta.setVisibility(gallery ? View.VISIBLE : View.GONE);
         searchButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
-        tabPlaceholder.setVisibility(gallery ? View.GONE : View.VISIBLE);
+        tabPlaceholder.setVisibility(my ? View.VISIBLE : View.GONE);
         pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
 
-        if (tab == TAB_GALLERY) {
+        if (gallery) {
             titleLabel.setText("暖暖相册");
             tabPlaceholder.setText("");
-        } else if (tab == TAB_SAVED) {
+        } else if (saved) {
             titleLabel.setText("已保存");
-            tabPlaceholder.setText("已保存照片会在这里以保存后的原图展示。\n\n后续会补充二次修改后的图片重新与原 NikkiSync 照片建立信息关联的能力，同时保留来源关系，不覆盖原图。");
+            refreshSavedPhotos();
         } else {
             titleLabel.setText("我的");
             tabPlaceholder.setText("这里将显示玩家 UID、同步状态、设备与照片概况。\n\n套装与散件检索已经移动到暖暖相册顶部，搜索使用 NikkiSync 已解析的穿搭信息，不上传照片内容。");
         }
-        styleTab(galleryTabButton, tab == TAB_GALLERY);
-        styleTab(savedTabButton, tab == TAB_SAVED);
-        styleTab(myTabButton, tab == TAB_MY);
+
+        styleTab(galleryTabButton, gallery);
+        styleTab(savedTabButton, saved);
+        styleTab(myTabButton, my);
         updateSelection();
         updateGalleryEmptyState();
+        updateSavedEmptyState();
     }
 
     private void styleTab(Button button, boolean selected) {
@@ -294,6 +329,112 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         boolean show = activeTab == TAB_GALLERY && assets.isEmpty();
         galleryEmpty.setVisibility(show ? View.VISIBLE : View.GONE);
         if (show) galleryEmpty.setText(pairedServer == null ? "配对电脑后，这里会显示暖暖照片。" : "当前还没有同步到照片。");
+    }
+
+    private void refreshSavedPhotos() {
+        if (savedAdapter == null || savedPhotoStore == null) return;
+        List<SavedPhotoStore.Record> records = savedPhotoStore.load();
+        savedAdapter.setItems(records);
+        updateSavedEmptyState();
+    }
+
+    private void updateSavedEmptyState() {
+        if (savedEmpty == null || savedAdapter == null) return;
+        savedEmpty.setVisibility(activeTab == TAB_SAVED && savedAdapter.getItemCount() == 0 ? View.VISIBLE : View.GONE);
+    }
+
+    private void showSavedPhotoDetails(SavedPhotoStore.Record record) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(getColor(R.color.app_background));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(12), dp(14), dp(24));
+        scroll.addView(body);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(text(record.hasMotion() ? "已保存 LIVE" : "已保存照片", 20, true, getColor(R.color.text_primary)),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button close = button("完成");
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close);
+        body.addView(header);
+
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setBackgroundResource(R.drawable.bg_gallery_photo);
+        preview.setClipToOutline(true);
+        int previewSize = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(28));
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewSize);
+        previewLp.topMargin = dp(10);
+        body.addView(preview, previewLp);
+
+        io.execute(() -> {
+            try {
+                android.graphics.Bitmap bitmap = getContentResolver().loadThumbnail(record.mediaUri(), new Size(1200, 1200), null);
+                main.post(() -> preview.setImageBitmap(bitmap));
+            } catch (Exception ignored) {
+                main.post(() -> preview.setImageDrawable(null));
+            }
+        });
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(dp(14), dp(14), dp(14), dp(14));
+        info.setBackgroundResource(R.drawable.bg_glass_card);
+        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        infoLp.topMargin = dp(10);
+        body.addView(info, infoLp);
+
+        String savedAt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(record.savedAt()));
+        String detail = "保存时间：" + savedAt
+                + "\n格式：" + (record.format() == null ? (record.hasMotion() ? "LIVE" : "原图") : record.format())
+                + (record.rotationDegrees() == 0 ? "" : "\n保存旋转：" + record.rotationDegrees() + "°")
+                + (record.gameVersion() == null ? "" : "\n游戏版本：" + record.gameVersion())
+                + (record.capturedAt() == null ? "" : "\n拍摄时间：" + record.capturedAt())
+                + "\n来源 Asset：" + record.assetId();
+        info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
+
+        Button openSystem = button("在系统相册打开");
+        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonLp.topMargin = dp(10);
+        openSystem.setOnClickListener(v -> {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(record.mediaUri(), "image/*");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(intent);
+            } catch (Exception error) {
+                toast("系统相册无法打开这张照片");
+            }
+        });
+        info.addView(openSystem, buttonLp);
+
+        AssetSummary source = findAsset(record.assetId());
+        if (source != null) {
+            Button sourceButton = button("查看源照片");
+            LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            sourceLp.topMargin = dp(6);
+            sourceButton.setOnClickListener(v -> showViewer(source));
+            info.addView(sourceButton, sourceLp);
+        }
+
+        dialog.setContentView(scroll);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+    }
+
+    private AssetSummary findAsset(String assetId) {
+        for (AssetSummary asset : assets) if (asset.assetId().equals(assetId)) return asset;
+        return null;
     }
 
     private void handleIntent(Intent intent) {
@@ -400,27 +541,47 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
                 AssetSummary asset = selected.get(i); hadMotion |= asset.hasMotion();
                 int index = i + 1; main.post(() -> setStatus("正在保存 " + index + " / " + selected.size()));
                 try {
+                    Uri savedUri;
+                    String savedFormat;
+                    int savedRotation = 0;
+
                     if (asset.hasMotion()) {
                         String manufacturer = ((android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER) + " " +
                                 (android.os.Build.BRAND == null ? "" : android.os.Build.BRAND)).toLowerCase(java.util.Locale.ROOT);
-                        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) vivoLivePhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) huaweiMovingPhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) oppoLivePhotoSaver.save(this, current, asset);
-                        else if (manufacturer.contains("samsung")) samsungMotionPhotoSaver.save(this, current, asset);
-                        else motionPhotoSaver.save(this, current, asset);
+                        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) {
+                            savedUri = vivoLivePhotoSaver.save(this, current, asset);
+                            savedFormat = "OriginOS LIVE";
+                        } else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) {
+                            savedUri = huaweiMovingPhotoSaver.save(this, current, asset);
+                            savedFormat = "Huawei 动态照片";
+                        } else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) {
+                            savedUri = oppoLivePhotoSaver.save(this, current, asset);
+                            savedFormat = "ColorOS O-Live";
+                        } else if (manufacturer.contains("samsung")) {
+                            savedUri = samsungMotionPhotoSaver.save(this, current, asset);
+                            savedFormat = "Samsung Motion Photo";
+                        } else {
+                            savedUri = motionPhotoSaver.save(this, current, asset);
+                            savedFormat = "Android Motion Photo";
+                        }
                     } else {
-                        int rotationDegrees = rotationByAssetId.getOrDefault(asset.assetId(), 0);
-                        originalSaver.save(this, current, asset, rotationDegrees);
+                        savedRotation = rotationByAssetId.getOrDefault(asset.assetId(), 0);
+                        savedUri = originalSaver.save(this, current, asset, savedRotation);
+                        savedFormat = savedRotation == 0 ? "原始照片" : "原始照片 · EXIF 旋转";
                     }
+
+                    savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
                     success++;
+                } catch (Exception ignored) {
+                    failure++;
                 }
-                catch (Exception ignored) { failure++; }
             }
             int saved = success, failed = failure; boolean motion = hadMotion;
             main.post(() -> {
                 setBusy(false); saveButton.setEnabled(true);
                 for (AssetSummary item : selected) rotationByAssetId.remove(item.assetId());
                 adapter.clearSelection(); updateSelection();
+                refreshSavedPhotos();
                 String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
                 if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
                 toast(result); setStatus("已连接 · 实时同步中");
