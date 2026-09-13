@@ -43,6 +43,9 @@ import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.model.Models.Changes;
 import app.nikkisync.mobile.model.Models.PairedServer;
 import app.nikkisync.mobile.model.Models.PairingPayload;
+import app.nikkisync.mobile.model.Models.ProfileClothingStat;
+import app.nikkisync.mobile.model.Models.ProfileStatsResponse;
+import app.nikkisync.mobile.model.Models.ProfileSuitStat;
 import app.nikkisync.mobile.net.NikkiSyncClient;
 import app.nikkisync.mobile.net.NsdDiscovery;
 import app.nikkisync.mobile.net.RealtimeWebSocket;
@@ -55,6 +58,7 @@ import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
 import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
+import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 import app.nikkisync.mobile.ui.SavedPhotoAdapter;
 import app.nikkisync.mobile.ui.SuitSearchDialog;
@@ -99,6 +103,8 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private NikkiSyncClient client;
     private RealtimeWebSocket realtime;
     private PairedServer pairedServer;
+    private ProfileStatsResponse profileStats;
+    private boolean profileStatsLoading;
 
     private TextView titleLabel;
     private TextView status;
