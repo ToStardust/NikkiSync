@@ -6,6 +6,10 @@ import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.model.Models.Change;
 import app.nikkisync.mobile.model.Models.Changes;
 import app.nikkisync.mobile.model.Models.MediaResource;
+import app.nikkisync.mobile.model.Models.SuitSearchPart;
+import app.nikkisync.mobile.model.Models.SuitSearchPhoto;
+import app.nikkisync.mobile.model.Models.SuitSearchResponse;
+import app.nikkisync.mobile.model.Models.SuitSearchResult;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -20,27 +24,7 @@ public final class JsonCodec {
         JSONObject root = new JSONObject(json);
         JSONArray rows = root.getJSONArray("items");
         List<AssetSummary> items = new ArrayList<>(rows.length());
-        for (int i = 0; i < rows.length(); i++) {
-            JSONObject row = rows.getJSONObject(i);
-            String gameVersionSource = optionalString(row, "gameVersionSource");
-            if (gameVersionSource == null || gameVersionSource.isBlank()) gameVersionSource = "unknown";
-            items.add(new AssetSummary(
-                    row.getString("assetId"),
-                    row.getString("type"),
-                    row.getString("state"),
-                    optionalString(row, "capturedAt"),
-                    optionalString(row, "uid"),
-                    row.getLong("revision"),
-                    optionalInt(row, "width"),
-                    optionalInt(row, "height"),
-                    row.optBoolean("hasMotion", false),
-                    row.optBoolean("hasMetadata", false),
-                    optionalString(row, "thumbnailResourceId"),
-                    optionalString(row, "previewResourceId"),
-                    optionalString(row, "gameVersion"),
-                    gameVersionSource
-            ));
-        }
+        for (int i = 0; i < rows.length(); i++) items.add(assetSummary(rows.getJSONObject(i)));
         return new AssetPage(items, optionalString(root, "nextCursor"), root.getLong("libraryRevision"));
     }
 
@@ -66,6 +50,40 @@ public final class JsonCodec {
                 asset.has("metadata") && !asset.isNull("metadata") ? asset.getJSONObject("metadata").toString() : null);
     }
 
+    public static SuitSearchResponse suitSearch(String json) throws Exception {
+        JSONObject root = new JSONObject(json);
+        JSONArray rows = root.getJSONArray("items");
+        List<SuitSearchResult> items = new ArrayList<>(rows.length());
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            JSONArray photoRows = row.getJSONArray("photos");
+            List<SuitSearchPhoto> photos = new ArrayList<>(photoRows.length());
+            for (int p = 0; p < photoRows.length(); p++) {
+                JSONObject photo = photoRows.getJSONObject(p);
+                JSONArray partRows = photo.getJSONArray("matchedParts");
+                List<SuitSearchPart> parts = new ArrayList<>(partRows.length());
+                for (int k = 0; k < partRows.length(); k++) {
+                    JSONObject part = partRows.getJSONObject(k);
+                    parts.add(new SuitSearchPart(
+                            part.getString("clothingId"),
+                            optionalString(part, "name"),
+                            optionalString(part, "category")
+                    ));
+                }
+                photos.add(new SuitSearchPhoto(assetSummary(photo.getJSONObject("asset")), parts));
+            }
+            items.add(new SuitSearchResult(
+                    optionalString(row, "suitId"),
+                    row.getString("suitName"),
+                    row.getInt("observedPartCount"),
+                    optionalInt(row, "totalPartCount"),
+                    row.getInt("photoCount"),
+                    photos
+            ));
+        }
+        return new SuitSearchResponse(root.optString("query", ""), items);
+    }
+
     public static Changes changes(String json) throws Exception {
         JSONObject root = new JSONObject(json);
         JSONArray rows = root.getJSONArray("changes");
@@ -76,6 +94,27 @@ public final class JsonCodec {
                     row.getString("occurredAt")));
         }
         return new Changes(items, root.getLong("libraryRevision"), root.optBoolean("fullResyncRequired", false));
+    }
+
+    private static AssetSummary assetSummary(JSONObject row) throws Exception {
+        String gameVersionSource = optionalString(row, "gameVersionSource");
+        if (gameVersionSource == null || gameVersionSource.isBlank()) gameVersionSource = "unknown";
+        return new AssetSummary(
+                row.getString("assetId"),
+                row.getString("type"),
+                row.getString("state"),
+                optionalString(row, "capturedAt"),
+                optionalString(row, "uid"),
+                row.getLong("revision"),
+                optionalInt(row, "width"),
+                optionalInt(row, "height"),
+                row.optBoolean("hasMotion", false),
+                row.optBoolean("hasMetadata", false),
+                optionalString(row, "thumbnailResourceId"),
+                optionalString(row, "previewResourceId"),
+                optionalString(row, "gameVersion"),
+                gameVersionSource
+        );
     }
 
     private static String optionalString(JSONObject object, String key) {
