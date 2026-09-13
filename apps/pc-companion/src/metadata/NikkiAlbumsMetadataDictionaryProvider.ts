@@ -259,8 +259,16 @@ function parseNuan5Database(buffer: Buffer): ParsedNuan5Database {
           outfitId = Number(entryField.value)
         } else if (entryField.number === 2 && entryField.wireType === 2 && Buffer.isBuffer(entryField.value)) {
           for (const outfitField of readProtobufFields(entryField.value)) {
-            if (outfitField.number === 1 && outfitField.wireType === 0 && typeof outfitField.value === 'bigint') {
+            if (outfitField.number !== 1) continue
+            if (outfitField.wireType === 0 && typeof outfitField.value === 'bigint') {
               components.push(Number(outfitField.value))
+            } else if (outfitField.wireType === 2 && Buffer.isBuffer(outfitField.value)) {
+              let packedOffset = 0
+              while (packedOffset < outfitField.value.length) {
+                const packed = readVarint(outfitField.value, packedOffset)
+                components.push(Number(packed.value))
+                packedOffset = packed.offset
+              }
             }
           }
         }
