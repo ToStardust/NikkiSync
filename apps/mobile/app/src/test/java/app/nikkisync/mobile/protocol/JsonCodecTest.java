@@ -6,6 +6,7 @@ import static org.junit.Assert.assertNull;
 import app.nikkisync.mobile.model.Models.AssetPage;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.model.Models.ClothingSearchResponse;
+import app.nikkisync.mobile.model.Models.ProfileStatsResponse;
 import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 
 import org.junit.Test;
@@ -57,6 +58,24 @@ public final class JsonCodecTest {
         assertEquals("天鹅童话", response.items().get(0).suitName());
         assertEquals(1, response.items().get(0).photoCount());
         assertEquals("asset_2", response.items().get(0).photos().get(0).asset().assetId());
+    }
+
+    @Test public void profileStatsParsesTrendsAndDictionaryStatus() throws Exception {
+        String json = "{\"libraryRevision\":12," +
+                "\"dictionary\":{\"provider\":\"nikki-albums\",\"providerVersion\":\"2026.09\",\"gameVersion\":\"2.9\",\"fetchedAt\":\"2026-09-13T00:00:00.000Z\",\"clothingEntries\":2048}," +
+                "\"topSuits\":[{\"suitId\":\"suit_swan\",\"suitName\":\"天鹅童话\",\"photoCount\":18}]," +
+                "\"topClothing\":[{\"clothingId\":\"cloth_dress\",\"name\":\"天鹅之梦\",\"category\":\"dresses\",\"suitName\":\"天鹅童话\",\"photoCount\":11}]}";
+
+        ProfileStatsResponse response = JsonCodec.profileStats(json);
+        assertEquals(12L, response.libraryRevision());
+        assertEquals("nikki-albums", response.dictionary().provider());
+        assertEquals("2026.09", response.dictionary().providerVersion());
+        assertEquals(2048, response.dictionary().clothingEntries());
+        assertEquals("天鹅童话", response.topSuits().get(0).suitName());
+        assertEquals(18, response.topSuits().get(0).photoCount());
+        assertEquals("天鹅之梦", response.topClothing().get(0).name());
+        assertEquals("dresses", response.topClothing().get(0).category());
+        assertEquals(11, response.topClothing().get(0).photoCount());
     }
 
 }
