@@ -16,6 +16,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/ClothingSearchGrid.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchHistory.java',
   'app/src/main/res/drawable/bg_glass_card.xml',
   'app/src/main/res/drawable/bg_glass_chip.xml',
@@ -141,7 +142,7 @@ expect(mainActivity.includes('"暖暖相册"'), 'M2.3.2 gallery shell title is m
 expect(mainActivity.includes('bg_glass_card') && mainActivity.includes('bg_glass_chip'), 'M2.3.2 shell glass styling is missing')
 expect(mainActivity.includes('"已同步 "'), 'M2.3.2 gallery sync-count copy is missing')
 expect(mainActivity.includes('SuitSearchDialog.show'), 'M2.3.3 gallery suit-search entry is missing')
-expect(mainActivity.includes('"搜索套装"'), 'M2.3.3 suit-search copy is missing')
+expect(mainActivity.includes('"搜索套装或散件"'), 'M2.3.4 unified search copy is missing')
 expect(mainActivity.includes('GridLayoutManager') && mainActivity.includes('adapter.isHeader(position) ? 3 : 1'), 'M2.3.1 full-width RecyclerView version headers are missing')
 expect(mainActivity.includes('二次修改') && mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 future Saved/My capability reservations are missing from UX placeholders')
 
@@ -150,12 +151,15 @@ expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
 expect(client.includes('/metadata'), 'M4 metadata route is missing')
 expect(client.includes('/clothing/'), 'M4.2.8 clothing thumbnail must be requested through the paired PC')
 expect(client.includes('/v1/search/suits?q='), 'M2.3.3 suit search must use the paired PC search endpoint')
+expect(client.includes('/v1/search/clothing?q='), 'M2.3.4 clothing search must use the paired PC search endpoint')
 
 const suitSearchDialog = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java')
 expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includes('totalPartCount'), 'M2.3.3 suit coverage summary is missing')
 expect(suitSearchDialog.includes('"图库覆盖 "'), 'M2.3.3 suit coverage percentage is missing')
 expect(suitSearchDialog.includes('bg_suit_coverage_track') && suitSearchDialog.includes('bg_suit_coverage_fill'), 'M2.3.3 suit coverage bar is missing')
-expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
+expect(suitSearchDialog.includes('MODE_ALL') && suitSearchDialog.includes('MODE_SUIT') && suitSearchDialog.includes('MODE_CLOTHING'), 'M2.3.4 all/suit/clothing search modes are missing')
+expect(suitSearchDialog.includes('client.searchClothing'), 'M2.3.4 clothing query path is not wired into the search UI')
+expect(suitSearchDialog.includes('ClothingSearchGrid.create'), 'M2.3.4 clothing results are not rendered')
 expect(suitSearchDialog.includes('"最近搜索"') && suitSearchDialog.includes('SuitSearchHistory.record'), 'M2.3.3 recent suit search UX is missing')
 expect(suitSearchDialog.includes('listener::onPhotoClick'), 'M2.3.3 photo viewer must preserve search results behind it')
 expect(!suitSearchDialog.includes('private static LinearLayout photoRow'), 'M2.3.3 legacy vertical result renderer must stay removed')
@@ -168,9 +172,17 @@ const suitSearchGrid = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearc
 expect(suitSearchGrid.includes('for (int column = 0; column < 3; column++)'), 'M2.3.3 suit results must use a three-column album grid')
 expect(suitSearchGrid.includes('"全部 " + item.photoCount()'), 'M2.3.3 suit results must provide an all-photo filter')
 expect(suitSearchGrid.includes('countCategories') && suitSearchGrid.includes('hasCategory'), 'M2.3.3 suit results must support part/category filtering')
-expect(suitSearchGrid.includes('compactPartText'), 'M2.3.3 photo cells must label matched suit slots')
+expect(suitSearchGrid.includes('compactPartText') && suitSearchGrid.includes('matchedParts'), 'M2.3.3 photo cells must label matched suit slots')
 expect(suitSearchGrid.includes('"LIVE"'), 'M2.3.3 search grid must retain Live Photo visibility')
 expect(suitSearchGrid.includes('CATEGORY_ORDER'), 'M2.3.3 part filters must use a stable Infinity Nikki slot order')
+
+const clothingSearchGrid = text('app/src/main/java/app/nikkisync/mobile/ui/ClothingSearchGrid.java')
+expect(clothingSearchGrid.includes('for (int column = 0; column < 3; column++)'), 'M2.3.4 clothing results must use a three-column photo grid')
+expect(clothingSearchGrid.includes('categoryLabel'), 'M2.3.4 clothing results must expose the clothing slot')
+expect(clothingSearchGrid.includes('"LIVE"'), 'M2.3.4 clothing search must retain Live Photo visibility')
+
+expect(models.includes('ClothingSearchResult') && models.includes('ClothingSearchResponse'), 'M2.3.4 Android clothing search models are missing')
+expect(jsonCodec.includes('clothingSearch(String json)'), 'M2.3.4 clothing search JSON decoder is missing')
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
@@ -193,4 +205,5 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
-console.log('M2.3.3 search: ranked lookup + coverage + filters + history + preserved viewer context')
+console.log('M2.3.3 search: ranked suit lookup + coverage + filters + history + preserved viewer context')
+console.log('M2.3.4 search: unified all/suit/clothing lookup + clothing photo grid contract')
