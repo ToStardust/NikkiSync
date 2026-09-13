@@ -32,6 +32,13 @@ public final class SuitSearchGrid {
     }
 
     private static final int MAX_PHOTOS = 60;
+    private static final String[] CATEGORY_ORDER = {
+            "hair", "dresses", "outerwear", "tops", "bottoms", "socks", "shoes",
+            "hairAccessories", "headwear", "earrings", "neckwear", "chokers", "bracelets",
+            "gloves", "faceDecorations", "chestAccessories", "pendants", "backpieces",
+            "rings", "armDecorations", "handhelds", "bodyPaint", "fullMakeup", "baseMakeup",
+            "eyebrows", "eyelashes", "contacts", "lips", "skinTones"
+    };
 
     private SuitSearchGrid() {}
 
@@ -243,17 +250,24 @@ public final class SuitSearchGrid {
     }
 
     private static Map<String, Integer> countCategories(List<SuitSearchPhoto> photos) {
-        Map<String, Integer> counts = new LinkedHashMap<>();
+        Map<String, Integer> rawCounts = new LinkedHashMap<>();
         for (SuitSearchPhoto photo : photos) {
             List<String> seenInPhoto = new ArrayList<>();
             for (SuitSearchPart part : photo.matchedParts()) {
                 String category = part.category();
                 if (category == null || category.isBlank() || seenInPhoto.contains(category)) continue;
                 seenInPhoto.add(category);
-                counts.put(category, counts.getOrDefault(category, 0) + 1);
+                rawCounts.put(category, rawCounts.getOrDefault(category, 0) + 1);
             }
         }
-        return counts;
+
+        Map<String, Integer> ordered = new LinkedHashMap<>();
+        for (String category : CATEGORY_ORDER) {
+            Integer count = rawCounts.remove(category);
+            if (count != null) ordered.put(category, count);
+        }
+        ordered.putAll(rawCounts);
+        return ordered;
     }
 
     private static boolean hasCategory(SuitSearchPhoto photo, String category) {
