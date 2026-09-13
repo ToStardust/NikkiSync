@@ -87,6 +87,7 @@ export interface ServerInfoResponse {
     metadataV1: true
     motionAssets: true
     suitSearch?: true
+    clothingSearch?: true
   }
 }
 
@@ -113,6 +114,25 @@ export interface SuitSearchResult {
 export interface SuitSearchResponse {
   query: string
   items: SuitSearchResult[]
+}
+
+export interface ClothingSearchPhoto {
+  asset: AssetSummary
+}
+
+export interface ClothingSearchResult {
+  clothingId: string
+  name?: string
+  category?: string
+  suitId?: string
+  suitName?: string
+  photoCount: number
+  photos: ClothingSearchPhoto[]
+}
+
+export interface ClothingSearchResponse {
+  query: string
+  items: ClothingSearchResult[]
 }
 
 export interface AssetListQuery {
@@ -219,6 +239,7 @@ export const API_ROUTES = {
   clothingThumbnail: (assetId: AssetId, clothingId: string) =>
     `/v1/assets/${encodeURIComponent(assetId)}/clothing/${encodeURIComponent(clothingId)}/thumbnail`,
   suitSearch: '/v1/search/suits',
+  clothingSearch: '/v1/search/clothing',
   changes: '/v1/changes',
   websocket: '/ws/v1'
 } as const
@@ -278,4 +299,8 @@ export function buildPairingUri(payload: PairingQrPayload): string {
 
 export function buildSuitSearchRoute(query: string): string {
   return `${API_ROUTES.suitSearch}?q=${encodeURIComponent(query)}`
+}
+
+export function buildClothingSearchRoute(query: string): string {
+  return `${API_ROUTES.clothingSearch}?q=${encodeURIComponent(query)}`
 }
