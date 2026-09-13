@@ -196,6 +196,12 @@ expect(mainActivity.includes('refreshMyPage()') && mainActivity.includes('myCont
 expect(mainActivity.includes('asset.uid()') && mainActivity.includes('"玩家 UID"'), 'M2.5 UID aggregation is missing')
 expect(mainActivity.includes('"图库概况"') && mainActivity.includes('LIVE：') && mainActivity.includes('已解析参数：'), 'M2.5 library statistics are missing')
 expect(mainActivity.includes('"同步与设备"') && mainActivity.includes('pairedServer.serverName()'), 'M2.5 paired PC summary is missing')
+expect(mainActivity.includes('"复制 UID"') && mainActivity.includes('copyText('), 'M2.5.1 UID copy action is missing')
+expect(mainActivity.includes('"版本分布"') && mainActivity.includes('versionCounts'), 'M2.5.1 version distribution is missing')
+expect(mainActivity.includes('livePercent') && mainActivity.includes('metadataPercent'), 'M2.5.1 LIVE and metadata coverage ratios are missing')
+expect(mainActivity.includes('"常用套装"') && mainActivity.includes('"常用散件"'), 'M2.5.1 top outfit summaries are missing')
+expect(mainActivity.includes('"数据源状态"') && mainActivity.includes('providerVersion()'), 'M2.5.1 dictionary source status is missing')
+expect(mainActivity.includes('current.profileStats()'), 'M2.5.1 remote profile stats loading is missing')
 
 const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.java')
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
@@ -203,6 +209,7 @@ expect(client.includes('/metadata'), 'M4 metadata route is missing')
 expect(client.includes('/clothing/'), 'M4.2.8 clothing thumbnail must be requested through the paired PC')
 expect(client.includes('/v1/search/suits?q='), 'M2.3.3 suit search must use the paired PC search endpoint')
 expect(client.includes('/v1/search/clothing?q='), 'M2.3.4 clothing search must use the paired PC search endpoint')
+expect(client.includes('/v1/profile/stats'), 'M2.5.1 profile stats must use the paired PC endpoint')
 
 const suitSearchDialog = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java')
 expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includes('totalPartCount'), 'M2.3.3 suit coverage summary is missing')
@@ -234,6 +241,8 @@ expect(clothingSearchGrid.includes('"LIVE"'), 'M2.3.4 clothing search must retai
 
 expect(models.includes('ClothingSearchResult') && models.includes('ClothingSearchResponse'), 'M2.3.4 Android clothing search models are missing')
 expect(jsonCodec.includes('clothingSearch(String json)'), 'M2.3.4 clothing search JSON decoder is missing')
+expect(models.includes('ProfileStatsResponse') && models.includes('ProfileDictionaryStatus'), 'M2.5.1 Android profile stats models are missing')
+expect(jsonCodec.includes('profileStats(String json)'), 'M2.5.1 profile stats JSON decoder is missing')
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
@@ -260,3 +269,6 @@ console.log('M2.3.3 search: ranked suit lookup + coverage + filters + history + 
 console.log('M2.3.4 search: unified all/suit/clothing lookup + clothing photo grid contract')
 console.log('M2.4 Saved: local export provenance + three-column MediaStore history contract')
 console.log('M2.4.1 Saved: MediaStore health + filters + sorting + safe local record removal')
+console.log('M2.4.2 Saved: high-confidence historical export recovery')
+console.log('M2.5 profile: UID + library + paired-device summary')
+console.log('M2.5.1 profile: UID copy + version/coverage trends + top outfits + dictionary status')
