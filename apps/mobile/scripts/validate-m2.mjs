@@ -16,6 +16,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchHistory.java',
   'app/src/main/res/drawable/bg_glass_card.xml',
   'app/src/main/res/drawable/bg_glass_chip.xml',
   'app/src/main/res/drawable/bg_selected_glass.xml',
@@ -155,6 +156,11 @@ expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includ
 expect(suitSearchDialog.includes('"图库覆盖 "'), 'M2.3.3 suit coverage percentage is missing')
 expect(suitSearchDialog.includes('bg_suit_coverage_track') && suitSearchDialog.includes('bg_suit_coverage_fill'), 'M2.3.3 suit coverage bar is missing')
 expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
+expect(suitSearchDialog.includes('"最近搜索"') && suitSearchDialog.includes('SuitSearchHistory.record'), 'M2.3.3 recent suit search UX is missing')
+
+const suitSearchHistory = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchHistory.java')
+expect(suitSearchHistory.includes('LIMIT = 5'), 'M2.3.3 recent suit search history must stay bounded')
+expect(suitSearchHistory.includes('SharedPreferences'), 'M2.3.3 recent suit searches must persist locally')
 
 const suitSearchGrid = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchGrid.java')
 expect(suitSearchGrid.includes('for (int column = 0; column < 3; column++)'), 'M2.3.3 suit results must use a three-column album grid')
@@ -185,4 +191,4 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
-console.log('M2.3.3 search: relevance-ranked suit lookup + coverage + three-column matched-part filtering contract')
+console.log('M2.3.3 search: relevance-ranked lookup + coverage + filters + bounded recent-query history')
