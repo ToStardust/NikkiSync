@@ -130,7 +130,10 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     assert.equal('nativeParamNuan5Md5' in (detailJson.asset.metadata?.raw ?? {}), false)
 
     const metadataPath = '/v1/assets/asset_test/metadata'
-    const metadataBody = Buffer.from(JSON.stringify({ camera: { exposure: 0.75, contrast: 0.2 } }))
+    const metadataBody = Buffer.from(JSON.stringify({
+      camera: { exposure: 0.75, contrast: 0.2 },
+      dressing: { clothes: [{ id: 'cloth_star_hair', name: '星夜长发', category: 'hair', suitId: 'suit_star', suitName: '星夜回响' }] }
+    }))
     const metadataUpdate = await fetch(`${base}${metadataPath}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...signedHeaders(deviceKeys.privateKey, 'phone_test', 'PATCH', metadataPath, metadataBody) },
@@ -141,6 +144,21 @@ test('LocalSyncServer pairs, authenticates, pages, streams ranges, reports chang
     assert.equal(metadataJson.asset.metadata?.camera?.exposure, 0.75)
     assert.equal(metadataJson.asset.metadata?.camera?.contrast, 0.2)
     assert.equal(metadataJson.revision, 2)
+
+    const oldSuitAfterUpdate = await fetch(`${base}${suitSearchPath}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', suitSearchPath)
+    })
+    assert.equal(oldSuitAfterUpdate.status, 200)
+    assert.equal((await oldSuitAfterUpdate.json() as { items: unknown[] }).items.length, 0)
+
+    const updatedSuitPath = '/v1/search/suits?q=' + encodeURIComponent('星夜回响')
+    const updatedSuit = await fetch(`${base}${updatedSuitPath}`, {
+      headers: signedHeaders(deviceKeys.privateKey, 'phone_test', 'GET', updatedSuitPath)
+    })
+    assert.equal(updatedSuit.status, 200)
+    const updatedSuitJson = await updatedSuit.json() as { items: Array<{ suitName: string; photos: Array<{ asset: { assetId: string } }> }> }
+    assert.equal(updatedSuitJson.items[0]?.suitName, '星夜回响')
+    assert.equal(updatedSuitJson.items[0]?.photos[0]?.asset.assetId, 'asset_test')
     // Let the journal broadcaster advance past the metadata update before opening the WS
     // used below to assert the next asset-created event; otherwise this test races the poller.
     await new Promise((resolve) => setTimeout(resolve, 50))
