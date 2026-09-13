@@ -19,7 +19,7 @@ function validateEntry(value: unknown, index: number): MetadataDictionaryEntry {
     throw new Error(`metadata dictionary entry ${index} has an unsupported kind`)
   }
   if (typeof object.id !== 'string' || !object.id) throw new Error(`metadata dictionary entry ${index} requires a string id`)
-  for (const key of ['name', 'category', 'thumbnail'] as const) {
+  for (const key of ['name', 'category', 'thumbnail', 'suitId', 'suitName'] as const) {
     if (object[key] !== undefined && typeof object[key] !== 'string') throw new Error(`metadata dictionary entry ${index}.${key} must be a string`)
   }
   if (object.rarity !== undefined && (typeof object.rarity !== 'number' || !Number.isFinite(object.rarity))) {
@@ -33,6 +33,8 @@ function validateEntry(value: unknown, index: number): MetadataDictionaryEntry {
     ...(object.category === undefined ? {} : { category: object.category as string }),
     ...(object.rarity === undefined ? {} : { rarity: object.rarity as number }),
     ...(object.thumbnail === undefined ? {} : { thumbnail: object.thumbnail as string }),
+    ...(object.suitId === undefined ? {} : { suitId: object.suitId as string }),
+    ...(object.suitName === undefined ? {} : { suitName: object.suitName as string }),
     ...(object.raw === undefined ? {} : { raw: object.raw as Record<string, unknown> })
   }
 }
