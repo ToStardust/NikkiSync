@@ -46,6 +46,44 @@ public final class SuitSearchDialog {
             Handler main,
             Listener listener
     ) {
+        showInternal(activity, client, images, io, main, listener, null, MODE_ALL, false);
+    }
+
+    public static void showSuit(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            Listener listener,
+            String query
+    ) {
+        showInternal(activity, client, images, io, main, listener, query, MODE_SUIT, true);
+    }
+
+    public static void showClothing(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            Listener listener,
+            String query
+    ) {
+        showInternal(activity, client, images, io, main, listener, query, MODE_CLOTHING, true);
+    }
+
+    private static void showInternal(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            Listener listener,
+            String initialQuery,
+            int initialMode,
+            boolean autoSearch
+    ) {
         Dialog dialog = new Dialog(activity);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
@@ -104,8 +142,15 @@ public final class SuitSearchDialog {
         modeRow.addView(clothingMode, new LinearLayout.LayoutParams(0, dp(activity, 38), 1));
         root.addView(modeRow);
 
-        int[] searchMode = new int[]{MODE_ALL};
-        styleModeButtons(modeRow, allMode);
+        int[] searchMode = new int[]{initialMode};
+        Button initialModeButton = initialMode == MODE_SUIT ? suitMode : initialMode == MODE_CLOTHING ? clothingMode : allMode;
+        styleModeButtons(modeRow, initialModeButton);
+        if (initialMode == MODE_SUIT) query.setHint("套装名称");
+        else if (initialMode == MODE_CLOTHING) query.setHint("散件名称");
+        if (initialQuery != null && !initialQuery.isBlank()) {
+            query.setText(initialQuery);
+            query.setSelection(initialQuery.length());
+        }
 
         TextView recentLabel = label(activity, "最近搜索", 11, true, activity.getColor(R.color.text_secondary));
         recentLabel.setPadding(dp(activity, 2), dp(activity, 8), dp(activity, 2), dp(activity, 4));
@@ -202,7 +247,11 @@ public final class SuitSearchDialog {
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
-        query.requestFocus();
+        if (autoSearch && initialQuery != null && !initialQuery.isBlank()) {
+            search.performClick();
+        } else {
+            query.requestFocus();
+        }
     }
 
     private static void renderSearchResults(
