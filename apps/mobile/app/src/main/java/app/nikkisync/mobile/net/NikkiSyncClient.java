@@ -8,6 +8,7 @@ import app.nikkisync.mobile.model.Models.AssetPage;
 import app.nikkisync.mobile.model.Models.Changes;
 import app.nikkisync.mobile.model.Models.ClothingSearchResponse;
 import app.nikkisync.mobile.model.Models.PairedServer;
+import app.nikkisync.mobile.model.Models.ProfileStatsResponse;
 import app.nikkisync.mobile.model.Models.PairingPayload;
 import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 import app.nikkisync.mobile.protocol.JsonCodec;
@@ -75,6 +76,10 @@ public final class NikkiSyncClient {
 
     public ClothingSearchResponse searchClothing(String query) throws Exception {
         return JsonCodec.clothingSearch(http.json("GET", "/v1/search/clothing?q=" + encode(query)));
+    }
+
+    public ProfileStatsResponse profileStats() throws Exception {
+        return JsonCodec.profileStats(http.json("GET", "/v1/profile/stats"));
     }
 
     public Changes changes(long after) throws Exception {
