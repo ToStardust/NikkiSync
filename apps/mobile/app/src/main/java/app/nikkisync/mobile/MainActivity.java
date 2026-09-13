@@ -406,7 +406,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             refreshSavedPhotos();
         } else {
             titleLabel.setText("我的");
-            tabPlaceholder.setText("这里将显示玩家 UID、同步状态、设备与照片概况。\n\n套装与散件检索已经移动到暖暖相册顶部，搜索使用 NikkiSync 已解析的穿搭信息，不上传照片内容。");
+            refreshMyPage();
         }
 
         styleTab(galleryTabButton, gallery);
