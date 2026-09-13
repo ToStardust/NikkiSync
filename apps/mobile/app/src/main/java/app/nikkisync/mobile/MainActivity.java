@@ -48,7 +48,11 @@ import app.nikkisync.mobile.net.NsdDiscovery;
 import app.nikkisync.mobile.net.RealtimeWebSocket;
 import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
+import app.nikkisync.mobile.storage.SavedPhotoCollection;
+import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
+import app.nikkisync.mobile.storage.SavedPhotoVerifier;
+import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 import app.nikkisync.mobile.ui.SavedPhotoAdapter;
@@ -88,6 +92,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
 
     private ServerStore serverStore;
     private SavedPhotoStore savedPhotoStore;
+    private SavedPhotoHealthStore savedPhotoHealthStore;
     private DeviceIdentity identity;
     private NsdDiscovery discovery;
     private NikkiSyncClient client;
@@ -101,27 +106,37 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private TextView tabPlaceholder;
     private TextView galleryEmpty;
     private TextView savedEmpty;
+    private TextView savedSummary;
     private Button pairButton;
     private Button searchButton;
     private Button saveButton;
     private Button galleryTabButton;
     private Button savedTabButton;
     private Button myTabButton;
+    private Button savedAllButton;
+    private Button savedLiveButton;
+    private Button savedPhotoButton;
+    private Button savedSortButton;
     private ProgressBar progress;
     private GalleryAdapter adapter;
     private SavedPhotoAdapter savedAdapter;
     private LinearLayout galleryMeta;
+    private LinearLayout savedControls;
     private LinearLayout selectionBar;
     private RecyclerView galleryList;
     private RecyclerView savedList;
     private int activeTab = TAB_GALLERY;
+    private int savedFilter = SavedViewState.FILTER_ALL;
+    private int savedSort = SavedViewState.SORT_SAVED;
     private final List<AssetSummary> assets = new ArrayList<>();
+    private final Map<String, SavedPhotoHealthStore.Entry> savedHealth = new LinkedHashMap<>();
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         imageLoader = new ImageLoader(this);
         serverStore = new ServerStore(this);
         savedPhotoStore = new SavedPhotoStore(this);
+        savedPhotoHealthStore = new SavedPhotoHealthStore(this);
         try { identity = DeviceIdentity.getOrCreate(this); }
         catch (Exception error) {
             new AlertDialog.Builder(this).setTitle("设备身份初始化失败").setMessage(error.toString()).setPositiveButton("退出", (d, w) -> finish()).show();
