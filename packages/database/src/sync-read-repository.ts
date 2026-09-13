@@ -37,6 +37,21 @@ export class SyncReadRepository {
     `).all(...args, query.limit) as Record<string, unknown>[]
   }
 
+  listSuitSearchAssets(): Record<string, unknown>[] {
+    return this.database.connection.prepare(`
+      SELECT * FROM assets
+      WHERE asset_state <> 'deleted' AND metadata_json IS NOT NULL
+      ORDER BY COALESCE(captured_at, discovered_at) DESC, asset_id ASC
+    `).all() as Record<string, unknown>[]
+  }
+
+  listSuitSearchResources(): Record<string, unknown>[] {
+    return this.database.connection.prepare(`
+      SELECT * FROM resources
+      ORDER BY asset_id ASC, role ASC, resource_id ASC
+    `).all() as Record<string, unknown>[]
+  }
+
   getAsset(assetId: string): Record<string, unknown> | undefined {
     return this.database.connection.prepare('SELECT * FROM assets WHERE asset_id = ?').get(assetId) as Record<string, unknown> | undefined
   }
