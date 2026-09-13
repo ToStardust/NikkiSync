@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNull;
 
 import app.nikkisync.mobile.model.Models.AssetPage;
 import app.nikkisync.mobile.model.Models.AssetSummary;
+import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 
 import org.junit.Test;
 
@@ -23,5 +24,21 @@ public final class JsonCodecTest {
         assertEquals("explicit", explicit.gameVersionSource());
         assertNull(legacy.gameVersion());
         assertEquals("unknown", legacy.gameVersionSource());
+    }
+
+    @Test public void suitSearchParsesPhotosAndMatchedParts() throws Exception {
+        String json = "{\"query\":\"天鹅童话\",\"items\":[{" +
+                "\"suitId\":\"suit_swan\",\"suitName\":\"天鹅童话\",\"observedPartCount\":2,\"totalPartCount\":9,\"photoCount\":1," +
+                "\"photos\":[{\"asset\":{\"assetId\":\"asset_1\",\"type\":\"photo\",\"state\":\"ready\",\"revision\":3,\"hasMotion\":false,\"hasMetadata\":true}," +
+                "\"matchedParts\":[{\"clothingId\":\"cloth_dress\",\"name\":\"天鹅之梦\",\"category\":\"dresses\"},{\"clothingId\":\"cloth_shoes\",\"category\":\"shoes\"}]}]}]}";
+
+        SuitSearchResponse response = JsonCodec.suitSearch(json);
+        assertEquals(1, response.items().size());
+        assertEquals("天鹅童话", response.items().get(0).suitName());
+        assertEquals(Integer.valueOf(9), response.items().get(0).totalPartCount());
+        assertEquals(1, response.items().get(0).photos().size());
+        assertEquals("asset_1", response.items().get(0).photos().get(0).asset().assetId());
+        assertEquals("dresses", response.items().get(0).photos().get(0).matchedParts().get(0).category());
+        assertEquals("shoes", response.items().get(0).photos().get(0).matchedParts().get(1).category());
     }
 }
