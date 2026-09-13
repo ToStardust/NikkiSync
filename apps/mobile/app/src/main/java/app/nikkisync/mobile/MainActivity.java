@@ -48,6 +48,7 @@ import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.GalleryAdapter;
+import app.nikkisync.mobile.ui.SuitSearchDialog;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -93,6 +94,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private TextView tabPlaceholder;
     private TextView galleryEmpty;
     private Button pairButton;
+    private Button searchButton;
     private Button saveButton;
     private Button galleryTabButton;
     private Button savedTabButton;
@@ -160,6 +162,27 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         pairButton.setOnClickListener(v -> startPairScanner());
         header.addView(pairButton);
         root.addView(header);
+
+        searchButton = button("搜索套装或散件");
+        searchButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        searchButton.setTextColor(getColor(R.color.text_secondary));
+        searchButton.setBackgroundResource(R.drawable.bg_glass_card);
+        searchButton.setMinHeight(dp(48));
+        searchButton.setMinimumHeight(dp(48));
+        searchButton.setOnClickListener(v -> {
+            NikkiSyncClient current = client;
+            if (current == null) {
+                toast("请先连接电脑");
+                return;
+            }
+            SuitSearchDialog.show(this, current, imageLoader, io, main, this::showViewer);
+        });
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        searchLp.setMargins(0, dp(10), 0, 0);
+        root.addView(searchButton, searchLp);
 
         galleryMeta = new LinearLayout(this);
         galleryMeta.setGravity(Gravity.CENTER_VERTICAL);
@@ -239,6 +262,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         boolean gallery = tab == TAB_GALLERY;
         galleryList.setVisibility(gallery ? View.VISIBLE : View.GONE);
         galleryMeta.setVisibility(gallery ? View.VISIBLE : View.GONE);
+        searchButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
         tabPlaceholder.setVisibility(gallery ? View.GONE : View.VISIBLE);
         pairButton.setVisibility(gallery ? View.VISIBLE : View.GONE);
 
@@ -250,7 +274,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             tabPlaceholder.setText("已保存照片会在这里以保存后的原图展示。\n\n后续会补充二次修改后的图片重新与原 NikkiSync 照片建立信息关联的能力，同时保留来源关系，不覆盖原图。");
         } else {
             titleLabel.setText("我的");
-            tabPlaceholder.setText("这里将显示玩家 UID 与当前照片概况。\n\n后续可按散件或套装搜索相关照片；搜索使用 NikkiSync 已解析的穿搭信息，不上传照片内容。");
+            tabPlaceholder.setText("这里将显示玩家 UID、同步状态、设备与照片概况。\n\n套装与散件检索已经移动到暖暖相册顶部，搜索使用 NikkiSync 已解析的穿搭信息，不上传照片内容。");
         }
         styleTab(galleryTabButton, tab == TAB_GALLERY);
         styleTab(savedTabButton, tab == TAB_SAVED);
