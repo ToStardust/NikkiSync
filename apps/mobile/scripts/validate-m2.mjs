@@ -14,6 +14,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryAdapter.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryUxStyle.java',
   'app/src/main/java/app/nikkisync/mobile/ui/GalleryVersionGroups.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java',
   'app/src/main/res/drawable/bg_glass_card.xml',
   'app/src/main/res/drawable/bg_glass_chip.xml',
   'app/src/main/res/drawable/bg_selected_glass.xml',
@@ -135,6 +136,8 @@ expect(mainActivity.includes('"图库"') && mainActivity.includes('"已保存"')
 expect(mainActivity.includes('"暖暖相册"'), 'M2.3.2 gallery shell title is missing')
 expect(mainActivity.includes('bg_glass_card') && mainActivity.includes('bg_glass_chip'), 'M2.3.2 shell glass styling is missing')
 expect(mainActivity.includes('"已同步 "'), 'M2.3.2 gallery sync-count copy is missing')
+expect(mainActivity.includes('SuitSearchDialog.show'), 'M2.3.3 gallery suit-search entry is missing')
+expect(mainActivity.includes('"搜索套装"'), 'M2.3.3 suit-search copy is missing')
 expect(mainActivity.includes('GridLayoutManager') && mainActivity.includes('adapter.isHeader(position) ? 3 : 1'), 'M2.3.1 full-width RecyclerView version headers are missing')
 expect(mainActivity.includes('二次修改') && mainActivity.includes('散件') && mainActivity.includes('套装'), 'M2.3 future Saved/My capability reservations are missing from UX placeholders')
 
@@ -142,6 +145,12 @@ const client = text('app/src/main/java/app/nikkisync/mobile/net/NikkiSyncClient.
 expect(client.includes('PATCH'), 'M4 signed metadata update request is missing')
 expect(client.includes('/metadata'), 'M4 metadata route is missing')
 expect(client.includes('/clothing/'), 'M4.2.8 clothing thumbnail must be requested through the paired PC')
+expect(client.includes('/v1/search/suits?q='), 'M2.3.3 suit search must use the paired PC search endpoint')
+
+const suitSearchDialog = text('app/src/main/java/app/nikkisync/mobile/ui/SuitSearchDialog.java')
+expect(suitSearchDialog.includes('observedPartCount') && suitSearchDialog.includes('totalPartCount'), 'M2.3.3 suit coverage summary is missing')
+expect(suitSearchDialog.includes('matchedParts'), 'M2.3.3 search results must expose matched suit parts')
+expect(suitSearchDialog.includes('命中：'), 'M2.3.3 photo rows must label matched suit slots')
 
 const imageLoader = text('app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java')
 expect(imageLoader.includes('loadClothingThumbnail'), 'M4.2.8 clothing thumbnail loader is missing')
@@ -164,3 +173,4 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
+console.log('M2.3.3 search: suit lookup + matched photo parts contract')
