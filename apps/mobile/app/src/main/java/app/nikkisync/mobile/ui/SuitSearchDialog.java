@@ -195,8 +195,45 @@ public final class SuitSearchDialog {
                     false,
                     activity.getColor(R.color.text_secondary)
             );
-            summary.setPadding(0, dp(activity, 3), 0, dp(activity, 9));
+            summary.setPadding(0, dp(activity, 3), 0, dp(activity, 5));
             card.addView(summary);
+
+            if (item.totalPartCount() != null && item.totalPartCount() > 0) {
+                int totalParts = item.totalPartCount();
+                int observedParts = Math.max(0, Math.min(item.observedPartCount(), totalParts));
+                int percentage = Math.round(observedParts * 100f / totalParts);
+
+                TextView coverageLabel = label(
+                        activity,
+                        "图库覆盖 " + percentage + "%",
+                        11,
+                        true,
+                        activity.getColor(R.color.text_secondary)
+                );
+                coverageLabel.setPadding(0, 0, 0, dp(activity, 4));
+                card.addView(coverageLabel);
+
+                LinearLayout coverageTrack = new LinearLayout(activity);
+                coverageTrack.setOrientation(LinearLayout.HORIZONTAL);
+                coverageTrack.setBackgroundResource(R.drawable.bg_suit_coverage_track);
+
+                if (observedParts > 0) {
+                    android.view.View fill = new android.view.View(activity);
+                    fill.setBackgroundResource(R.drawable.bg_suit_coverage_fill);
+                    coverageTrack.addView(fill, new LinearLayout.LayoutParams(0, dp(activity, 6), observedParts));
+                }
+                int remainingParts = totalParts - observedParts;
+                if (remainingParts > 0) {
+                    coverageTrack.addView(new android.view.View(activity), new LinearLayout.LayoutParams(0, dp(activity, 6), remainingParts));
+                }
+
+                LinearLayout.LayoutParams coverageLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(activity, 6)
+                );
+                coverageLp.setMargins(0, 0, 0, dp(activity, 10));
+                card.addView(coverageTrack, coverageLp);
+            }
 
             card.addView(SuitSearchGrid.create(
                     activity,
