@@ -10,6 +10,7 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -17,6 +18,8 @@ import android.widget.TextView;
 import app.nikkisync.mobile.R;
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.model.Models.AssetSummary;
+import app.nikkisync.mobile.model.Models.ClothingSearchResponse;
+import app.nikkisync.mobile.model.Models.ClothingSearchResult;
 import app.nikkisync.mobile.model.Models.SuitSearchResponse;
 import app.nikkisync.mobile.model.Models.SuitSearchResult;
 import app.nikkisync.mobile.net.NikkiSyncClient;
@@ -25,6 +28,10 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 
 public final class SuitSearchDialog {
+    private static final int MODE_ALL = 0;
+    private static final int MODE_SUIT = 1;
+    private static final int MODE_CLOTHING = 2;
+
     public interface Listener {
         void onPhotoClick(AssetSummary asset);
     }
@@ -58,7 +65,7 @@ public final class SuitSearchDialog {
 
         TextView description = label(
                 activity,
-                "按套装查找照片，并显示每张照片里出现的该套装部件。",
+                "按套装或散件查找照片，直接查看它们在图库中的使用记录。",
                 12,
                 false,
                 activity.getColor(R.color.text_secondary)
@@ -73,7 +80,7 @@ public final class SuitSearchDialog {
 
         EditText query = new EditText(activity);
         query.setSingleLine(true);
-        query.setHint("套装名称");
+        query.setHint("套装或散件名称");
         query.setTextSize(15);
         query.setTextColor(activity.getColor(R.color.text_primary));
         query.setHintTextColor(activity.getColor(R.color.text_secondary));
@@ -83,6 +90,22 @@ public final class SuitSearchDialog {
         Button search = button(activity, "搜索");
         searchRow.addView(search);
         root.addView(searchRow);
+
+        LinearLayout modeRow = new LinearLayout(activity);
+        modeRow.setGravity(Gravity.CENTER_VERTICAL);
+        modeRow.setPadding(0, dp(activity, 8), 0, 0);
+        Button allMode = button(activity, "全部");
+        Button suitMode = button(activity, "套装");
+        Button clothingMode = button(activity, "散件");
+        modeRow.addView(allMode, new LinearLayout.LayoutParams(0, dp(activity, 38), 1));
+        LinearLayout.LayoutParams suitModeLp = new LinearLayout.LayoutParams(0, dp(activity, 38), 1);
+        suitModeLp.setMargins(dp(activity, 6), 0, dp(activity, 6), 0);
+        modeRow.addView(suitMode, suitModeLp);
+        modeRow.addView(clothingMode, new LinearLayout.LayoutParams(0, dp(activity, 38), 1));
+        root.addView(modeRow);
+
+        int[] searchMode = new int[]{MODE_ALL};
+        styleModeButtons(modeRow, allMode);
 
         TextView recentLabel = label(activity, "最近搜索", 11, true, activity.getColor(R.color.text_secondary));
         recentLabel.setPadding(dp(activity, 2), dp(activity, 8), dp(activity, 2), dp(activity, 4));
@@ -99,7 +122,7 @@ public final class SuitSearchDialog {
         ));
         root.addView(recentScroll);
 
-        TextView status = label(activity, "输入套装名称开始搜索", 12, false, activity.getColor(R.color.text_secondary));
+        TextView status = label(activity, "输入套装或散件名称开始搜索", 12, false, activity.getColor(R.color.text_secondary));
         status.setPadding(dp(activity, 4), dp(activity, 10), dp(activity, 4), dp(activity, 8));
         root.addView(status);
 
