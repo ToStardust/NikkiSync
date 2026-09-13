@@ -136,20 +136,27 @@ public final class SuitSearchDialog {
         Runnable runSearch = () -> {
             String value = query.getText().toString().trim();
             if (value.isEmpty()) {
-                status.setText("请输入套装名称");
+                status.setText(searchMode[0] == MODE_SUIT
+                        ? "请输入套装名称"
+                        : searchMode[0] == MODE_CLOTHING ? "请输入散件名称" : "请输入套装或散件名称");
                 return;
             }
+            int requestedMode = searchMode[0];
             search.setEnabled(false);
             status.setText("正在搜索“" + value + "”…");
             results.removeAllViews();
             io.execute(() -> {
                 try {
-                    SuitSearchResponse response = client.searchSuits(value);
+                    SuitSearchResponse suitResponse = requestedMode == MODE_CLOTHING ? null : client.searchSuits(value);
+                    ClothingSearchResponse clothingResponse = requestedMode == MODE_SUIT ? null : client.searchClothing(value);
                     main.post(() -> {
                         search.setEnabled(true);
                         SuitSearchHistory.record(activity, value);
                         renderRecentSearches(activity, recentLabel, recentScroll, recentRow, query, search);
-                        render(activity, client, images, response, results, status, listener, dialog);
+                        renderSearchResults(
+                                activity, client, images, suitResponse, clothingResponse,
+                                requestedMode, results, status, listener
+                        );
                     });
                 } catch (Exception error) {
                     main.post(() -> {
@@ -159,6 +166,28 @@ public final class SuitSearchDialog {
                 }
             });
         };
+
+        allMode.setOnClickListener(v -> {
+            searchMode[0] = MODE_ALL;
+            query.setHint("套装或散件名称");
+            styleModeButtons(modeRow, allMode);
+            if (!query.getText().toString().trim().isEmpty()) runSearch.run();
+            else status.setText("输入套装或散件名称开始搜索");
+        });
+        suitMode.setOnClickListener(v -> {
+            searchMode[0] = MODE_SUIT;
+            query.setHint("套装名称");
+            styleModeButtons(modeRow, suitMode);
+            if (!query.getText().toString().trim().isEmpty()) runSearch.run();
+            else status.setText("输入套装名称开始搜索");
+        });
+        clothingMode.setOnClickListener(v -> {
+            searchMode[0] = MODE_CLOTHING;
+            query.setHint("散件名称");
+            styleModeButtons(modeRow, clothingMode);
+            if (!query.getText().toString().trim().isEmpty()) runSearch.run();
+            else status.setText("输入散件名称开始搜索");
+        });
 
         search.setOnClickListener(v -> runSearch.run());
         query.setOnEditorActionListener((v, actionId, event) -> {
