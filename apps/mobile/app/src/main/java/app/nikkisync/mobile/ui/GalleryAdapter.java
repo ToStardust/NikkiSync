@@ -3,8 +3,8 @@ package app.nikkisync.mobile.ui;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -144,25 +144,33 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         HeaderView(Context context) {
             super(context);
             setOrientation(VERTICAL);
-            setPadding(dp(4), dp(18), dp(4), dp(9));
+            setPadding(dp(14), dp(12), dp(14), dp(12));
+            setBackground(GalleryUxStyle.glassCard(context));
 
             LinearLayout top = new LinearLayout(context);
             top.setGravity(Gravity.CENTER_VERTICAL);
-            title = label(17, true, context.getColor(R.color.text_primary));
+
+            title = label(19, true, context.getColor(R.color.text_primary));
             count = label(12, true, context.getColor(R.color.text_secondary));
             top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             top.addView(count);
             addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             provenance = label(11, false, context.getColor(R.color.text_secondary));
-            provenance.setPadding(0, dp(2), 0, 0);
-            addView(provenance, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            provenance.setPadding(dp(8), dp(3), dp(8), dp(3));
+            provenance.setBackground(GalleryUxStyle.glassChip(context));
+            LinearLayout.LayoutParams provenanceLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            provenanceLp.topMargin = dp(7);
+            addView(provenance, provenanceLp);
         }
 
         void bind(GalleryVersionGroups.Group group) {
             title.setText(group.versionLabel());
-            count.setText(group.items().size() + " 张");
-            provenance.setText(group.inferred() ? "自动推测" : "");
+            count.setText(group.items().size() + " 张照片");
+            provenance.setText(group.inferred() ? "自动推测版本" : "");
             provenance.setVisibility(group.inferred() ? VISIBLE : GONE);
         }
 
@@ -177,28 +185,40 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
 
     private final class Cell extends FrameLayout {
         final ImageView image;
+        final View selectedOverlay;
         final TextView live;
         final TextView check;
 
         Cell(Context context) {
             super(context);
-            int gap = dp(2);
+            int gap = dp(3);
             setPadding(gap, gap, gap, gap);
-            setMinimumHeight(dp(136));
+            setMinimumHeight(dp(138));
+
             image = new ImageView(context);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            image.setBackgroundColor(Color.rgb(232, 228, 224));
+            image.setBackgroundResource(R.drawable.bg_gallery_photo);
+            image.setClipToOutline(true);
             addView(image, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
 
+            selectedOverlay = new View(context);
+            selectedOverlay.setBackground(GalleryUxStyle.selectedOverlay(context));
+            selectedOverlay.setVisibility(GONE);
+            addView(selectedOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
+
             live = badge("LIVE");
-            FrameLayout.LayoutParams lpLive = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+            FrameLayout.LayoutParams lpLive = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP | Gravity.START
+            );
             lpLive.setMargins(dp(8), dp(8), 0, 0);
             addView(live, lpLive);
 
             check = badge("✓");
             check.setTextSize(15);
             check.setGravity(Gravity.CENTER);
-            FrameLayout.LayoutParams lpCheck = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP | Gravity.END);
+            FrameLayout.LayoutParams lpCheck = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.END);
             lpCheck.setMargins(0, dp(8), dp(8), 0);
             addView(check, lpCheck);
         }
@@ -206,23 +226,23 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         void bind(AssetSummary asset, boolean isSelected) {
             live.setVisibility(asset.hasMotion() ? VISIBLE : GONE);
             check.setVisibility(isSelected ? VISIBLE : GONE);
-            setAlpha(isSelected ? 0.72f : 1f);
+            selectedOverlay.setVisibility(isSelected ? VISIBLE : GONE);
+            setAlpha(1f);
         }
 
         private TextView badge(String text) {
             TextView view = new TextView(context);
             view.setText(text);
-            view.setTextColor(Color.WHITE);
+            view.setTextColor(Color.rgb(54, 50, 48));
             view.setTextSize(10);
             view.setTypeface(Typeface.DEFAULT_BOLD);
-            view.setPadding(dp(7), dp(3), dp(7), dp(3));
-            GradientDrawable background = new GradientDrawable();
-            background.setColor(0xB8000000);
-            background.setCornerRadius(dp(10));
-            view.setBackground(background);
+            view.setPadding(dp(8), dp(4), dp(8), dp(4));
+            view.setBackground(GalleryUxStyle.glassChip(context));
             return view;
         }
     }
 
-    private int dp(int value) { return Math.round(value * context.getResources().getDisplayMetrics().density); }
+    private int dp(int value) {
+        return Math.round(value * context.getResources().getDisplayMetrics().density);
+    }
 }
