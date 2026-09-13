@@ -8,6 +8,7 @@ import test from 'node:test'
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import { PairingService } from '../src/server/PairingService.js'
 import { LocalSyncServer } from '../src/server/LocalSyncServer.js'
+import { searchSuitLibrary } from '../src/server/SuitSearchIndex.js'
 import { LocalTlsIdentityService } from '../src/server/LocalTlsIdentityService.js'
 
 function sha256(data: Buffer): string { return createHash('sha256').update(data).digest('hex') }
@@ -196,3 +197,66 @@ test('local TLS identity is generated once and persists with a stable fingerprin
     assert.match(first.certPem, /BEGIN CERTIFICATE/)
   } finally { db.close() }
 })
+
+
+test('suit search ranks exact names before broader matches and keeps photo-count ordering within a relevance tier', () => {
+  const summary = (assetId: string) => ({
+    assetId,
+    type: 'photo' as const,
+    state: 'ready' as const,
+    revision: 1,
+    hasMotion: false,
+    hasMetadata: true,
+    gameVersionSource: 'unknown' as const
+  })
+
+  const assets = [
+    {
+      asset: summary('exact'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_exact', category: 'dresses', suitId: '1', suitName: '天鹅童话' }] }
+      })
+    },
+    {
+      asset: summary('prefix-1'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_prefix_1', category: 'hair', suitId: '2', suitName: '天鹅童话·晨曦' }] }
+      })
+    },
+    {
+      asset: summary('prefix-2'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_prefix_2', category: 'shoes', suitId: '2', suitName: '天鹅童话·晨曦' }] }
+      })
+    },
+    {
+      asset: summary('contains-1'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_contains_1', category: 'gloves', suitId: '3', suitName: '梦境·天鹅童话·回声' }] }
+      })
+    },
+    {
+      asset: summary('contains-2'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_contains_2', category: 'earrings', suitId: '3', suitName: '梦境·天鹅童话·回声' }] }
+      })
+    },
+    {
+      asset: summary('contains-3'),
+      metadataJson: JSON.stringify({
+        dressing: { clothes: [{ id: 'cloth_contains_3', category: 'hairAccessories', suitId: '3', suitName: '梦境·天鹅童话·回声' }] }
+      })
+    }
+  ]
+
+  const result = searchSuitLibrary(assets, undefined, '天鹅童话')
+  assert.deepEqual(result.items.map((item) => item.suitName), [
+    '天鹅童话',
+    '天鹅童话·晨曦',
+    '梦境·天鹅童话·回声'
+  ])
+  assert.equal(result.items[0]?.photoCount, 1)
+  assert.equal(result.items[1]?.photoCount, 2)
+  assert.equal(result.items[2]?.photoCount, 3)
+})
+
