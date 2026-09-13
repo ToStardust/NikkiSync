@@ -53,8 +53,9 @@ public final class SavedPhotoRecovery {
             List<AssetSummary> assets,
             SavedPhotoStore store
     ) throws Exception {
-        List<Candidate> candidates = buildCandidates(client, assets);
         List<MediaRow> rows = scanImages(context.getContentResolver());
+        if (rows.isEmpty()) return new Result(0, 0, 0);
+        List<Candidate> candidates = buildCandidates(client, assets);
 
         Map<String, List<Candidate>> candidatesByKey = new HashMap<>();
         for (Candidate candidate : candidates) {
@@ -124,9 +125,18 @@ public final class SavedPhotoRecovery {
                 MediaStore.Images.Media.RELATIVE_PATH,
                 MediaStore.Images.Media.DATE_ADDED
         };
-        String selection = MediaStore.Images.Media.RELATIVE_PATH + "=? OR " +
-                MediaStore.Images.Media.RELATIVE_PATH + "=?";
-        String[] args = {"Pictures/NikkiSync/", "DCIM/Camera/"};
+        String selection = MediaStore.Images.Media.RELATIVE_PATH + "=? OR (" +
+                MediaStore.Images.Media.RELATIVE_PATH + "=? AND (" +
+                MediaStore.Images.Media.DISPLAY_NAME + " GLOB ? OR " +
+                MediaStore.Images.Media.DISPLAY_NAME + " GLOB ? OR " +
+                MediaStore.Images.Media.DISPLAY_NAME + " GLOB ?))";
+        String[] args = {
+                "Pictures/NikkiSync/",
+                "DCIM/Camera/",
+                "*_OLIVE.jpg",
+                "MV*.jpg",
+                "*_HUAWEI.jpg"
+        };
 
         try (Cursor cursor = resolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
