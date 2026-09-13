@@ -444,36 +444,49 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         myContent.removeAllViews();
 
         Map<String, Integer> uidCounts = new LinkedHashMap<>();
-        java.util.Set<String> versions = new java.util.LinkedHashSet<>();
+        Map<String, Integer> versionCounts = new LinkedHashMap<>();
+        int unknownVersionCount = 0;
         int liveCount = 0;
         int metadataCount = 0;
 
         for (AssetSummary asset : assets) {
             if (asset.hasMotion()) liveCount++;
             if (asset.hasMetadata()) metadataCount++;
-            if (asset.gameVersion() != null && !asset.gameVersion().isBlank()) versions.add(asset.gameVersion());
+
+            if (asset.gameVersion() == null || asset.gameVersion().isBlank()) {
+                unknownVersionCount++;
+            } else {
+                versionCounts.put(asset.gameVersion(), versionCounts.getOrDefault(asset.gameVersion(), 0) + 1);
+            }
+
             if (asset.uid() != null && !asset.uid().isBlank()) {
                 uidCounts.put(asset.uid(), uidCounts.getOrDefault(asset.uid(), 0) + 1);
             }
         }
 
-        String uidBody;
         if (uidCounts.isEmpty()) {
-            uidBody = "尚未从当前图库照片中解析到 UID";
+            addMyCard("玩家 UID", "尚未从当前图库照片中解析到 UID");
         } else if (uidCounts.size() == 1) {
             Map.Entry<String, Integer> entry = uidCounts.entrySet().iterator().next();
-            uidBody = entry.getKey() + "\n来自 " + entry.getValue() + " 张照片";
+            addMyActionCard(
+                    "玩家 UID",
+                    entry.getKey() + "\n来自 " + entry.getValue() + " 张照片",
+                    "复制 UID",
+                    () -> copyText("Nikki UID", entry.getKey())
+            );
         } else {
-            StringBuilder builder = new StringBuilder("发现 " + uidCounts.size() + " 个 UID，当前图库可能包含多个账号");
+            StringBuilder body = new StringBuilder("发现 " + uidCounts.size() + " 个 UID，当前图库可能包含多个账号");
+            StringBuilder copy = new StringBuilder();
             int shown = 0;
             for (Map.Entry<String, Integer> entry : uidCounts.entrySet()) {
-                builder.append("\n").append(entry.getKey()).append(" · ").append(entry.getValue()).append(" 张");
-                if (++shown >= 4) break;
+                if (copy.length() > 0) copy.append("\n");
+                copy.append(entry.getKey());
+                if (shown < 4) body.append("\n").append(entry.getKey()).append(" · ").append(entry.getValue()).append(" 张");
+                shown++;
             }
-            if (uidCounts.size() > shown) builder.append("\n另有 ").append(uidCounts.size() - shown).append(" 个 UID");
-            uidBody = builder.toString();
+            if (uidCounts.size() > 4) body.append("\n另有 ").append(uidCounts.size() - 4).append(" 个 UID");
+            addMyActionCard("玩家 UID", body.toString(), "复制全部 UID", () -> copyText("Nikki UIDs", copy.toString()));
         }
-        addMyCard("玩家 UID", uidBody);
 
         List<SavedPhotoStore.Record> savedRecords = savedPhotoStore == null ? List.of() : savedPhotoStore.load();
         Map<String, SavedPhotoHealthStore.Entry> health = savedPhotoHealthStore == null
@@ -485,23 +498,44 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
             if (entry != null && entry.isMissing()) missingSaved++;
         }
 
+        int livePercent = assets.isEmpty() ? 0 : Math.round(liveCount * 100f / assets.size());
+        int metadataPercent = assets.isEmpty() ? 0 : Math.round(metadataCount * 100f / assets.size());
         String stats = "图库照片：" + assets.size()
-                + "\nLIVE：" + liveCount
-                + "\n已解析参数：" + metadataCount
-                + "\n识别版本：" + versions.size()
+                + "\nLIVE：" + liveCount + " · " + livePercent + "%"
+                + "\n已解析参数：" + metadataCount + " · " + metadataPercent + "%"
                 + "\n已保存记录：" + savedRecords.size()
                 + (missingSaved == 0 ? "" : "\n文件缺失：" + missingSaved);
         addMyCard("图库概况", stats);
+
+        List<Map.Entry<String, Integer>> versionRows = new ArrayList<>(versionCounts.entrySet());
+        versionRows.sort((left, right) -> {
+            int count = Integer.compare(right.getValue(), left.getValue());
+            return count != 0 ? count : left.getKey().compareTo(right.getKey());
+        });
+        StringBuilder versionBody = new StringBuilder();
+        for (Map.Entry<String, Integer> entry : versionRows) {
+            if (versionBody.length() > 0) versionBody.append("\n");
+            versionBody.append(entry.getKey()).append(" · ").append(entry.getValue()).append(" 张");
+        }
+        if (unknownVersionCount > 0) {
+            if (versionBody.length() > 0) versionBody.append("\n");
+            versionBody.append("版本未知 · ").append(unknownVersionCount).append(" 张");
+        }
+        addMyCard("版本分布", versionBody.length() == 0 ? "当前没有可统计的版本信息" : versionBody.toString());
 
         String device = pairedServer == null
                 ? "尚未配对电脑"
                 : "已配对：" + pairedServer.serverName() + "\n图库 revision：" + pairedServer.lastRevision();
         addMyCard("同步与设备", device);
 
+        renderRemoteProfileStats();
+
         addMyCard(
                 "数据说明",
-                "UID 与图库统计来自 NikkiSync 已解析的照片数据。发现多个 UID 时不会自动猜测主账号；照片内容不会因为本页统计而上传到第三方。"
+                "UID、版本与图库统计来自 NikkiSync 已解析的本地同步数据；常用穿搭与字典状态由已配对 PC 本地汇总。发现多个 UID 时不会自动猜测主账号。"
         );
+
+        loadRemoteProfileStats();
     }
 
     private void addMyCard(String title, String body) {
