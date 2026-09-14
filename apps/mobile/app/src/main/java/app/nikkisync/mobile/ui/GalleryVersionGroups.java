@@ -44,4 +44,31 @@ public final class GalleryVersionGroups {
         }
         return normalized.isEmpty() ? null : normalized;
     }
+
+    /** Utility semantic comparison retained for callers/tests; gallery chronology does not use it. */
+    public static int compareSemanticVersions(String left, String right) {
+        String normalizedLeft = normalizeVersion(left);
+        String normalizedRight = normalizeVersion(right);
+        if (normalizedLeft == null && normalizedRight == null) return 0;
+        if (normalizedLeft == null) return -1;
+        if (normalizedRight == null) return 1;
+        String[] a = normalizedLeft.split("\\.");
+        String[] b = normalizedRight.split("\\.");
+        int length = Math.max(a.length, b.length);
+        for (int i = 0; i < length; i++) {
+            Integer av = i < a.length ? numericSegment(a[i]) : 0;
+            Integer bv = i < b.length ? numericSegment(b[i]) : 0;
+            if (av == null || bv == null) return normalizedLeft.compareToIgnoreCase(normalizedRight);
+            int compared = Integer.compare(av, bv);
+            if (compared != 0) return compared;
+        }
+        return 0;
+    }
+
+    private static Integer numericSegment(String value) {
+        if (value == null || value.isEmpty()) return 0;
+        for (int i = 0; i < value.length(); i++) if (!Character.isDigit(value.charAt(i))) return null;
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException ignored) { return null; }
+    }
 }
