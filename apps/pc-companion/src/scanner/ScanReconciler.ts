@@ -9,6 +9,16 @@ function resourceIdFor(assetId: string, role: string, pathKey: string): string {
   return `resource_${createHash('sha256').update(`${assetId}|${role}|${pathKey}`).digest('hex').slice(0, 32)}`
 }
 
+function capturedAtFor(group: DiscoveredResource[]): string | undefined {
+  const preferredKinds: DiscoveredResource['kind'][] = ['high_quality', 'motion_cover', 'low_quality']
+  for (const kind of preferredKinds) {
+    const source = group.find((item) => item.kind === kind)
+    if (!source || !Number.isFinite(source.mtimeMs) || source.mtimeMs <= 0) continue
+    return new Date(source.mtimeMs).toISOString()
+  }
+  return undefined
+}
+
 export class ScanReconciler {
   private readonly resolver = new AssetResolver()
   constructor(private readonly assets: AssetRepository, private readonly motionGraceMs = 2000) {}
@@ -101,7 +111,8 @@ export class ScanReconciler {
         ...(embeddedNuan5Md5 ? { nativeParamNuan5Md5: embeddedNuan5Md5 } : {})
       }
     } : undefined
-    return { assetId, assetType, ...(uid ? { uid } : {}), discoveredAt: now,
+    const capturedAt = capturedAtFor(group)
+    return { assetId, assetType, ...(uid ? { uid } : {}), ...(capturedAt ? { capturedAt } : {}), discoveredAt: now,
       ...(metadata ? { metadataSchemaVersion: 1, metadata } : {}),
       ...(motion ? { motionResolverMethod: 'filename' as const, motionResolverConfidence: 1 } : {}), resources, ...(candidates ? { candidates } : {}) }
   }
