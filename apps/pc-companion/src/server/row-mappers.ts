@@ -6,6 +6,7 @@ import type {
   MediaResource,
   NikkiAsset
 } from '@nikkisync/protocol'
+import { inferInfinityNikkiGameVersion } from './GameVersionCalendar.js'
 
 function optionalString(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value)
@@ -31,17 +32,22 @@ function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhoto
 
 function summaryGameVersion(row: Record<string, unknown>): Pick<AssetSummary, 'gameVersion' | 'gameVersionSource'> {
   const rawMetadata = optionalString(row.metadata_json)
-  if (!rawMetadata) return { gameVersionSource: 'unknown' }
-  try {
-    const metadata = JSON.parse(rawMetadata) as Partial<InfinityPhotoMetadata>
-    const value = typeof metadata.identity?.gameVersion === 'string'
-      ? metadata.identity.gameVersion.trim()
-      : ''
-    if (!value) return { gameVersionSource: 'unknown' }
-    return { gameVersion: value, gameVersionSource: 'explicit' }
-  } catch {
-    return { gameVersionSource: 'unknown' }
+  if (rawMetadata) {
+    try {
+      const metadata = JSON.parse(rawMetadata) as Partial<InfinityPhotoMetadata>
+      const value = typeof metadata.identity?.gameVersion === 'string'
+        ? metadata.identity.gameVersion.trim()
+        : ''
+      if (value) return { gameVersion: value, gameVersionSource: 'explicit' }
+    } catch {
+      // Invalid metadata must not block safe capture-time inference below.
+    }
   }
+
+  const inferred = inferInfinityNikkiGameVersion(optionalString(row.captured_at))
+  return inferred
+    ? { gameVersion: inferred, gameVersionSource: 'inferred' }
+    : { gameVersionSource: 'unknown' }
 }
 
 export function mapResourceRow(row: Record<string, unknown>): MediaResource {
