@@ -91,6 +91,23 @@ test('asset changes allocate monotonic revisions and journal entries atomically'
   database.close()
 })
 
+test('scanner reconcile backfills capturedAt for an existing asset without resource changes', () => {
+  const { database, assets } = setup()
+  const base = {
+    assetId: 'asset-capture-backfill',
+    assetType: 'photo' as const,
+    discoveredAt: '2026-09-10T00:00:00.000Z',
+    resources: []
+  }
+  assert.equal(assets.reconcile(base).kind, 'created')
+  assert.equal(assets.getById(base.assetId)?.captured_at, null)
+
+  const capturedAt = '2026-08-30T12:34:56.000Z'
+  assert.equal(assets.reconcile({ ...base, capturedAt }).kind, 'updated')
+  assert.equal(assets.getById(base.assetId)?.captured_at, capturedAt)
+  database.close()
+})
+
 test('scanner metadata merges preserve user edits while refreshing native fields', () => {
   const { database, assets } = setup()
   assets.create({
