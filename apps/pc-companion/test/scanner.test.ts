@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -97,6 +97,22 @@ test('scanner persists the local NUAN5 MD5 without persisting source bytes', asy
   assert.equal(raw.nativeParamNuan5Md5, createHash('md5').update(Buffer.concat([prefix, Buffer.from(payload, 'ascii')])).digest('hex'))
   assert.equal('nativeParamSourceBytes' in raw, false)
   database.close(); await rm(f.root, { recursive: true, force: true })
+})
+
+test('scanner stores source photo mtime as capturedAt for chronological gallery order', async () => {
+  const f = await fixture()
+  const target = path.join(f.uid, 'NikkiPhotos_HighQuality', 'Chronological.jpg')
+  await writeFile(target, 'photo')
+  const captured = new Date('2026-08-30T12:34:56.000Z')
+  await utimes(target, captured, captured)
+
+  const database = new DatabaseManager(':memory:'); database.initialize()
+  const scanner = new ScannerService(database, { startingPaths: [f.game], runningExecutablePaths: [], watcher: false, stability: { pollIntervalMs: 0, stableChecks: 1, maxWaitMs: 1000 } })
+  await scanner.start()
+  const row = database.connection.prepare('SELECT captured_at, discovered_at FROM assets').get() as { captured_at: string | null; discovered_at: string }
+  assert.equal(row.captured_at, captured.toISOString())
+  assert.notEqual(row.captured_at, row.discovered_at)
+  await scanner.stop(); database.close(); await rm(f.root, { recursive: true, force: true })
 })
 
 test('file stability guard waits for stable readable content', async () => {
