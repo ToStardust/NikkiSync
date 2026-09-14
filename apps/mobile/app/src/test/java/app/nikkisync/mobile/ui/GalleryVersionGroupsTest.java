@@ -12,28 +12,31 @@ import org.junit.Test;
 import java.util.List;
 
 public final class GalleryVersionGroupsTest {
-    @Test public void versionsSortNumericallyAndUnknownComesLast() {
+    @Test public void versionGroupsFollowNewestServerOrderInsteadOfSemanticVersionOrder() {
         List<GalleryVersionGroups.Group> groups = GalleryVersionGroups.group(List.of(
-                asset("v29", "2026-08-10T10:00:00.000Z", "2.9", "explicit"),
-                asset("unknown", "2026-09-01T10:00:00.000Z", null, "unknown"),
-                asset("v210", "2026-09-02T10:00:00.000Z", "2.10", "explicit")
+                asset("unknown-newest", "2026-09-12T10:00:00.000Z", null, "unknown"),
+                asset("v29", "2026-09-10T10:00:00.000Z", "2.9", "inferred"),
+                asset("v28", "2026-08-10T10:00:00.000Z", "2.8", "inferred")
         ));
 
         assertEquals(3, groups.size());
-        assertEquals("2.10", groups.get(0).version());
+        assertNull(groups.get(0).version());
+        assertEquals("版本未知", groups.get(0).versionLabel());
         assertEquals("2.9", groups.get(1).version());
-        assertNull(groups.get(2).version());
-        assertEquals("版本未知", groups.get(2).versionLabel());
+        assertEquals("2.8", groups.get(2).version());
     }
 
-    @Test public void photosInsideVersionSortNewestFirstAndInvalidTimeLast() {
+    @Test public void photosInsideVersionPreserveServerNewestFirstOrderEvenWithoutCapturedAt() {
         List<GalleryVersionGroups.Group> groups = GalleryVersionGroups.group(List.of(
-                asset("older", "2026-08-10T10:00:00.000Z", "2.9", "explicit"),
-                asset("newer", "2026-08-12T10:00:00.000Z", "2.9", "explicit"),
-                asset("no-time", null, "2.9", "explicit")
+                asset("z-newest-from-server", null, "2.9", "inferred"),
+                asset("a-older-from-server", null, "2.9", "inferred"),
+                asset("middle", "2026-08-30T10:00:00.000Z", "2.9", "inferred")
         ));
 
-        assertEquals(List.of("newer", "older", "no-time"), groups.get(0).items().stream().map(AssetSummary::assetId).toList());
+        assertEquals(
+                List.of("z-newest-from-server", "a-older-from-server", "middle"),
+                groups.get(0).items().stream().map(AssetSummary::assetId).toList()
+        );
     }
 
     @Test public void inferredLabelOnlyAppliesWhenWholeVersionGroupIsInferred() {
