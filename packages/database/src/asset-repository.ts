@@ -72,11 +72,14 @@ export class AssetRepository {
       const metadataSchemaVersion = input.metadataSchemaVersion ??
         (existing?.metadata_schema_version === null || existing?.metadata_schema_version === undefined
           ? undefined : Number(existing.metadata_schema_version))
+      const capturedAt = input.capturedAt ??
+        (existing?.captured_at === null || existing?.captured_at === undefined ? undefined : String(existing.captured_at))
       const metadataChanged = String(existing?.metadata_json ?? '') !== String(mergedMetadataJson ?? '') ||
         Number(existing?.metadata_schema_version ?? 0) !== Number(metadataSchemaVersion ?? 0)
       const assetChanged = !existing ||
         String(existing.asset_type) !== input.assetType ||
         String(existing.uid ?? '') !== String(input.uid ?? '') ||
+        String(existing.captured_at ?? '') !== String(capturedAt ?? '') ||
         String(existing.asset_state) === 'deleted' || metadataChanged
       const resourcesChanged = input.resources.some((resource) => {
         const row = resourceById.get(resource.resourceId)
@@ -105,7 +108,7 @@ export class AssetRepository {
           ) VALUES (?, ?, ?, 'infinity_nikki', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           input.assetId, input.assetType, input.assetState ?? 'ready', input.uid ?? null,
-          input.capturedAt ?? null, input.discoveredAt, metadataSchemaVersion ?? null,
+          capturedAt ?? null, input.discoveredAt, metadataSchemaVersion ?? null,
           mergedMetadataJson,
           input.motionPresentationTimestampUs ?? null, input.motionResolverMethod ?? null,
           input.motionResolverConfidence ?? null, revision, now, now
@@ -118,7 +121,7 @@ export class AssetRepository {
             motion_resolver_confidence = ?, deleted_at = NULL, revision = ?, updated_at = ?
           WHERE asset_id = ?
         `).run(
-          input.assetType, input.assetState ?? 'ready', input.uid ?? null, input.capturedAt ?? null,
+          input.assetType, input.assetState ?? 'ready', input.uid ?? null, capturedAt ?? null,
           input.discoveredAt, metadataSchemaVersion ?? null,
           mergedMetadataJson,
           input.motionPresentationTimestampUs ?? null, input.motionResolverMethod ?? null,
