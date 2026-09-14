@@ -41,6 +41,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final List<Row> rows = new ArrayList<>();
     private final List<AssetSummary> items = new ArrayList<>();
     private final Set<String> selected = new HashSet<>();
+    private boolean singleAdjustDispatch;
 
     public GalleryAdapter(Context context, ImageLoader images, Supplier<NikkiSyncClient> client, Listener listener) {
         this.context = context;
@@ -68,7 +69,14 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public int selectedCount() { return selected.size(); }
-    public boolean hasSelection() { return !selected.isEmpty(); }
+
+    /**
+     * MainActivity uses this to decide whether a tap should toggle selection or open the viewer.
+     * During a multi-select long-press we intentionally report false only for the synchronous
+     * viewer dispatch, while keeping the real selected set untouched. This lets one photo open
+     * for adjustment without clearing, rebuilding, or otherwise mutating the batch selection.
+     */
+    public boolean hasSelection() { return !singleAdjustDispatch && !selected.isEmpty(); }
 
     public boolean toggle(AssetSummary asset) {
         if (!selected.add(asset.assetId())) selected.remove(asset.assetId());
@@ -110,7 +118,19 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         NikkiSyncClient current = client.get();
         if (current != null) images.load(current, asset, photo.cell.image);
         photo.cell.setOnClickListener(v -> listener.onPhotoClick(asset));
-        photo.cell.setOnLongClickListener(v -> listener.onPhotoLongClick(asset));
+        photo.cell.setOnLongClickListener(v -> {
+            GalleryInteractionPolicy.Action action = GalleryInteractionPolicy.onLongPress(!selected.isEmpty());
+            if (action == GalleryInteractionPolicy.Action.OPEN_SINGLE_ADJUST) {
+                singleAdjustDispatch = true;
+                try {
+                    listener.onPhotoClick(asset);
+                    return true;
+                } finally {
+                    singleAdjustDispatch = false;
+                }
+            }
+            return listener.onPhotoLongClick(asset);
+        });
     }
 
     private static final class Row {
