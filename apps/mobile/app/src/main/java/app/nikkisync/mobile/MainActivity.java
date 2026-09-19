@@ -13,6 +13,7 @@ import android.util.Size;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -116,7 +117,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private boolean profileStatsLoading;
     private SavedPhotoStore.Record pendingEditedLinkSource;
     private final ActivityResultLauncher<PickVisualMediaRequest> editedPhotoPicker =
-            registerForActivityResult(new ActivityResultContracts.PickMultipleVisualMedia(), this::handleEditedPhotoSelection);
+            registerForActivityResult(new ActivityResultContracts.PickMultipleVisualMedia(MediaStore.getPickImagesMaxLimit()), this::handleEditedPhotoSelection);
 
     private TextView titleLabel;
     private TextView status;
