@@ -58,6 +58,7 @@ import app.nikkisync.mobile.storage.EditedMediaAccess;
 import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.storage.SavedPhotoCollection;
 import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
+import app.nikkisync.mobile.storage.SavedPhotoGroups;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
 import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
@@ -330,8 +331,20 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         savedList.setVerticalScrollBarEnabled(false);
         savedList.setClipToPadding(false);
         savedList.setPadding(0, 0, 0, dp(12));
-        savedList.setLayoutManager(new GridLayoutManager(this, 3));
-        savedAdapter = new SavedPhotoAdapter(this, this::showSavedPhotoDetails);
+        GridLayoutManager savedLayout = new GridLayoutManager(this, 3);
+        savedList.setLayoutManager(savedLayout);
+        savedAdapter = new SavedPhotoAdapter(this, new SavedPhotoAdapter.Listener() {
+            @Override public void onOriginalClick(SavedPhotoStore.Record record) {
+                showSavedPhotoDetails(record);
+            }
+
+            @Override public void onEditedClick(EditedVariantStore.Variant variant) {
+                showEditedPhotoDetails(variant);
+            }
+        });
+        savedLayout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override public int getSpanSize(int position) { return savedAdapter.isHeader(position) ? 3 : 1; }
+        });
         savedList.setAdapter(savedAdapter);
         savedList.setVisibility(View.GONE);
         content.addView(savedList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -739,30 +752,35 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void refreshSavedPhotos() {
-        if (savedAdapter == null || savedPhotoStore == null) return;
+        if (savedAdapter == null || savedPhotoStore == null || editedVariantStore == null) return;
 
         List<SavedPhotoStore.Record> records = savedPhotoStore.load();
-        List<SavedPhotoStore.Record> visible = SavedPhotoCollection.select(records, savedFilter, savedSort);
-        savedAdapter.setItems(visible);
+        List<EditedVariantStore.Variant> edits = editedVariantStore.loadAll();
+        List<SavedPhotoGroups.Group> groups = SavedPhotoGroups.select(records, edits, savedFilter, savedSort);
+        savedAdapter.setGroups(groups);
 
         savedHealth.clear();
         savedHealth.putAll(savedPhotoHealthStore.load());
-        updateSavedSummary(records);
+        updateSavedSummary(records, edits);
         updateSavedEmptyState();
 
         long newestCheck = 0L;
         for (SavedPhotoHealthStore.Entry entry : savedHealth.values()) {
             newestCheck = Math.max(newestCheck, entry.lastCheckedAt());
         }
-        if (records.isEmpty() || System.currentTimeMillis() - newestCheck < 30_000L) return;
+
+        List<String> uris = new ArrayList<>();
+        for (SavedPhotoStore.Record record : records) uris.add(record.uri());
+        for (EditedVariantStore.Variant edit : edits) uris.add(edit.uri());
+        if (uris.isEmpty() || System.currentTimeMillis() - newestCheck < 30_000L) return;
 
         io.execute(() -> {
             Map<String, SavedPhotoHealthStore.Entry> checked =
-                    SavedPhotoVerifier.verify(this, savedPhotoHealthStore, records);
+                    SavedPhotoVerifier.verifyUris(this, savedPhotoHealthStore, uris);
             main.post(() -> {
                 savedHealth.clear();
                 savedHealth.putAll(checked);
-                updateSavedSummary(records);
+                updateSavedSummary(records, edits);
             });
         });
     }
@@ -808,15 +826,23 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         });
     }
 
-    private void updateSavedSummary(List<SavedPhotoStore.Record> allRecords) {
+    private void updateSavedSummary(
+            List<SavedPhotoStore.Record> allRecords,
+            List<EditedVariantStore.Variant> edits
+    ) {
         if (savedSummary == null) return;
         int missing = 0;
         for (SavedPhotoStore.Record record : allRecords) {
             SavedPhotoHealthStore.Entry entry = savedHealth.get(record.uri());
             if (entry != null && entry.isMissing()) missing++;
         }
+        for (EditedVariantStore.Variant edit : edits) {
+            SavedPhotoHealthStore.Entry entry = savedHealth.get(edit.uri());
+            if (entry != null && entry.isMissing()) missing++;
+        }
 
         String summary = allRecords.size() + " 条保存记录";
+        if (!edits.isEmpty()) summary += " · " + edits.size() + " 张修图";
         if (savedFilter == SavedViewState.FILTER_MOTION) summary += " · LIVE";
         else if (savedFilter == SavedViewState.FILTER_STILL) summary += " · 普通照片";
         if (missing > 0) summary += " · " + missing + " 条文件缺失";
@@ -936,6 +962,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
+    }
+
+    private void showEditedPhotoDetails(EditedVariantStore.Variant variant) {
+        toast("修图详情正在准备");
     }
 
     private AssetSummary findAsset(String assetId) {
