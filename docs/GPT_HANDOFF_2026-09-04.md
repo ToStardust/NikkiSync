@@ -237,3 +237,185 @@ tools/m4-2-local-dictionary-probe/cue4parse-spike/out/
 - 不声称可以写入游戏安装目录；
 - 所有功能修改都有测试和实际命令结果；
 - 真实阻断、未完成项和推断不会被写成“已通过”。
+
+
+## 2026-09-20｜M2.4.3 已保存修图关联（源码已实现，完整构建验收受 CI runner 阻塞）
+
+### 产品目标
+
+用户从 NikkiSync 保存原图后，可能继续在 Lightroom、Snapseed、系统相册等工具中修图。M2.4.3 在现有“已保存”页中增加 **手动关联修图**：
+
+```text
+同一 source assetId
+├─ 原始保存图（可有多条历史 re-save）
+├─ 修图版 1
+├─ 修图版 2
+└─ 修图版 N
+```
+
+用户从某条原始保存记录进入 **关联修图**，使用 Android 系统多选照片选择器选择一张或多张修图。所有修图和原始保存图在“已保存”页按同一 source `assetId` 连续显示；修图缩略图标记“修图”。
+
+明确边界：
+
+- 第一版只做用户手动关联，不做自动相似图匹配。
+- 修图文件不写入游戏参数、不修改字节、不上传 PC。
+- 同一 URI 再次关联到同一 source 是幂等操作，保留第一次 `linkedAt`。
+- 同一 URI 已属于另一个 source 时拒绝静默迁移。
+- 解除关联只移除 NikkiSync 本地关系，绝不删除系统相册媒体。
+- LIVE source 可以关联普通修图 JPEG/HEIC；不能因此把修图版宣称为可播放 LIVE。
+
+### 设计与计划
+
+设计：
+`docs/superpowers/specs/2026-09-19-saved-photo-edited-variants-design.md`
+
+设计提交：
+`dac98c8c11b24d6088e2789fd535ff2b1f10f65e`
+
+实现计划：
+`docs/superpowers/plans/2026-09-19-saved-photo-edited-variants.md`
+
+计划最终提交：
+`9dae589e1cf3b34d8c5f4c489d4e6f5bab0795f4`
+
+### 已实现源码
+
+新增：
+
+- `storage/EditedVariantStore.java`
+  - SQLite：`nikkisync-edited-variants.db`
+  - 一 source 多修图
+  - same-source duplicate 幂等
+  - cross-source URI conflict
+  - 单条 unlink
+- `storage/SavedMetadataSnapshotStore.java`
+  - SQLite：`nikkisync-saved-metadata.db`
+  - 保存最后一次 canonical metadata
+  - PC 离线时供“已保存”详情读取
+  - 在线刷新失败不清空旧快照
+- `storage/SavedPhotoGroups.java`
+  - 原图 + 修图按 `assetId` 分组
+  - 原图永远先于修图
+  - 最近保存排序使用组内最新 activity
+  - 拍摄时间排序保持整组连续
+- `storage/EditedMediaAccess.java`
+  - Android Photo Picker URI 元信息
+  - 尝试 `takePersistableUriPermission`
+  - 不申请全图库读取权限
+- `ui/SavedMetadataText.java`
+  - 复用 canonical 相机 / 滤镜 / 光照 / 穿搭文本
+  - 离线快照也能使用
+- 新增 5 组 Android 单元测试源码：
+  - `EditedVariantStoreTest`
+  - `SavedMetadataSnapshotStoreTest`
+  - `SavedPhotoGroupsTest`
+  - `EditedMediaAccessTest`
+  - `SavedMetadataTextTest`
+
+修改：
+
+- `SavedPhotoAdapter`
+  - full-width source group header
+  - 同一 source 原图与修图连续展示
+  - 修图 badge
+- `SavedPhotoVerifier`
+  - 原图与修图 URI 共用 health verification
+  - inaccessible URI 只标记状态，不删除记录
+- `MainActivity`
+  - 改为 `ComponentActivity`
+  - 注册 `PickMultipleVisualMedia`
+  - 原始 Saved 详情增加“关联修图”
+  - 修图详情支持在线参数 / 离线快照
+  - “查看原始保存图”
+  - 当前 source 可用时“查看源照片”
+  - “解除关联”
+  - 原图成功保存和源详情成功加载时刷新参数快照
+  - Activity 销毁时先停止后台 Executor，再关闭新增 SQLite stores
+- `app/build.gradle.kts`
+  - `androidx.activity:activity:1.13.0`
+  - Robolectric test dependency
+- `validate-m2.mjs`
+  - M2.4.3 静态合同
+  - 允许新的 `SavedPhotoGroups.select` 替代旧的直接 `SavedPhotoCollection.select`
+  - metadata 文案验证改为检查共享 `SavedMetadataText`
+
+### 关键提交
+
+实现过程中的主要生产提交：
+
+- `430593f2e2e453ad236c781614a4df810f7caa76` — edited variant store
+- `f57eac9efb4d49bdcad0216abedc52d68bd19cc9` — Saved source groups
+- `ae7659e85f27925136673af2ff8e40348d75e25b` — edited URI access
+- `a7791ecd692c26778adea1e2f5557bf4c5001b03` — system multi-photo picker registration
+- `d72ee37eec0b5ea647ea9454f814f983555a8abc` — grouped Saved adapter
+- `57121f1553cbdfd44d7c0da65cc254f79d296edd` — edited media health
+- `9e1a5c743f1289ed7bdec0d8bbb6e7bf24742d0a` — group projection into Saved page
+- `1ce856a0884f51fadb9db8340b10e8d8ee3423fb` — link/detail/unlink/offline snapshot UI
+- `0d13921fc24a3e1a187a2b43a3769cc3574f3362` — safe background/store shutdown order
+
+TDD RED commits include:
+
+- `88b77578a2a8714337f127869893e1a5da000847`
+- `253a0e0453d400a4db037452d0524732dc14f614`
+- `bfca21d1e20b2ff6b3f52978da87fe2a50624f3a`
+- `bbcb761cff5c88a71f16e0816c7114f4908f65dd`
+- `1cc9151151125b33a81a3d03d9f66a2f2a2e56b8`
+- `52228edcea50ea7861fb27befdeecc5d03880eed`
+- lifecycle RED：`c4e1b2e60a0214ba4200c0549dd4700eb24344c8`
+
+### 当前验证事实
+
+已在当前开发会话直接做过、不依赖 runner 的检查：
+
+- 对涉及本轮修改文件的 `validate-m2.mjs` 断言进行了静态重放：65 条相关断言，0 条失败；一个已有 multiline assertion 无法被简化重放器解析，但其目标代码仍存在。
+- 修改 Java 文件括号结构检查为平衡状态。
+- 未发现重复 import。
+- 未发现 `ContentResolver.delete` / `getContentResolver().delete` 媒体删除路径。
+- lifecycle shutdown-order RED 条件在生产修复前为 false，修复后为 true。
+
+**不要把以上静态检查写成 Android 编译通过。**
+
+### GitHub Actions 阻塞
+
+当前 hosted Actions 没有实际分配 runner。最近运行中：
+
+- `android`：`runner_id=0`、`steps=[]`
+- `node-regression`：`runner_id=0`、`steps=[]`
+
+因此当前 HEAD 尚未取得以下新鲜证据：
+
+- `npm run mobile:validate` 实际命令成功
+- `npm test` 成功
+- `./gradlew testDebugUnitTest` 成功
+- `assembleDebug` 成功
+- 新 APK 构建成功
+- 真机 Photo Picker / URI 长期访问 / 离线参数 / 解除关联验收
+
+不要把“workflow conclusion=failure”误写成源码测试失败：这几次 workflow 根本没有开始任何 step。
+
+此前 Android workflow 还曾遇到 `android-actions/setup-android@v3` 请求已移除的 SDK `tools` 包。工作流现在显式只请求 `platform-tools`，但由于当前 runner 未分配，这一修正也尚未获得新的 Actions 运行证明。
+
+### 下一步验收
+
+一旦有可执行 Android 构建环境：
+
+```powershell
+npm run mobile:validate
+npm test
+cd apps/mobile
+./gradlew testDebugUnitTest assembleDebug
+```
+
+然后在 Android 13+ 真机验收：
+
+1. 打开一条已有“已保存”原图。
+2. 点“关联修图”，一次选择至少 2 张图片。
+3. 返回后确认原图 + 多张修图在同一 source 组连续显示。
+4. 强杀并重开 App，确认关联仍存在。
+5. 关闭 PC，确认已有快照的修图仍显示源参数。
+6. 重连 PC，确认参数可刷新且源照片入口可用。
+7. 再次选择相同修图，确认不新增重复记录。
+8. 尝试把已属于另一 source 的 URI 再关联，确认拒绝静默移动。
+9. 删除系统相册中的原始保存图，确认修图关联仍存在。
+10. 在修图详情点“解除关联”，确认系统相册文件仍存在。
+11. LIVE source 关联 flattened JPEG 时，只显示为“修图”，不宣称为 LIVE Motion Photo。
