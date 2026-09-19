@@ -290,3 +290,14 @@ expect(mainActivity.includes('PickMultipleVisualMedia'), 'Saved edited variants 
 expect(mainActivity.includes('PickVisualMedia.ImageOnly'), 'edited-variant picker must accept images only')
 expect(editedMediaAccess.includes('takePersistableUriPermission'), 'selected edit URIs must request persistent read access')
 expect(!manifest.includes('READ_MEDIA_IMAGES'), 'manual edit linking must not request broad gallery read permission')
+
+expect(savedPhotoAdapter.includes('TYPE_HEADER') && savedPhotoAdapter.includes('TYPE_MEDIA'),
+  'Saved edited media must render grouped source rows')
+expect(savedPhotoAdapter.includes('SavedPhotoGroups.Group'),
+  'Saved adapter must consume source groups')
+expect(savedPhotoAdapter.includes('"修图"'),
+  'Saved edited variants need a compact 修图 badge')
+expect(mainActivity.includes('savedAdapter.isHeader(position) ? 3 : 1'),
+  'Saved group headers must span the full three-column grid')
+expect(mainActivity.includes('SavedPhotoGroups.select'),
+  'Saved refresh must combine original records and edited variants')
