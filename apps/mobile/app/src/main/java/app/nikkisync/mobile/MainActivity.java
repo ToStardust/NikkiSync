@@ -187,9 +187,9 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if (discovery != null) discovery.stop();
         if (imageLoader != null) imageLoader.shutdown();
         if (savedAdapter != null) savedAdapter.shutdown();
+        io.shutdownNow();
         if (editedVariantStore != null) editedVariantStore.close();
         if (savedMetadataSnapshotStore != null) savedMetadataSnapshotStore.close();
-        io.shutdownNow();
         super.onDestroy();
     }
 
