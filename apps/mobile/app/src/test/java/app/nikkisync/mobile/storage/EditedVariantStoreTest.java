@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import android.content.Context;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -19,6 +20,10 @@ public final class EditedVariantStoreTest {
         context = RuntimeEnvironment.getApplication();
         context.deleteDatabase("nikkisync-edited-variants.db");
         store = new EditedVariantStore(context);
+    }
+
+    @After public void tearDown() {
+        store.close();
     }
 
     @Test public void oneAssetKeepsMultipleEditedVariantsInLinkOrder() {
