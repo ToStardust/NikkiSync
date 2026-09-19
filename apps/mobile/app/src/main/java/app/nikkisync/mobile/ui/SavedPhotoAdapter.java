@@ -11,29 +11,37 @@ import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import app.nikkisync.mobile.R;
+import app.nikkisync.mobile.storage.EditedVariantStore;
+import app.nikkisync.mobile.storage.SavedPhotoGroups;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
 
 import java.text.DateFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public final class SavedPhotoAdapter extends RecyclerView.Adapter<SavedPhotoAdapter.Holder> {
+public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     public interface Listener {
-        void onClick(SavedPhotoStore.Record record);
+        void onOriginalClick(SavedPhotoStore.Record record);
+        void onEditedClick(EditedVariantStore.Variant variant);
     }
+
+    private static final int TYPE_HEADER = 0;
+    private static final int TYPE_MEDIA = 1;
 
     private final Activity activity;
     private final Listener listener;
-    private final List<SavedPhotoStore.Record> items = new ArrayList<>();
+    private final List<Row> rows = new ArrayList<>();
     private final ExecutorService thumbnails = Executors.newFixedThreadPool(2);
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -42,31 +50,104 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<SavedPhotoAdap
         this.listener = listener;
     }
 
-    public void setItems(List<SavedPhotoStore.Record> next) {
-        items.clear();
-        items.addAll(next);
+    public void setGroups(List<SavedPhotoGroups.Group> groups) {
+        rows.clear();
+        for (SavedPhotoGroups.Group group : groups) {
+            rows.add(Row.header(group));
+            for (SavedPhotoGroups.Member member : group.members()) rows.add(Row.media(group, member));
+        }
         notifyDataSetChanged();
+    }
+
+    public boolean isHeader(int position) {
+        return position >= 0 && position < rows.size() && rows.get(position).member == null;
     }
 
     public void shutdown() {
         thumbnails.shutdownNow();
     }
 
-    @Override public int getItemCount() { return items.size(); }
+    @Override public int getItemCount() { return rows.size(); }
 
-    @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        return new Holder(new Cell(activity));
+    @Override public int getItemViewType(int position) {
+        return isHeader(position) ? TYPE_HEADER : TYPE_MEDIA;
     }
 
-    @Override public void onBindViewHolder(@NonNull Holder holder, int position) {
-        SavedPhotoStore.Record record = items.get(position);
-        holder.cell.bind(record);
-        holder.cell.setOnClickListener(v -> listener.onClick(record));
+    @NonNull @Override public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        if (viewType == TYPE_HEADER) return new HeaderHolder(new HeaderView(activity));
+        return new MediaHolder(new Cell(activity));
     }
 
-    final class Holder extends RecyclerView.ViewHolder {
+    @Override public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+        Row row = rows.get(position);
+        if (holder instanceof HeaderHolder header) {
+            header.view.bind(row.group);
+            return;
+        }
+
+        MediaHolder media = (MediaHolder) holder;
+        media.cell.bind(row.member);
+        media.cell.setOnClickListener(v -> {
+            if (row.member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
+                listener.onOriginalClick(row.member.original());
+            } else {
+                listener.onEditedClick(row.member.edited());
+            }
+        });
+    }
+
+    private static final class Row {
+        final SavedPhotoGroups.Group group;
+        final SavedPhotoGroups.Member member;
+
+        Row(SavedPhotoGroups.Group group, SavedPhotoGroups.Member member) {
+            this.group = group;
+            this.member = member;
+        }
+
+        static Row header(SavedPhotoGroups.Group group) { return new Row(group, null); }
+        static Row media(SavedPhotoGroups.Group group, SavedPhotoGroups.Member member) { return new Row(group, member); }
+    }
+
+    final class HeaderHolder extends RecyclerView.ViewHolder {
+        final HeaderView view;
+        HeaderHolder(HeaderView view) { super(view); this.view = view; }
+    }
+
+    final class MediaHolder extends RecyclerView.ViewHolder {
         final Cell cell;
-        Holder(Cell cell) { super(cell); this.cell = cell; }
+        MediaHolder(Cell cell) { super(cell); this.cell = cell; }
+    }
+
+    final class HeaderView extends LinearLayout {
+        final TextView title;
+        final TextView count;
+
+        HeaderView(Activity context) {
+            super(context);
+            setGravity(Gravity.CENTER_VERTICAL);
+            setPadding(dp(10), dp(10), dp(10), dp(8));
+
+            title = new TextView(context);
+            title.setTextSize(15);
+            title.setTextColor(context.getColor(R.color.text_primary));
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+            count = new TextView(context);
+            count.setTextSize(11);
+            count.setTextColor(context.getColor(R.color.text_secondary));
+            addView(count);
+        }
+
+        void bind(SavedPhotoGroups.Group group) {
+            String label = groupDate(group);
+            if (group.gameVersion() != null && !group.gameVersion().isBlank()) {
+                label += " · " + group.gameVersion() + "版本";
+            }
+            title.setText(label);
+            count.setText(group.members().size() + "张");
+        }
     }
 
     final class Cell extends FrameLayout {
@@ -106,16 +187,24 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<SavedPhotoAdap
             addView(date, dateLp);
         }
 
-        void bind(SavedPhotoStore.Record record) {
-            String badge = record.hasMotion() ? "LIVE" : record.rotationDegrees() == 0 ? "原图" : "旋转 " + record.rotationDegrees() + "°";
-            state.setText(badge);
-            date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(record.savedAt())));
+        void bind(SavedPhotoGroups.Member member) {
+            if (member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
+                SavedPhotoStore.Record record = member.original();
+                String badge = record.hasMotion()
+                        ? "LIVE"
+                        : record.rotationDegrees() == 0 ? "原图" : "旋转 " + record.rotationDegrees() + "°";
+                state.setText(badge);
+                date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(record.savedAt())));
+            } else {
+                state.setText("修图");
+                date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(member.edited().linkedAt())));
+            }
 
             image.setImageDrawable(null);
             image.setBackgroundResource(R.drawable.bg_gallery_photo);
-            String expected = record.uri();
+            String expected = member.uri();
             image.setTag(expected);
-            Uri uri = record.mediaUri();
+            Uri uri = Uri.parse(expected);
             thumbnails.execute(() -> {
                 try {
                     Bitmap bitmap = activity.getContentResolver().loadThumbnail(uri, new Size(420, 420), null);
@@ -143,6 +232,19 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<SavedPhotoAdap
             view.setBackgroundResource(R.drawable.bg_glass_chip);
             return view;
         }
+    }
+
+    private String groupDate(SavedPhotoGroups.Group group) {
+        if (group.capturedAt() != null && !group.capturedAt().isBlank()) {
+            try {
+                return DateFormat.getDateInstance(DateFormat.MEDIUM)
+                        .format(Date.from(Instant.parse(group.capturedAt())));
+            } catch (Exception ignored) {}
+        }
+        if (group.activityAt() > 0) {
+            return DateFormat.getDateInstance(DateFormat.MEDIUM).format(new Date(group.activityAt()));
+        }
+        return "日期未知";
     }
 
     private int dp(int value) {
