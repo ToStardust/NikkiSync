@@ -309,3 +309,9 @@ console.log('M2.4.3 Saved: grouped originals + manually linked edited variants +
 console.log('M2.5 profile: UID + library + paired-device summary')
 console.log('M2.5.1 profile: UID copy + version/coverage trends + top outfits + dictionary status')
 console.log('M2.5.2 profile: clickable top outfit trends deep-link into gallery search')
+
+expect(
+  mainActivity.indexOf('io.shutdownNow()') < mainActivity.indexOf('editedVariantStore.close()')
+    && mainActivity.indexOf('io.shutdownNow()') < mainActivity.indexOf('savedMetadataSnapshotStore.close()'),
+  'Saved stores must close only after background work is stopped'
+)
