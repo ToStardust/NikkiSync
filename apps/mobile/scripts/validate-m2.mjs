@@ -38,6 +38,11 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoVerifier.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoCollection.java',
   'app/src/main/java/app/nikkisync/mobile/storage/SavedViewState.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/EditedVariantStore.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedMetadataSnapshotStore.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoGroups.java',
+  'app/src/main/java/app/nikkisync/mobile/storage/EditedMediaAccess.java',
+  'app/src/main/java/app/nikkisync/mobile/ui/SavedMetadataText.java',
   'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
@@ -277,3 +282,11 @@ console.log('M2.4.2 Saved: high-confidence historical export recovery')
 console.log('M2.5 profile: UID + library + paired-device summary')
 console.log('M2.5.1 profile: UID copy + version/coverage trends + top outfits + dictionary status')
 console.log('M2.5.2 profile: clickable top outfit trends deep-link into gallery search')
+
+const mobileGradle = text('app/build.gradle.kts')
+const editedMediaAccess = text('app/src/main/java/app/nikkisync/mobile/storage/EditedMediaAccess.java')
+expect(mobileGradle.includes('androidx.activity:activity:1.13.0'), 'edited-photo linking needs stable AndroidX Activity Photo Picker support')
+expect(mainActivity.includes('PickMultipleVisualMedia'), 'Saved edited variants must use the system multi-photo picker')
+expect(mainActivity.includes('PickVisualMedia.ImageOnly'), 'edited-variant picker must accept images only')
+expect(editedMediaAccess.includes('takePersistableUriPermission'), 'selected edit URIs must request persistent read access')
+expect(!manifest.includes('READ_MEDIA_IMAGES'), 'manual edit linking must not request broad gallery read permission')
