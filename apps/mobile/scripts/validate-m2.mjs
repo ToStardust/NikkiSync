@@ -315,3 +315,8 @@ expect(
     && mainActivity.indexOf('io.shutdownNow()') < mainActivity.indexOf('savedMetadataSnapshotStore.close()'),
   'Saved stores must close only after background work is stopped'
 )
+
+expect(
+  mainActivity.includes('new ActivityResultContracts.PickMultipleVisualMedia(MediaStore.getPickImagesMaxLimit())'),
+  'multi-photo picker must use the Java maxItems constructor'
+)
