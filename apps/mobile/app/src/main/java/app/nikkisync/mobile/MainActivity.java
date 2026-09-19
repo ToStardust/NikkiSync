@@ -59,6 +59,7 @@ import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.storage.SavedPhotoCollection;
 import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 import app.nikkisync.mobile.storage.SavedPhotoGroups;
+import app.nikkisync.mobile.storage.SavedMetadataSnapshotStore;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
 import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
@@ -105,6 +106,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private SavedPhotoStore savedPhotoStore;
     private SavedPhotoHealthStore savedPhotoHealthStore;
     private EditedVariantStore editedVariantStore;
+    private SavedMetadataSnapshotStore savedMetadataSnapshotStore;
     private DeviceIdentity identity;
     private NsdDiscovery discovery;
     private NikkiSyncClient client;
@@ -158,6 +160,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         savedPhotoStore = new SavedPhotoStore(this);
         savedPhotoHealthStore = new SavedPhotoHealthStore(this);
         editedVariantStore = new EditedVariantStore(this);
+        savedMetadataSnapshotStore = new SavedMetadataSnapshotStore(this);
         try { identity = DeviceIdentity.getOrCreate(this); }
         catch (Exception error) {
             new AlertDialog.Builder(this).setTitle("设备身份初始化失败").setMessage(error.toString()).setPositiveButton("退出", (d, w) -> finish()).show();
@@ -184,6 +187,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if (discovery != null) discovery.stop();
         if (imageLoader != null) imageLoader.shutdown();
         if (savedAdapter != null) savedAdapter.shutdown();
+        if (editedVariantStore != null) editedVariantStore.close();
+        if (savedMetadataSnapshotStore != null) savedMetadataSnapshotStore.close();
         io.shutdownNow();
         super.onDestroy();
     }
@@ -930,6 +935,18 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         });
         info.addView(openSystem, buttonLp);
 
+        Button linkEdit = button("关联修图");
+        LinearLayout.LayoutParams linkEditLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        linkEditLp.topMargin = dp(6);
+        linkEdit.setOnClickListener(v -> {
+            dialog.dismiss();
+            startEditedPhotoLink(record);
+        });
+        info.addView(linkEdit, linkEditLp);
+
         AssetSummary source = findAsset(record.assetId());
         if (source != null) {
             Button sourceButton = button("查看源照片");
@@ -965,7 +982,223 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void showEditedPhotoDetails(EditedVariantStore.Variant variant) {
-        toast("修图详情正在准备");
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(getColor(R.color.app_background));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(12), dp(14), dp(24));
+        scroll.addView(body);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(text("修图版", 20, true, getColor(R.color.text_primary)),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button close = button("完成");
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close);
+        body.addView(header);
+
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setBackgroundResource(R.drawable.bg_gallery_photo);
+        preview.setClipToOutline(true);
+        int previewSize = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(28));
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                previewSize
+        );
+        previewLp.topMargin = dp(10);
+        body.addView(preview, previewLp);
+
+        io.execute(() -> {
+            try {
+                android.graphics.Bitmap bitmap = getContentResolver().loadThumbnail(
+                        Uri.parse(variant.uri()), new Size(1200, 1200), null);
+                main.post(() -> preview.setImageBitmap(bitmap));
+            } catch (Exception ignored) {
+                main.post(() -> preview.setImageDrawable(null));
+            }
+        });
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(dp(14), dp(14), dp(14), dp(14));
+        info.setBackgroundResource(R.drawable.bg_glass_card);
+        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        infoLp.topMargin = dp(10);
+        body.addView(info, infoLp);
+
+        SavedPhotoHealthStore.Entry healthEntry = savedHealth.get(variant.uri());
+        boolean missing = healthEntry != null && healthEntry.isMissing();
+        String linkedAt = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(new Date(variant.linkedAt()));
+        String detail = "状态：" + (missing ? "文件不可访问" : "可访问")
+                + "\n关联时间：" + linkedAt
+                + (variant.displayName() == null ? "" : "\n文件：" + variant.displayName())
+                + (variant.mimeType() == null ? "" : "\n类型：" + variant.mimeType())
+                + "\n来源 Asset：" + variant.assetId();
+        info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
+
+        TextView params = text("正在读取关联照片参数…", 13, false, getColor(R.color.text_secondary));
+        params.setPadding(0, dp(12), 0, dp(8));
+        info.addView(params);
+
+        SavedMetadataSnapshotStore.Snapshot cached =
+                savedMetadataSnapshotStore == null ? null : savedMetadataSnapshotStore.get(variant.assetId());
+        if (cached != null) params.setText(savedMetadataDetail(cached.metadataJson()));
+        else params.setText("暂无离线参数快照。连接已配对电脑后会自动读取。");
+
+        AssetSummary currentSource = findAsset(variant.assetId());
+        NikkiSyncClient currentClient = client;
+        if (currentClient != null) {
+            io.execute(() -> {
+                try {
+                    AssetDetail online = currentClient.asset(variant.assetId());
+                    String capturedAt = currentSource != null
+                            ? currentSource.capturedAt()
+                            : cached == null ? null : cached.capturedAt();
+                    String gameVersion = currentSource != null
+                            ? currentSource.gameVersion()
+                            : cached == null ? null : cached.gameVersion();
+                    cacheMetadataSnapshot(variant.assetId(), capturedAt, gameVersion, online);
+                    main.post(() -> params.setText(savedMetadataDetail(online.metadataJson())));
+                } catch (Exception error) {
+                    if (cached == null) {
+                        main.post(() -> params.setText("参数读取失败：" + message(error)));
+                    }
+                }
+            });
+        }
+
+        SavedPhotoStore.Record original = findOriginalSavedRecord(variant.assetId());
+        Button originalButton = button(original == null ? "原始保存图记录不存在" : "查看原始保存图");
+        originalButton.setEnabled(original != null);
+        LinearLayout.LayoutParams originalLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        originalLp.topMargin = dp(8);
+        originalButton.setOnClickListener(v -> {
+            if (original == null) return;
+            dialog.dismiss();
+            showSavedPhotoDetails(original);
+        });
+        info.addView(originalButton, originalLp);
+
+        AssetSummary source = findAsset(variant.assetId());
+        if (source != null) {
+            Button sourceButton = button("查看源照片");
+            LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            sourceLp.topMargin = dp(6);
+            sourceButton.setOnClickListener(v -> {
+                dialog.dismiss();
+                showViewer(source);
+            });
+            info.addView(sourceButton, sourceLp);
+        }
+
+        Button unlink = button("解除关联");
+        LinearLayout.LayoutParams unlinkLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        unlinkLp.topMargin = dp(8);
+        unlink.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("解除修图关联？")
+                .setMessage("只会移除 NikkiSync 内的关联，不会删除或修改系统相册里的图片。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("解除关联", (d, which) -> {
+                    String uri = variant.uri();
+                    boolean removed = editedVariantStore.unlink(variant.variantId());
+                    if (!removed) {
+                        toast("关联记录已不存在");
+                        return;
+                    }
+                    savedPhotoHealthStore.remove(uri);
+                    savedHealth.remove(uri);
+                    if (editedVariantStore.findByUri(uri) == null && !isOriginalSavedUri(uri)) {
+                        try {
+                            getContentResolver().releasePersistableUriPermission(
+                                    Uri.parse(uri),
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        } catch (Exception ignored) {}
+                    }
+                    dialog.dismiss();
+                    refreshSavedPhotos();
+                    toast("已解除关联，系统相册中的图片未删除");
+                })
+                .show());
+        info.addView(unlink, unlinkLp);
+
+        dialog.setContentView(scroll);
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+    }
+
+    private SavedPhotoStore.Record findOriginalSavedRecord(String assetId) {
+        SavedPhotoStore.Record fallback = null;
+        for (SavedPhotoStore.Record record : savedPhotoStore.load()) {
+            if (!record.assetId().equals(assetId)) continue;
+            if (fallback == null) fallback = record;
+            SavedPhotoHealthStore.Entry health = savedHealth.get(record.uri());
+            if (health == null || !health.isMissing()) return record;
+        }
+        return fallback;
+    }
+
+    private boolean isOriginalSavedUri(String uri) {
+        for (SavedPhotoStore.Record record : savedPhotoStore.load()) {
+            if (record.uri().equals(uri)) return true;
+        }
+        return false;
+    }
+
+    private String savedMetadataDetail(String metadataJson) {
+        StringBuilder out = new StringBuilder(SavedMetadataText.summary(metadataJson));
+        List<String> clothes = SavedMetadataText.clothingLines(metadataJson);
+        if (!clothes.isEmpty()) {
+            out.append("\n\n穿搭明细");
+            for (String clothing : clothes) out.append("\n· ").append(clothing);
+        }
+        return out.toString();
+    }
+
+    private void cacheMetadataSnapshot(
+            String assetId,
+            String capturedAt,
+            String gameVersion,
+            AssetDetail detail
+    ) {
+        if (savedMetadataSnapshotStore == null || detail == null
+                || detail.metadataJson() == null || detail.metadataJson().isBlank()) return;
+        SavedMetadataSnapshotStore.Snapshot previous = savedMetadataSnapshotStore.get(assetId);
+        String finalCapturedAt = capturedAt != null && !capturedAt.isBlank()
+                ? capturedAt
+                : previous == null ? null : previous.capturedAt();
+        String finalGameVersion = gameVersion != null && !gameVersion.isBlank()
+                ? gameVersion
+                : previous == null ? null : previous.gameVersion();
+        savedMetadataSnapshotStore.put(new SavedMetadataSnapshotStore.Snapshot(
+                assetId,
+                detail.metadataJson(),
+                finalCapturedAt,
+                finalGameVersion,
+                System.currentTimeMillis()
+        ));
     }
 
     private AssetSummary findAsset(String assetId) {
@@ -987,7 +1220,72 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void handleEditedPhotoSelection(List<Uri> uris) {
-        if (uris == null || uris.isEmpty()) pendingEditedLinkSource = null;
+        SavedPhotoStore.Record source = pendingEditedLinkSource;
+        pendingEditedLinkSource = null;
+        if (source == null || uris == null || uris.isEmpty()) return;
+
+        List<Uri> selected = new ArrayList<>(uris);
+        io.execute(() -> {
+            int added = 0;
+            int duplicates = 0;
+            int conflicts = 0;
+            int limitedAccess = 0;
+            long baseTime = System.currentTimeMillis();
+
+            for (int index = 0; index < selected.size(); index++) {
+                Uri uri = selected.get(index);
+                if (uri == null) continue;
+                try {
+                    EditedMediaAccess.Info media = EditedMediaAccess.describeAndPersist(this, uri);
+                    if (!media.persistGranted()) limitedAccess++;
+                    EditedVariantStore.LinkResult result = editedVariantStore.link(
+                            source.assetId(),
+                            source.uri(),
+                            media.uri(),
+                            baseTime + index,
+                            media.displayName(),
+                            media.mimeType()
+                    );
+                    if (result.status() == EditedVariantStore.LinkStatus.ADDED) added++;
+                    else if (result.status() == EditedVariantStore.LinkStatus.DUPLICATE) duplicates++;
+                    else conflicts++;
+                } catch (Exception ignored) {
+                    conflicts++;
+                }
+            }
+
+            NikkiSyncClient current = client;
+            if (current != null) {
+                try {
+                    AssetDetail detail = current.asset(source.assetId());
+                    cacheMetadataSnapshot(source.assetId(), source.capturedAt(), source.gameVersion(), detail);
+                } catch (Exception ignored) {}
+            }
+
+            int finalAdded = added;
+            int finalDuplicates = duplicates;
+            int finalConflicts = conflicts;
+            int finalLimitedAccess = limitedAccess;
+            main.post(() -> {
+                refreshSavedPhotos();
+                StringBuilder result = new StringBuilder();
+                if (finalAdded > 0) result.append("已关联 ").append(finalAdded).append(" 张修图");
+                if (finalDuplicates > 0) {
+                    if (result.length() > 0) result.append("，");
+                    result.append("跳过 ").append(finalDuplicates).append(" 张重复图片");
+                }
+                if (finalConflicts > 0) {
+                    if (result.length() > 0) result.append("，");
+                    result.append(finalConflicts).append(" 张已关联到其他照片");
+                }
+                if (finalLimitedAccess > 0) {
+                    if (result.length() > 0) result.append("。");
+                    result.append("部分图片的长期访问权限由系统相册提供方决定");
+                }
+                if (result.length() == 0) result.append("没有新增关联");
+                toast(result.toString());
+            });
+        });
     }
 
     private void startPairScanner() {
@@ -1118,6 +1416,12 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     }
 
                     savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
+                    try {
+                        AssetDetail savedDetail = current.asset(asset.assetId());
+                        cacheMetadataSnapshot(asset.assetId(), asset.capturedAt(), asset.gameVersion(), savedDetail);
+                    } catch (Exception ignored) {
+                        // Saving the user's media succeeds independently from metadata-cache refresh.
+                    }
                     success++;
                 } catch (Exception ignored) {
                     failure++;
@@ -1231,6 +1535,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         io.execute(() -> {
             try {
                 AssetDetail detail = client.asset(asset.assetId());
+                cacheMetadataSnapshot(asset.assetId(), asset.capturedAt(), asset.gameVersion(), detail);
                 detailHolder[0] = detail;
                 main.post(() -> {
                     params.setText(metadataSummary(detail));
