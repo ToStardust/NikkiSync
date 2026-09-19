@@ -60,7 +60,7 @@ import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
 import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
-import app.nikkisync.mobile.ui.SavedPhotoAdapter;
+import app.nikkisync.mobile.ui.SavedPhotoAdapter;\nimport app.nikkisync.mobile.ui.SavedMetadataText;
 import app.nikkisync.mobile.ui.SuitSearchDialog;
 
 import org.json.JSONArray;
@@ -1316,44 +1316,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     }
 
     private String metadataSummary(AssetDetail detail) {
-        if (detail.metadataJson() == null) return "暖暖原生参数：未检测到\nNikkiSync 参数：暂无";
-        try {
-            JSONObject metadata = new JSONObject(detail.metadataJson());
-            JSONObject raw = metadata.optJSONObject("raw"); JSONObject camera = metadata.optJSONObject("camera");
-            JSONObject filter = metadata.optJSONObject("filter"); JSONObject lighting = metadata.optJSONObject("lighting");
-            JSONObject dressing = metadata.optJSONObject("dressing");
-            JSONArray clothes = dressing == null ? null : dressing.optJSONArray("clothes");
-            JSONObject resolver = raw == null ? null : raw.optJSONObject("resolver");
-            boolean nativeDetected = raw != null && raw.optString("nativeParamToken", "").length() == 44;
-            StringBuilder out = new StringBuilder();
-            out.append(nativeDetected ? "暖暖原生参数：已读取" : "暖暖原生参数：未检测到");
-            boolean hasCanonical = camera != null && camera.length() > 0;
-            if (hasCanonical) {
-                appendParam(out, camera, "focalLength", "焦距"); appendParam(out, camera, "exposure", "曝光");
-                appendParam(out, camera, "brightness", "亮度"); appendParam(out, camera, "contrast", "对比度");
-                appendParam(out, camera, "saturation", "饱和度"); appendParam(out, camera, "vibrance", "鲜艳度");
-                appendParam(out, camera, "highlights", "高光"); appendParam(out, camera, "shadows", "阴影");
-            }
-            if (filter != null && filter.length() > 0) {
-                hasCanonical = true; appendMetadataIdStrength(out, filter, "滤镜");
-            }
-            if (lighting != null && lighting.length() > 0) {
-                hasCanonical = true; appendMetadataIdStrength(out, lighting, "光照");
-            }
-            if (clothes != null && clothes.length() > 0) {
-                hasCanonical = true; out.append("\n穿搭：").append(clothes.length()).append(" 件");
-            }
-            if (hasCanonical) return out.toString();
-
-            String resolverStatus = resolver == null ? "" : resolver.optString("status", "");
-            if ("resolved".equals(resolverStatus)) return out.append("\nNikkiSync 参数：已解析").toString();
-            if ("failed".equals(resolverStatus)) {
-                String reason = resolver.optString("error", "解析失败").replace('\n', ' ').replace('\r', ' ').trim();
-                if (reason.length() > 80) reason = reason.substring(0, 80);
-                return out.append("\nNikkiSync 参数：解析失败").append(reason.isEmpty() ? "" : "（" + reason + "）").toString();
-            }
-            return out.append(nativeDetected ? "\nNikkiSync 参数：解析中" : "\nNikkiSync 参数：暂无").toString();
-        } catch (Exception error) { return "参数数据损坏：" + message(error); }
+        return SavedMetadataText.summary(detail == null ? null : detail.metadataJson());
     }
 
     private static void appendMetadataIdStrength(StringBuilder out, JSONObject object, String label) {
