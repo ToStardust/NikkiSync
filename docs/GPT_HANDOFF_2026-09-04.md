@@ -352,6 +352,7 @@ tools/m4-2-local-dictionary-probe/cue4parse-spike/out/
 - `9e1a5c743f1289ed7bdec0d8bbb6e7bf24742d0a` — group projection into Saved page
 - `1ce856a0884f51fadb9db8340b10e8d8ee3423fb` — link/detail/unlink/offline snapshot UI
 - `0d13921fc24a3e1a187a2b43a3769cc3574f3362` — safe background/store shutdown order
+- `c03bd7e00e0bafba1a9da7db4b7cad508779f0aa` — use Java-valid `PickMultipleVisualMedia(maxItems)` constructor with system photo-picker limit
 
 TDD RED commits include:
 
@@ -362,6 +363,7 @@ TDD RED commits include:
 - `1cc9151151125b33a81a3d03d9f66a2f2a2e56b8`
 - `52228edcea50ea7861fb27befdeecc5d03880eed`
 - lifecycle RED：`c4e1b2e60a0214ba4200c0549dd4700eb24344c8`
+- Photo Picker Java constructor RED：`0bc262402ae5e6e7ad0ce2e40b489b8bd84eb4a7`
 
 ### 当前验证事实
 
@@ -372,6 +374,8 @@ TDD RED commits include:
 - 未发现重复 import。
 - 未发现 `ContentResolver.delete` / `getContentResolver().delete` 媒体删除路径。
 - lifecycle shutdown-order RED 条件在生产修复前为 false，修复后为 true。
+- Photo Picker Java API 复核确认 `PickMultipleVisualMedia` 的 public constructor 需要 `int maxItems`；源码已改为 `MediaStore.getPickImagesMaxLimit()`，对应静态断言修复前 false、修复后 true。
+- `EditedVariantStoreTest` 与 `SavedMetadataSnapshotStoreTest` 已增加每用例后的 SQLite helper close，避免测试间数据库连接污染。
 
 **不要把以上静态检查写成 Android 编译通过。**
 
@@ -392,6 +396,8 @@ TDD RED commits include:
 - 真机 Photo Picker / URI 长期访问 / 离线参数 / 解除关联验收
 
 不要把“workflow conclusion=failure”误写成源码测试失败：这几次 workflow 根本没有开始任何 step。
+
+最新无 runner 的运行：`35457735779`（head `bd4c6a7c1f9cb5407394f57c6524782244490c60`），`android` 与 `node-regression` 均为 `runner_id=0`、0 steps。
 
 此前 Android workflow 还曾遇到 `android-actions/setup-android@v3` 请求已移除的 SDK `tools` 包。工作流现在显式只请求 `platform-tools`，但由于当前 runner 未分配，这一修正也尚未获得新的 Actions 运行证明。
 
