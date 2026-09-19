@@ -1,7 +1,6 @@
 package app.nikkisync.mobile;
 
 import android.Manifest;
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Intent;
@@ -27,6 +26,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.PickVisualMediaRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -51,6 +54,8 @@ import app.nikkisync.mobile.net.NsdDiscovery;
 import app.nikkisync.mobile.net.RealtimeWebSocket;
 import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
+import app.nikkisync.mobile.storage.EditedMediaAccess;
+import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.storage.SavedPhotoCollection;
 import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
@@ -76,7 +81,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class MainActivity extends Activity implements NsdDiscovery.Listener {
+public final class MainActivity extends ComponentActivity implements NsdDiscovery.Listener {
     private static final int NEARBY_PERMISSION = 401;
     private static final int PAIR_QR_SCAN = 402;
     private static final int TAB_GALLERY = 0;
@@ -98,6 +103,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private ServerStore serverStore;
     private SavedPhotoStore savedPhotoStore;
     private SavedPhotoHealthStore savedPhotoHealthStore;
+    private EditedVariantStore editedVariantStore;
     private DeviceIdentity identity;
     private NsdDiscovery discovery;
     private NikkiSyncClient client;
@@ -105,6 +111,9 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
     private PairedServer pairedServer;
     private ProfileStatsResponse profileStats;
     private boolean profileStatsLoading;
+    private SavedPhotoStore.Record pendingEditedLinkSource;
+    private final ActivityResultLauncher<PickVisualMediaRequest> editedPhotoPicker =
+            registerForActivityResult(new ActivityResultContracts.PickMultipleVisualMedia(), this::handleEditedPhotoSelection);
 
     private TextView titleLabel;
     private TextView status;
@@ -147,6 +156,7 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         serverStore = new ServerStore(this);
         savedPhotoStore = new SavedPhotoStore(this);
         savedPhotoHealthStore = new SavedPhotoHealthStore(this);
+        editedVariantStore = new EditedVariantStore(this);
         try { identity = DeviceIdentity.getOrCreate(this); }
         catch (Exception error) {
             new AlertDialog.Builder(this).setTitle("设备身份初始化失败").setMessage(error.toString()).setPositiveButton("退出", (d, w) -> finish()).show();
@@ -937,6 +947,17 @@ public final class MainActivity extends Activity implements NsdDiscovery.Listene
         if (intent == null || intent.getData() == null) return;
         String raw = intent.getDataString();
         if (raw != null && raw.startsWith("nikki-sync://pair?")) beginPair(raw);
+    }
+
+    private void startEditedPhotoLink(SavedPhotoStore.Record original) {
+        pendingEditedLinkSource = original;
+        editedPhotoPicker.launch(new PickVisualMediaRequest.Builder()
+                .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
+                .build());
+    }
+
+    private void handleEditedPhotoSelection(List<Uri> uris) {
+        if (uris == null || uris.isEmpty()) pendingEditedLinkSource = null;
     }
 
     private void startPairScanner() {
