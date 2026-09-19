@@ -301,3 +301,9 @@ expect(mainActivity.includes('savedAdapter.isHeader(position) ? 3 : 1'),
   'Saved group headers must span the full three-column grid')
 expect(mainActivity.includes('SavedPhotoGroups.select'),
   'Saved refresh must combine original records and edited variants')
+
+expect(mainActivity.includes('"关联修图"'), 'Saved original detail needs edited-photo linking action')
+expect(mainActivity.includes('"解除关联"'), 'edited variant detail needs unlink action')
+expect(mainActivity.includes('"查看原始保存图"'), 'edited variant must link back to an original Saved item')
+expect(mainActivity.includes('SavedMetadataSnapshotStore'), 'Saved details need offline metadata snapshots')
+expect(!mainActivity.includes('getContentResolver().delete('), 'unlinking an edit must never delete system-gallery media')
