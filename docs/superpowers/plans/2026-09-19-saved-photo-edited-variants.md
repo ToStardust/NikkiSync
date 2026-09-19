@@ -454,12 +454,52 @@ expect(mainActivity.includes('takePersistableUriPermission') || editedMediaAcces
 expect(!manifest.includes('READ_MEDIA_IMAGES'), 'manual edit linking must not request broad gallery read permission')
 ```
 
-- [ ] **Step 2: Write focused Robolectric test for URI metadata and grant failure**
+- [ ] **Step 2: Write focused unit test for URI metadata and grant failure**
 
-Use a small fake/shadow provider or Robolectric ContentResolver registration to verify:
-- display name and MIME type are returned when query succeeds;
-- a `SecurityException` from `takePersistableUriPermission` yields `persistGranted=false` but still returns an `Info` record;
-- no delete operation is invoked.
+Make `EditedMediaAccess` expose a package-private test seam:
+
+```java
+interface ResolverOps {
+    void persist(Uri uri);
+    String displayName(Uri uri);
+    String mimeType(Uri uri);
+}
+static Info describeAndPersist(ResolverOps ops, Uri uri) {
+    boolean persisted = true;
+    try { ops.persist(uri); }
+    catch (SecurityException ignored) { persisted = false; }
+    return new Info(uri.toString(), ops.displayName(uri), ops.mimeType(uri), persisted);
+}
+```
+
+Then test with an in-memory fake:
+
+```java
+@Test public void grantFailureStillReturnsLinkableMediaInfo() {
+    EditedMediaAccess.ResolverOps ops = new EditedMediaAccess.ResolverOps() {
+        @Override public void persist(Uri uri) { throw new SecurityException("not persistable"); }
+        @Override public String displayName(Uri uri) { return "retouched.jpg"; }
+        @Override public String mimeType(Uri uri) { return "image/jpeg"; }
+    };
+
+    var info = EditedMediaAccess.describeAndPersist(ops, Uri.parse("content://edit/1"));
+    assertEquals("content://edit/1", info.uri());
+    assertEquals("retouched.jpg", info.displayName());
+    assertEquals("image/jpeg", info.mimeType());
+    assertFalse(info.persistGranted());
+}
+
+@Test public void successfulGrantIsReported() {
+    EditedMediaAccess.ResolverOps ops = new EditedMediaAccess.ResolverOps() {
+        @Override public void persist(Uri uri) {}
+        @Override public String displayName(Uri uri) { return "retouched.heic"; }
+        @Override public String mimeType(Uri uri) { return "image/heic"; }
+    };
+    assertTrue(EditedMediaAccess.describeAndPersist(ops, Uri.parse("content://edit/2")).persistGranted());
+}
+```
+
+The public `describeAndPersist(Context, Uri)` adapts `ContentResolver` to this seam. There is deliberately no delete method in `ResolverOps`, so the link helper cannot delete user media.
 
 - [ ] **Step 3: Run RED**
 
@@ -747,7 +787,7 @@ git commit -m "feat(saved): link and inspect retouched photos"
 ### Task 7: Full regression, build, and acceptance evidence
 
 **Files:**
-- Modify if needed: `docs/GPT_HANDOFF_2026-09-04.md`
+- Modify: `docs/GPT_HANDOFF_2026-09-04.md`
 - Do not change production code merely to make a static validator happy; fix validator expectations when they are stale and production behavior is correct.
 
 **Interfaces:**
