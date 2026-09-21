@@ -66,6 +66,9 @@ import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
 import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
+import app.nikkisync.mobile.share.ShareCardExporter;
+import app.nikkisync.mobile.share.ShareCardPayload;
+import app.nikkisync.mobile.share.ShareCardPayloadBuilder;
 import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 import app.nikkisync.mobile.ui.SavedPhotoAdapter;\nimport app.nikkisync.mobile.ui.SavedMetadataText;
@@ -1532,6 +1535,15 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         edit.setEnabled(false);
         infoSheet.addView(edit);
 
+        Button shareCard = button("生成分享图");
+        shareCard.setEnabled(false);
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        shareLp.topMargin = dp(8);
+        infoSheet.addView(shareCard, shareLp);
+
         AssetDetail[] detailHolder = new AssetDetail[1];
         io.execute(() -> {
             try {
@@ -1542,6 +1554,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     params.setText(metadataSummary(detail));
                     renderClothingSection(asset, detail, clothingSection);
                     edit.setEnabled(true);
+                    shareCard.setEnabled(true);
                 });
             } catch (Exception error) {
                 main.post(() -> params.setText("参数读取失败：" + message(error)));
@@ -1550,6 +1563,39 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         edit.setOnClickListener(v -> {
             if (detailHolder[0] != null) showMetadataEditor(asset, detailHolder[0], params, detailHolder);
+        });
+
+        shareCard.setOnClickListener(v -> {
+            AssetDetail detail = detailHolder[0];
+            NikkiSyncClient current = client;
+            if (detail == null || current == null) {
+                toast("照片参数尚未准备好");
+                return;
+            }
+            shareCard.setEnabled(false);
+            shareCard.setText("正在生成分享图…");
+            io.execute(() -> {
+                try {
+                    ShareCardPayload payload = ShareCardPayloadBuilder.build(
+                            asset.assetId(),
+                            asset.capturedAt(),
+                            asset.gameVersion(),
+                            detail.metadataJson()
+                    );
+                    Uri uri = ShareCardExporter.export(this, current, asset, detail, payload);
+                    main.post(() -> {
+                        shareCard.setEnabled(true);
+                        shareCard.setText("生成分享图");
+                        toast("分享图已保存到系统相册");
+                    });
+                } catch (Exception error) {
+                    main.post(() -> {
+                        shareCard.setEnabled(true);
+                        shareCard.setText("生成分享图");
+                        toast("分享图生成失败：" + message(error));
+                    });
+                }
+            });
         });
 
         Button select = button("选择保存原图");
