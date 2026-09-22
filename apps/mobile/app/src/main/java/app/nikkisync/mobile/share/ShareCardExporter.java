@@ -11,13 +11,11 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
 
-import app.nikkisync.mobile.model.Models.AssetDetail;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.net.NikkiSyncClient;
 
@@ -41,7 +39,6 @@ public final class ShareCardExporter {
             Context context,
             NikkiSyncClient client,
             AssetSummary asset,
-            AssetDetail detail,
             ShareCardPayload payload
     ) throws Exception {
         Bitmap background = loadBackground(client, asset);
@@ -99,6 +96,7 @@ public final class ShareCardExporter {
             canvas.drawRect(0, 0, width, height, fallback);
             return;
         }
+
         float sourceRatio = bitmap.getWidth() / (float) bitmap.getHeight();
         float targetRatio = width / (float) height;
         Rect src;
@@ -111,9 +109,22 @@ public final class ShareCardExporter {
             int top = (bitmap.getHeight() - srcHeight) / 2;
             src = new Rect(0, top, bitmap.getWidth(), top + srcHeight);
         }
-        Paint blur = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        blur.setRenderEffect(RenderEffect.createBlurEffect(34f, 34f, Shader.TileMode.CLAMP));
-        canvas.drawBitmap(bitmap, src, new Rect(0, 0, width, height), blur);
+
+        // Share-card export is rendered off-screen, so do not depend on View/RenderNode RenderEffect.
+        // A strong downsample + filtered upscale produces a stable soft-focus background on API 33+.
+        int blurWidth = Math.max(1, width / 20);
+        int blurHeight = Math.max(1, height / 20);
+        Bitmap softened = Bitmap.createBitmap(blurWidth, blurHeight, Bitmap.Config.ARGB_8888);
+        try {
+            Canvas blurCanvas = new Canvas(softened);
+            Paint sampling = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            blurCanvas.drawBitmap(bitmap, src, new Rect(0, 0, blurWidth, blurHeight), sampling);
+
+            Paint upscale = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            canvas.drawBitmap(softened, null, new Rect(0, 0, width, height), upscale);
+        } finally {
+            softened.recycle();
+        }
     }
 
     private static void drawGlass(Canvas canvas, RectF rect) {
@@ -211,8 +222,10 @@ public final class ShareCardExporter {
 
     private static Bitmap loadBackground(NikkiSyncClient client, AssetSummary asset) {
         if (client == null || asset == null) return null;
-        String resourceId = asset.previewResourceId() != null ? asset.previewResourceId() : asset.thumbnailResourceId();
-        if (resourceId == null) return null;
+        String resourceId = nonBlank(asset.thumbnailResourceId())
+                ? asset.thumbnailResourceId()
+                : asset.previewResourceId();
+        if (!nonBlank(resourceId)) return null;
         HttpsURLConnection connection = null;
         try {
             connection = client.resource(asset.assetId(), resourceId);
