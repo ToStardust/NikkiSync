@@ -66,9 +66,7 @@ import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
 import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
-import app.nikkisync.mobile.share.ShareCardExporter;
-import app.nikkisync.mobile.share.ShareCardPayload;
-import app.nikkisync.mobile.share.ShareCardPayloadBuilder;
+import app.nikkisync.mobile.share.ShareCardExportCoordinator;
 import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
 import app.nikkisync.mobile.ui.SavedPhotoAdapter;
@@ -99,6 +97,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final AtomicBoolean syncing = new AtomicBoolean(false);
     private ImageLoader imageLoader;
+    private ShareCardExportCoordinator shareCardExportCoordinator;
     private final OriginalSaver originalSaver = new OriginalSaver();
     private final MotionPhotoSaver motionPhotoSaver = new MotionPhotoSaver();
     private final OppoLivePhotoSaver oppoLivePhotoSaver = new OppoLivePhotoSaver();
@@ -161,6 +160,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         imageLoader = new ImageLoader(this);
+        shareCardExportCoordinator = new ShareCardExportCoordinator(
+                this,
+                io,
+                command -> main.post(command)
+        );
         serverStore = new ServerStore(this);
         savedPhotoStore = new SavedPhotoStore(this);
         savedPhotoHealthStore = new SavedPhotoHealthStore(this);
@@ -940,6 +944,35 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         });
         info.addView(openSystem, buttonLp);
 
+        Button shareSaved = button(missing ? "原图不可访问，无法生成分享图" : "生成分享图");
+        shareSaved.setEnabled(!missing);
+        LinearLayout.LayoutParams shareSavedLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        shareSavedLp.topMargin = dp(6);
+        shareSaved.setOnClickListener(v -> {
+            SavedMetadataSnapshotStore.Snapshot snapshot =
+                    savedMetadataSnapshotStore == null ? null : savedMetadataSnapshotStore.get(record.assetId());
+            String metadataJson = snapshot == null ? null : snapshot.metadataJson();
+            String capturedAt = snapshot != null && snapshot.capturedAt() != null
+                    ? snapshot.capturedAt()
+                    : record.capturedAt();
+            String gameVersion = snapshot != null && snapshot.gameVersion() != null
+                    ? snapshot.gameVersion()
+                    : record.gameVersion();
+            exportLocalShareCard(
+                    shareSaved,
+                    record.mediaUri(),
+                    record.assetId(),
+                    capturedAt,
+                    gameVersion,
+                    metadataJson,
+                    snapshot == null
+            );
+        });
+        info.addView(shareSaved, shareSavedLp);
+
         Button linkEdit = button("关联修图");
         LinearLayout.LayoutParams linkEditLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1113,6 +1146,35 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             info.addView(sourceButton, sourceLp);
         }
 
+        Button shareEdited = button(missing ? "修图不可访问，无法生成分享图" : "生成分享图");
+        shareEdited.setEnabled(!missing);
+        LinearLayout.LayoutParams shareEditedLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        shareEditedLp.topMargin = dp(8);
+        shareEdited.setOnClickListener(v -> {
+            SavedMetadataSnapshotStore.Snapshot snapshot =
+                    savedMetadataSnapshotStore == null ? null : savedMetadataSnapshotStore.get(variant.assetId());
+            SavedPhotoStore.Record originalForShare = findOriginalSavedRecord(variant.assetId());
+            String capturedAt = snapshot != null && snapshot.capturedAt() != null
+                    ? snapshot.capturedAt()
+                    : originalForShare == null ? null : originalForShare.capturedAt();
+            String gameVersion = snapshot != null && snapshot.gameVersion() != null
+                    ? snapshot.gameVersion()
+                    : originalForShare == null ? null : originalForShare.gameVersion();
+            exportLocalShareCard(
+                    shareEdited,
+                    Uri.parse(variant.uri()),
+                    variant.assetId(),
+                    capturedAt,
+                    gameVersion,
+                    snapshot == null ? null : snapshot.metadataJson(),
+                    snapshot == null
+            );
+        });
+        info.addView(shareEdited, shareEditedLp);
+
         Button unlink = button("解除关联");
         LinearLayout.LayoutParams unlinkLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1170,6 +1232,84 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             if (record.uri().equals(uri)) return true;
         }
         return false;
+    }
+
+    private void exportRemoteShareCard(
+            Button button,
+            NikkiSyncClient current,
+            AssetSummary asset,
+            String metadataJson
+    ) {
+        setShareCardBusy(button, true);
+        shareCardExportCoordinator.exportRemote(
+                current,
+                asset,
+                metadataJson,
+                shareCardListener(button, false)
+        );
+    }
+
+    private void exportLocalShareCard(
+            Button button,
+            Uri backgroundUri,
+            String assetId,
+            String capturedAt,
+            String gameVersion,
+            String metadataJson,
+            boolean metadataMissing
+    ) {
+        setShareCardBusy(button, true);
+        shareCardExportCoordinator.exportLocal(
+                backgroundUri,
+                assetId,
+                capturedAt,
+                gameVersion,
+                metadataJson,
+                shareCardListener(button, metadataMissing)
+        );
+    }
+
+    private ShareCardExportCoordinator.Listener shareCardListener(Button button, boolean metadataMissing) {
+        return new ShareCardExportCoordinator.Listener() {
+            @Override public void onSuccess(Uri uri) {
+                setShareCardBusy(button, false);
+                showShareCardSuccess(uri, metadataMissing);
+            }
+
+            @Override public void onFailure(Exception error) {
+                setShareCardBusy(button, false);
+                toast("分享图生成失败：" + message(error));
+            }
+        };
+    }
+
+    private void setShareCardBusy(Button button, boolean busy) {
+        button.setEnabled(!busy);
+        button.setText(busy ? "正在生成分享图…" : "生成分享图");
+    }
+
+    private void showShareCardSuccess(Uri uri, boolean metadataMissing) {
+        String detail = metadataMissing
+                ? "已保存到 Pictures/NikkiSync/Share Cards。当前没有离线参数快照，因此这张图只包含现有基础信息。"
+                : "已保存到 Pictures/NikkiSync/Share Cards。";
+        new AlertDialog.Builder(this)
+                .setTitle("分享图已生成")
+                .setMessage(detail)
+                .setNegativeButton("完成", null)
+                .setPositiveButton("分享", (dialog, which) -> shareImage(uri))
+                .show();
+    }
+
+    private void shareImage(Uri uri) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("image/jpeg");
+            intent.putExtra(Intent.EXTRA_STREAM, uri);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(intent, "分享 NikkiSync 参数图"));
+        } catch (Exception error) {
+            toast("当前设备没有可用的分享应用");
+        }
     }
 
     private String savedMetadataDetail(String metadataJson) {
@@ -1573,30 +1713,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 toast("照片参数尚未准备好");
                 return;
             }
-            shareCard.setEnabled(false);
-            shareCard.setText("正在生成分享图…");
-            io.execute(() -> {
-                try {
-                    ShareCardPayload payload = ShareCardPayloadBuilder.build(
-                            asset.assetId(),
-                            asset.capturedAt(),
-                            asset.gameVersion(),
-                            detail.metadataJson()
-                    );
-                    ShareCardExporter.export(this, current, asset, payload);
-                    main.post(() -> {
-                        shareCard.setEnabled(true);
-                        shareCard.setText("生成分享图");
-                        toast("分享图已保存到系统相册");
-                    });
-                } catch (Exception error) {
-                    main.post(() -> {
-                        shareCard.setEnabled(true);
-                        shareCard.setText("生成分享图");
-                        toast("分享图生成失败：" + message(error));
-                    });
-                }
-            });
+            exportRemoteShareCard(shareCard, current, asset, detail.metadataJson());
         });
 
         Button select = button("选择保存原图");
