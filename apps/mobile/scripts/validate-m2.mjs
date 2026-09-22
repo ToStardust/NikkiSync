@@ -310,7 +310,10 @@ expect(mainActivity.includes('Intent.ACTION_SEND') && mainActivity.includes('Int
 expect(shareCardCoordinator.includes('exportRemote(') && shareCardCoordinator.includes('exportLocal('), 'share-card coordinator must support remote and local media')
 expect(shareCardPayloadBuilder.includes('dressing') && shareCardPayloadBuilder.includes('camera'), 'share-card payload must include outfit and camera metadata')
 expect(shareCardPayloadBuilder.includes('lighting') && shareCardPayloadBuilder.includes('filter'), 'share-card payload must include lighting/filter metadata')
-expect(shareCardExporter.includes('Pictures/NikkiSync/Share Cards'), 'share cards must stay in the dedicated MediaStore folder')
+expect(
+  shareCardExporter.includes('Environment.DIRECTORY_PICTURES + "/NikkiSync/Share Cards"'),
+  'share cards must stay in the dedicated MediaStore folder'
+)
 expect(shareCardExporter.includes('Bitmap.CompressFormat.JPEG') && shareCardExporter.includes('92'), 'share-card JPEG export contract changed unexpectedly')
 expect(shareCardExporter.includes('loadThumbnail(backgroundUri, new Size(1600, 1600), null)'), 'local share-card backgrounds need bounded thumbnail loading')
 expect(shareCardExporter.includes('asset.thumbnailResourceId()'), 'remote share-card backgrounds should prefer the bounded thumbnail resource')
