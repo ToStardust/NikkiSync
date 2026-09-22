@@ -71,7 +71,8 @@ import app.nikkisync.mobile.share.ShareCardPayload;
 import app.nikkisync.mobile.share.ShareCardPayloadBuilder;
 import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
-import app.nikkisync.mobile.ui.SavedPhotoAdapter;\nimport app.nikkisync.mobile.ui.SavedMetadataText;
+import app.nikkisync.mobile.ui.SavedPhotoAdapter;
+import app.nikkisync.mobile.ui.SavedMetadataText;
 import app.nikkisync.mobile.ui.SuitSearchDialog;
 
 import org.json.JSONArray;
@@ -1582,7 +1583,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                             asset.gameVersion(),
                             detail.metadataJson()
                     );
-                    Uri uri = ShareCardExporter.export(this, current, asset, detail, payload);
+                    ShareCardExporter.export(this, current, asset, payload);
                     main.post(() -> {
                         shareCard.setEnabled(true);
                         shareCard.setText("生成分享图");
