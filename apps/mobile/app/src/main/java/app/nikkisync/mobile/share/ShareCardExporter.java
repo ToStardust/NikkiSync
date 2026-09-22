@@ -15,6 +15,7 @@ import android.graphics.Shader;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.Size;
 
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.net.NikkiSyncClient;
@@ -45,7 +46,24 @@ public final class ShareCardExporter {
         Bitmap card = null;
         try {
             card = render(background, payload);
-            return save(context, asset, card);
+            return save(context, asset.assetId(), card);
+        } finally {
+            if (background != null && !background.isRecycled()) background.recycle();
+            if (card != null && !card.isRecycled()) card.recycle();
+        }
+    }
+
+    public static Uri export(
+            Context context,
+            Uri backgroundUri,
+            String assetId,
+            ShareCardPayload payload
+    ) throws Exception {
+        Bitmap background = loadBackground(context, backgroundUri);
+        Bitmap card = null;
+        try {
+            card = render(background, payload);
+            return save(context, assetId, card);
         } finally {
             if (background != null && !background.isRecycled()) background.recycle();
             if (card != null && !card.isRecycled()) card.recycle();
@@ -240,10 +258,44 @@ public final class ShareCardExporter {
         }
     }
 
-    private static Uri save(Context context, AssetSummary asset, Bitmap bitmap) throws Exception {
+    private static Bitmap loadBackground(Context context, Uri backgroundUri) {
+        if (context == null || backgroundUri == null) return null;
+        ContentResolver resolver = context.getContentResolver();
+        try {
+            return resolver.loadThumbnail(backgroundUri, new Size(1600, 1600), null);
+        } catch (Exception ignored) {
+            // Some persisted Photo Picker/document URIs do not implement loadThumbnail.
+        }
+
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream input = resolver.openInputStream(backgroundUri)) {
+            if (input == null) return null;
+            BitmapFactory.decodeStream(input, null, bounds);
+        } catch (Exception ignored) {
+            return null;
+        }
+
+        int sample = 1;
+        int maxDimension = Math.max(bounds.outWidth, bounds.outHeight);
+        while (maxDimension > 2400 && sample < 32) {
+            sample *= 2;
+            maxDimension /= 2;
+        }
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        try (InputStream input = resolver.openInputStream(backgroundUri)) {
+            return input == null ? null : BitmapFactory.decodeStream(input, null, options);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Uri save(Context context, String assetId, Bitmap bitmap) throws Exception {
         ContentResolver resolver = context.getContentResolver();
         ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, "NikkiSync-Share-" + safeId(asset.assetId()) + "-" + System.currentTimeMillis() + ".jpg");
+        values.put(MediaStore.Images.Media.DISPLAY_NAME, "NikkiSync-Share-" + safeId(assetId) + "-" + System.currentTimeMillis() + ".jpg");
         values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
         values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/NikkiSync/Share Cards");
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
