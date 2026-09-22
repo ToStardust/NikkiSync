@@ -43,6 +43,10 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoGroups.java',
   'app/src/main/java/app/nikkisync/mobile/storage/EditedMediaAccess.java',
   'app/src/main/java/app/nikkisync/mobile/ui/SavedMetadataText.java',
+  'app/src/main/java/app/nikkisync/mobile/share/ShareCardPayload.java',
+  'app/src/main/java/app/nikkisync/mobile/share/ShareCardPayloadBuilder.java',
+  'app/src/main/java/app/nikkisync/mobile/share/ShareCardExporter.java',
+  'app/src/main/java/app/nikkisync/mobile/share/ShareCardExportCoordinator.java',
   'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
@@ -293,6 +297,29 @@ expect(mainActivity.includes('"查看原始保存图"'), 'edited variant must li
 expect(mainActivity.includes('SavedMetadataSnapshotStore'), 'Saved details need offline metadata snapshots')
 expect(!mainActivity.includes('getContentResolver().delete('), 'unlinking an edit must never delete system-gallery media')
 
+const shareCardPayloadBuilder = text('app/src/main/java/app/nikkisync/mobile/share/ShareCardPayloadBuilder.java')
+const shareCardExporter = text('app/src/main/java/app/nikkisync/mobile/share/ShareCardExporter.java')
+const shareCardCoordinator = text('app/src/main/java/app/nikkisync/mobile/share/ShareCardExportCoordinator.java')
+expect(mainActivity.includes('ShareCardExportCoordinator'), 'share-card UI must use the presentation coordinator boundary')
+expect(!mainActivity.includes('import app.nikkisync.mobile.share.ShareCardExporter;'), 'MainActivity must not own share-card rendering/export internals')
+expect(!mainActivity.includes('import app.nikkisync.mobile.share.ShareCardPayloadBuilder;'), 'MainActivity must not build share-card payloads directly')
+expect(mainActivity.includes('exportRemoteShareCard(shareCard, current, asset, detail.metadataJson())'), 'source-photo share-card entry is missing')
+expect(mainActivity.includes('shareSaved') && mainActivity.includes('record.mediaUri()'), 'Saved original share-card entry is missing')
+expect(mainActivity.includes('shareEdited') && mainActivity.includes('Uri.parse(variant.uri())'), 'edited-variant share-card entry is missing')
+expect(mainActivity.includes('Intent.ACTION_SEND') && mainActivity.includes('Intent.EXTRA_STREAM'), 'generated share cards need a system share action')
+expect(shareCardCoordinator.includes('exportRemote(') && shareCardCoordinator.includes('exportLocal('), 'share-card coordinator must support remote and local media')
+expect(shareCardPayloadBuilder.includes('dressing') && shareCardPayloadBuilder.includes('camera'), 'share-card payload must include outfit and camera metadata')
+expect(shareCardPayloadBuilder.includes('lighting') && shareCardPayloadBuilder.includes('filter'), 'share-card payload must include lighting/filter metadata')
+expect(
+  shareCardExporter.includes('Environment.DIRECTORY_PICTURES + "/NikkiSync/Share Cards"'),
+  'share cards must stay in the dedicated MediaStore folder'
+)
+expect(shareCardExporter.includes('Bitmap.CompressFormat.JPEG') && shareCardExporter.includes('92'), 'share-card JPEG export contract changed unexpectedly')
+expect(shareCardExporter.includes('loadThumbnail(backgroundUri, new Size(1600, 1600), null)'), 'local share-card backgrounds need bounded thumbnail loading')
+expect(shareCardExporter.includes('asset.thumbnailResourceId()'), 'remote share-card backgrounds should prefer the bounded thumbnail resource')
+expect(!shareCardExporter.includes('import android.graphics.RenderEffect;'), 'off-screen share-card export must not depend on RenderEffect')
+expect(!shareCardExporter.includes('.setRenderEffect('), 'off-screen share-card export must not call View/RenderNode-only RenderEffect APIs')
+
 console.log('M2 mobile source contract: OK')
 console.log(`validated files: ${required.length}`)
 console.log('transport: pinned HTTPS + Ed25519 signed requests + mDNS + WebSocket')
@@ -300,6 +327,7 @@ console.log('original export: MediaStore + SHA-256 verification + selected JPEG 
 console.log('clothing detail: canonical metadata + paired-PC thumbnail proxy + visible fallback')
 console.log('M2.3.1 UX: three-tab shell + RecyclerView version-first gallery contract')
 console.log('M2.3.2 UX: glass shell + rounded thumbnails + non-dimming selection contract')
+console.log('M2.3.2D share cards: structured metadata + offline Saved/edit export + static glass renderer')
 console.log('M2.3.3 search: ranked suit lookup + coverage + filters + history + preserved viewer context')
 console.log('M2.3.4 search: unified all/suit/clothing lookup + clothing photo grid contract')
 console.log('M2.4 Saved: local export provenance + three-column MediaStore history contract')
