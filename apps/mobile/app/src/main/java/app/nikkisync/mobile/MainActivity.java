@@ -35,6 +35,9 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import app.nikkisync.mobile.media.ImageLoader;
+import app.nikkisync.mobile.media.live.LivePhotoControls;
+import app.nikkisync.mobile.media.live.LivePhotoExporter;
+import app.nikkisync.mobile.media.live.LivePhotoProfile;
 import app.nikkisync.mobile.media.HuaweiMovingPhotoSaver;
 import app.nikkisync.mobile.media.MotionPhotoSaver;
 import app.nikkisync.mobile.media.OppoLivePhotoSaver;
@@ -56,7 +59,6 @@ import app.nikkisync.mobile.net.RealtimeWebSocket;
 import app.nikkisync.mobile.protocol.PairingUri;
 import app.nikkisync.mobile.security.DeviceIdentity;
 import app.nikkisync.mobile.storage.EditedMediaAccess;
-import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.storage.SavedPhotoCollection;
 import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 import app.nikkisync.mobile.storage.SavedPhotoGroups;
@@ -66,6 +68,7 @@ import app.nikkisync.mobile.storage.SavedPhotoRecovery;
 import app.nikkisync.mobile.storage.SavedPhotoVerifier;
 import app.nikkisync.mobile.storage.SavedViewState;
 import app.nikkisync.mobile.storage.ServerStore;
+import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.share.ShareCardExportCoordinator;
 import app.nikkisync.mobile.ui.ClothingSearchGrid;
 import app.nikkisync.mobile.ui.GalleryAdapter;
@@ -775,6 +778,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         savedHealth.clear();
         savedHealth.putAll(savedPhotoHealthStore.load());
+        savedAdapter.setHealth(savedHealth);
         updateSavedSummary(records, edits);
         updateSavedEmptyState();
 
@@ -784,16 +788,21 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         }
 
         List<String> uris = new ArrayList<>();
-        for (SavedPhotoStore.Record record : records) uris.add(record.uri());
         for (EditedVariantStore.Variant edit : edits) uris.add(edit.uri());
-        if (uris.isEmpty() || System.currentTimeMillis() - newestCheck < 30_000L) return;
+        boolean unchecked = records.stream().anyMatch(record -> !savedHealth.containsKey(record.uri()))
+                || uris.stream().anyMatch(uri -> !savedHealth.containsKey(uri));
+        if (records.isEmpty() && uris.isEmpty()) return;
+        if (!unchecked && System.currentTimeMillis() - newestCheck < 30_000L) return;
 
         io.execute(() -> {
             Map<String, SavedPhotoHealthStore.Entry> checked =
-                    SavedPhotoVerifier.verifyUris(this, savedPhotoHealthStore, uris);
+                    SavedPhotoVerifier.verify(this, savedPhotoHealthStore, records);
+            checked.putAll(SavedPhotoVerifier.verifyUris(this, savedPhotoHealthStore, uris));
             main.post(() -> {
+                if (isFinishing() || isDestroyed()) return;
                 savedHealth.clear();
                 savedHealth.putAll(checked);
+                savedAdapter.setHealth(savedHealth);
                 updateSavedSummary(records, edits);
             });
         });
@@ -846,9 +855,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     ) {
         if (savedSummary == null) return;
         int missing = 0;
+        int motionIncomplete = 0;
         for (SavedPhotoStore.Record record : allRecords) {
             SavedPhotoHealthStore.Entry entry = savedHealth.get(record.uri());
             if (entry != null && entry.isMissing()) missing++;
+            if (entry != null && entry.motionWarning() != null) motionIncomplete++;
         }
         for (EditedVariantStore.Variant edit : edits) {
             SavedPhotoHealthStore.Entry entry = savedHealth.get(edit.uri());
@@ -860,6 +871,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if (savedFilter == SavedViewState.FILTER_MOTION) summary += " · LIVE";
         else if (savedFilter == SavedViewState.FILTER_STILL) summary += " · 普通照片";
         if (missing > 0) summary += " · " + missing + " 条文件缺失";
+        if (motionIncomplete > 0) summary += " · " + motionIncomplete + " 条动态资源需检查";
         savedSummary.setText(summary);
     }
 
@@ -927,6 +939,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 + (record.capturedAt() == null ? "" : "\n拍摄时间：" + record.capturedAt())
                 + "\n来源 Asset：" + record.assetId();
         info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
+        LivePhotoControls.attachSaved(this, info, record, healthEntry);
 
         Button openSystem = button(missing ? "系统相册文件已不存在" : "在系统相册打开");
         openSystem.setEnabled(!missing);
@@ -1522,45 +1535,49 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void saveSelected() {
-        List<AssetSummary> selected = adapter.selectedItems(); NikkiSyncClient current = client;
+        List<AssetSummary> selected = new ArrayList<>(adapter.selectedItems()); NikkiSyncClient current = client;
         if (selected.isEmpty() || current == null) return;
+        // Snapshot UI-owned choices before worker access; each photo keeps its own rotation.
+        Map<String, Integer> rotationsSnapshot = new LinkedHashMap<>(rotationByAssetId);
+        LivePhotoProfile liveProfile = LivePhotoControls.selectedProfile(this);
         setBusy(true); saveButton.setEnabled(false); setStatus("正在保存 0 / " + selected.size());
         io.execute(() -> {
-            int success = 0; int failure = 0; boolean hadMotion = false;
+            int success = 0; int failure = 0; boolean savedMotion = false;
+            String firstFailure = null;
+            List<AssetSummary> completed = new ArrayList<>();
             for (int i = 0; i < selected.size(); i++) {
-                AssetSummary asset = selected.get(i); hadMotion |= asset.hasMotion();
+                if (Thread.currentThread().isInterrupted()) {
+                    failure += selected.size() - i;
+                    if (firstFailure == null) firstFailure = "保存已取消";
+                    break;
+                }
+                AssetSummary asset = selected.get(i);
                 int index = i + 1; main.post(() -> setStatus("正在保存 " + index + " / " + selected.size()));
                 try {
                     Uri savedUri;
                     String savedFormat;
-                    int savedRotation = 0;
+                    int savedRotation = rotationsSnapshot.getOrDefault(asset.assetId(), 0);
+                    LivePhotoExporter.Result liveResult = null;
 
                     if (asset.hasMotion()) {
-                        String manufacturer = ((android.os.Build.MANUFACTURER == null ? "" : android.os.Build.MANUFACTURER) + " " +
-                                (android.os.Build.BRAND == null ? "" : android.os.Build.BRAND)).toLowerCase(java.util.Locale.ROOT);
-                        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) {
-                            savedUri = vivoLivePhotoSaver.save(this, current, asset);
-                            savedFormat = "OriginOS LIVE";
-                        } else if (manufacturer.contains("huawei") || manufacturer.contains("honor")) {
-                            savedUri = huaweiMovingPhotoSaver.save(this, current, asset);
-                            savedFormat = "Huawei 动态照片";
-                        } else if (manufacturer.contains("oppo") || manufacturer.contains("oneplus") || manufacturer.contains("realme")) {
-                            savedUri = oppoLivePhotoSaver.save(this, current, asset);
-                            savedFormat = "ColorOS O-Live";
-                        } else if (manufacturer.contains("samsung")) {
-                            savedUri = samsungMotionPhotoSaver.save(this, current, asset);
-                            savedFormat = "Samsung Motion Photo";
-                        } else {
-                            savedUri = motionPhotoSaver.save(this, current, asset);
-                            savedFormat = "Android Motion Photo";
-                        }
+                        liveResult = LivePhotoExporter.save(this, current, asset, savedRotation, liveProfile,
+                                (stage, percent) -> main.post(() -> {
+                                    if (!isFinishing() && !isDestroyed())
+                                        setStatus("LIVE " + index + " / " + selected.size() + " · " + stage + " " + percent + "%");
+                                }));
+                        savedUri = liveResult.primaryUri();
+                        savedFormat = liveResult.savedFormat();
                     } else {
-                        savedRotation = rotationByAssetId.getOrDefault(asset.assetId(), 0);
                         savedUri = originalSaver.save(this, current, asset, savedRotation);
                         savedFormat = savedRotation == 0 ? "原始照片" : "原始照片 · EXIF 旋转";
                     }
 
-                    savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
+                    if (liveResult != null) {
+                        savedPhotoStore.recordMotion(asset, savedUri, liveResult.companionUris(), savedRotation,
+                                savedFormat, liveResult.profileId(), liveResult.presentationUs(), liveResult.timestampSource());
+                    } else {
+                        savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
+                    }
                     try {
                         AssetDetail savedDetail = current.asset(asset.assetId());
                         cacheMetadataSnapshot(asset.assetId(), asset.capturedAt(), asset.gameVersion(), savedDetail);
@@ -1568,18 +1585,28 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                         // Saving the user's media succeeds independently from metadata-cache refresh.
                     }
                     success++;
-                } catch (Exception ignored) {
+                    savedMotion |= liveResult != null;
+                    completed.add(asset);
+                } catch (Exception error) {
                     failure++;
+                    if (firstFailure == null) firstFailure = message(error);
                 }
             }
-            int saved = success, failed = failure; boolean motion = hadMotion;
+            int saved = success, failed = failure; boolean motion = savedMotion;
+            String failureDetail = firstFailure;
             main.post(() -> {
+                if (isFinishing() || isDestroyed()) return;
                 setBusy(false); saveButton.setEnabled(true);
-                for (AssetSummary item : selected) rotationByAssetId.remove(item.assetId());
-                adapter.clearSelection(); updateSelection();
+                for (AssetSummary item : completed) {
+                    if (!rotationByAssetId.getOrDefault(item.assetId(), 0).equals(rotationsSnapshot.getOrDefault(item.assetId(), 0))) continue;
+                    rotationByAssetId.remove(item.assetId());
+                    if (adapter.selectedItems().stream().anyMatch(value -> value.assetId().equals(item.assetId()))) adapter.toggle(item);
+                }
+                updateSelection();
                 refreshSavedPhotos();
                 String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
-                if (motion) result += "。LIVE 项目已按当前手机厂商格式封装";
+                if (motion && saved > 0) result += "。LIVE 封装已写出，原生相册播放需确认";
+                if (failureDetail != null) result += "。首个失败：" + failureDetail;
                 toast(result); setStatus("已连接 · 实时同步中");
             });
         });
@@ -1643,9 +1670,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             rotationControls.addView(rotateRight);
             body.addView(rotationControls);
         } else {
-            TextView rotationNote = text("LIVE 照片暂不单独旋转：后续需同时处理静态图与视频", 11, false, getColor(R.color.text_secondary));
-            rotationNote.setPadding(dp(4), dp(10), dp(4), dp(8));
-            body.addView(rotationNote);
+            LivePhotoControls.attach(this, body, image, rotationHolder[0], degrees -> {
+                rotationHolder[0] = degrees;
+                rememberRotation(asset.assetId(), degrees);
+            });
         }
 
         LinearLayout infoSheet = new LinearLayout(this);
