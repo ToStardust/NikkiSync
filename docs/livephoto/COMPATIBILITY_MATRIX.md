@@ -1,10 +1,10 @@
 # NikkiSync Live 图兼容矩阵与代码产物
 
-更新：2026-09-26。工作分支：`feature/m3-livephoto-compat-rotation`。只涉及 Live/Motion Photo；不包含参数解析、PC UI 或分享卡片改造。
+更新：2026-09-29。工作分支：`feature/m3-livephoto-compat-rotation`。只涉及 Live/Motion Photo；不包含参数解析、PC UI 或分享卡片改造。
 
 ## 先区分三种状态
 
-**代码存在、容器结构通过、系统相册完整播放通过，是三个不同结论。** 本分支新增了共享封装/校验与旋转代码，但尚未完成新的 Android 构建或任何新增机型的相册验收。这里列的是厂商/格式族及机型测试策略，不是“所有型号已支持”清单。
+**代码存在、Android APK 构建通过、系统相册完整播放通过，是三个不同结论。** 本分支已在真实 SDK 35 / JDK 17 工具链构建调试 APK 与测试 APK，尚未执行设备编解码或新增机型相册验收。详见 `CODEX_VALIDATION_2026-09-29.md`。这里列的是厂商/格式族及机型测试策略，不是“所有型号已支持”清单。
 
 每一条通过记录必须绑定：品牌、准确型号、地区版、系统完整版本、Android API、相册包名/版本、profile ID、Git SHA、测试源样本、0/90/180/270 度结果。不能按“同一个厂商”自动继承通过。
 
@@ -19,6 +19,7 @@
 - `VivoLegacyMetadata`：旧 vivo 双文件私有元数据。
 - `VideoFacts` / `CoverFrameMatcher`：实际视频 sample PTS、轨道/画幅/音轨检查、低内存封面匹配，不再用默认 30fps 猜帧号。
 - `LivePhotoRotation`：图片与完整视频同步像素旋转。
+- `LivePublishJournal`：Live MediaStore 发布前后的持久收据与下次启动恢复；设备进程杀死测试尚待执行。
 - `LivePhotoControls`：照片详情中的单张旋转、格式候选选择、已保存动态状态/双文件视频保底入口。
 
 现有 `MainActivity.saveSelected()` 已调用新 exporter；旧 `MotionPhotoSaver`、`OppoLivePhotoSaver` 等文件保留作历史参考，但不再是该入口的 Live 执行路径。不要继续向旧 writer 复制补丁。
@@ -51,7 +52,7 @@
 
 `SavedPhotoStore.Record` 新增 companionUris、profileId、exportHasMotion、presentationUs、timestampSource，并兼容旧单 URI 记录。`SavedPhotoVerifier` 与 Adapter 显示 `MOTION_MISSING` / `MOTION_UNVERIFIED`，不会因为封面存在就说双文件完整。相册播放验收保持 `unknown`。
 
-MediaStore 逐一登记本次创建的 URI；处理到的失败会补偿删除这些新 URI，不碰用户已有媒体。**跨两个媒体项并不具备真正原子事务；进程被杀时的持久事务日志/恢复尚未实现，是正式发布前的后续任务。**
+MediaStore 逐一登记本次创建的 URI；处理到的失败会补偿删除这些新 URI，不碰用户已有媒体。现在会在每次插入前持久记录随机文件名/路径，并在插入后持久记录 URI；下次启动仅查找本应用拥有且名称/路径完全相符的项，成功保存的记录不删除。**跨两个媒体项仍不具备系统级原子事务；恢复目前只有 JVM 模拟与 APK 编译证据，未在设备上执行插入/发布中杀进程的测试。OEM MediaStore 查询行为与失败重试仍须实机确认。**
 
 当前格式选择是品牌初选 + 手动覆盖，不是完整的 OS/相册能力探测系统。还没有远程签名设备规则热更新、官方 SDK 能力探测、相册自动播放认证或低置信度封面手选 UI。必须保持这些状态与代码一致。
 

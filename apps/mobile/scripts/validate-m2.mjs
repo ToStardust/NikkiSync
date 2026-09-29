@@ -274,7 +274,8 @@ for (const forbidden of ['firebase', 'retrofit', 'okhttp', 'cloudinary', 's3.ama
 
 const mobileGradle = text('app/build.gradle.kts')
 const editedMediaAccess = text('app/src/main/java/app/nikkisync/mobile/storage/EditedMediaAccess.java')
-expect(mobileGradle.includes('androidx.activity:activity:1.13.0'), 'edited-photo linking needs stable AndroidX Activity Photo Picker support')
+// 1.10.1 supports the picker while remaining compatible with this branch's SDK 35 / AGP 8.7.3 toolchain.
+expect(mobileGradle.includes('androidx.activity:activity:1.10.1'), 'edited-photo linking needs stable AndroidX Activity Photo Picker support')
 expect(mainActivity.includes('PickMultipleVisualMedia'), 'Saved edited variants must use the system multi-photo picker')
 expect(mainActivity.includes('PickVisualMedia.ImageOnly'), 'edited-variant picker must accept images only')
 expect(editedMediaAccess.includes('takePersistableUriPermission'), 'selected edit URIs must request persistent read access')

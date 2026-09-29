@@ -26,7 +26,8 @@ android {
 
 dependencies {
     implementation("androidx.recyclerview:recyclerview:1.4.0")
-    implementation("androidx.activity:activity:1.13.0")
+    // 1.11+ requires compileSdk 36 / AGP 8.9.1; keep this branch on its pinned SDK 35 / AGP 8.7.3.
+    implementation("androidx.activity:activity:1.10.1")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // Pin together: quarter-turn optimization and portrait encoding were reviewed at this tag.

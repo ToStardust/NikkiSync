@@ -39,7 +39,7 @@ import javax.net.ssl.HttpsURLConnection;
 public final class LivePhotoExporter {
     @FunctionalInterface public interface Progress { void onProgress(String stage,int percent); }
     public record Result(Uri primaryUri,List<Uri> companionUris,String profileId,String label,int rotationDegrees,
-                         long presentationUs,String timestampSource,double matchError){
+                         long presentationUs,String timestampSource,double matchError,String publishTransactionId){
         public Result{companionUris=List.copyOf(companionUris);}
         public String savedFormat(){return label+(rotationDegrees==0?"":" · 图像/视频已旋转 "+rotationDegrees+"°")+" · 相册播放待确认";}
     }
@@ -79,9 +79,10 @@ public final class LivePhotoExporter {
             MotionContainerVerifier.verify(profile,product,rotated.video(),options);
             if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Live 导出已取消");
             progress.onProgress("写入系统相册",0);
-            List<Uri> resources=publish(context.getContentResolver(),profile,asset.assetId(),product);
+            Published published=publish(context,profile,asset.assetId(),product);
+            List<Uri> resources=published.resources();
             return new Result(resources.get(0),resources.subList(1,resources.size()),profile.id,profile.label,degrees,
-                cover.presentationUs(),cover.source(),cover.error());
+                cover.presentationUs(),cover.source(),cover.error(),published.transactionId());
         }finally{
             if(cleanupSafe.get()){
                 try(var paths=Files.walk(job.toPath())){for(var p:paths.sorted(Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList()))try{Files.deleteIfExists(p);}catch(IOException ignored){}}
@@ -115,29 +116,43 @@ public final class LivePhotoExporter {
         }
         exif.saveAttributes();return copy;
     }
-    static List<Uri> publish(ContentResolver resolver,LivePhotoProfile profile,String assetId,MotionContainer.Product product)throws IOException{
+    private record Published(List<Uri> resources,String transactionId) {}
+    static Published publish(Context context,LivePhotoProfile profile,String assetId,MotionContainer.Product product)throws IOException{
+        ContentResolver resolver=context.getContentResolver();
+        LivePublishJournal journal=new LivePublishJournal(context);
         List<File> files=new ArrayList<>();files.add(product.primary());files.addAll(product.companions());List<Uri> created=new ArrayList<>();
         String safe=assetId==null?"photo":assetId.replaceAll("[^A-Za-z0-9_-]","_");if(safe.length()>48)safe=safe.substring(0,48);
         String stem=(profile.paired?"IMG_":"NikkiSync_")+safe+"_"+UUID.randomUUID().toString().substring(0,8);
         String path=profile==LivePhotoProfile.STANDARD||profile==LivePhotoProfile.XIAOMI?"Pictures/NikkiSync":"DCIM/Camera";
+        String tx=journal.begin();
         try{
             for(int i=0;i<files.size();i++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Live 发布已取消");
                 boolean video=i>0;ContentValues values=new ContentValues();
-                values.put(MediaStore.MediaColumns.DISPLAY_NAME,stem+(profile.paired?"": "_MP")+(video?".mp4":".jpg"));
+                String displayName=stem+(profile.paired?"": "_MP")+(video?".mp4":".jpg");
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME,displayName);
                 values.put(MediaStore.MediaColumns.MIME_TYPE,video?"video/mp4":"image/jpeg");
                 values.put(MediaStore.MediaColumns.RELATIVE_PATH,path);values.put(MediaStore.MediaColumns.IS_PENDING,1);
-                Uri uri=resolver.insert(video?MediaStore.Video.Media.EXTERNAL_CONTENT_URI:MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+                Uri collection=video?MediaStore.Video.Media.EXTERNAL_CONTENT_URI:MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                int receipt=journal.expect(tx,collection,displayName,path);
+                Uri uri=resolver.insert(collection,values);
                 if(uri==null)throw new IOException("系统相册创建 Live 资源失败");created.add(uri); // Includes the first insert if the second one fails.
+                journal.attached(tx,receipt,uri);
                 try(OutputStream out=resolver.openOutputStream(uri,"w")){if(out==null)throw new IOException("系统相册无法写入 Live");MotionContainer.copy(files.get(i),out);}
                 try(ParcelFileDescriptor fd=resolver.openFileDescriptor(uri,"r")){if(fd==null||fd.getStatSize()!=files.get(i).length())throw new IOException("系统相册 Live 写入长度不一致");}
             }
             // Companion first, primary last; still not a cross-collection transaction.
             for(int i=created.size()-1;i>=0;i--){ContentValues ready=new ContentValues();ready.put(MediaStore.MediaColumns.IS_PENDING,0);
                 if(resolver.update(created.get(i),ready,null,null)!=1)throw new IOException("系统相册未完成 Live 发布");}
-            return List.copyOf(created);
+            return new Published(List.copyOf(created),tx);
         }catch(Exception error){
-            for(Uri uri:created)try{resolver.delete(uri,null,null);}catch(Exception cleanup){error.addSuppressed(cleanup);}
+            // In this live process we have the exact inserted URIs, including an insert whose receipt failed.
+            // Keep the durable journal when any compensating delete fails so a later launch can retry.
+            boolean deleted=true;
+            for(Uri uri:created)try{
+                if(resolver.delete(uri,null,null)!=1)throw new IOException("Live 补偿删除未确认："+uri);
+            }catch(Exception cleanup){deleted=false;error.addSuppressed(cleanup);}
+            if(deleted)try{journal.complete(tx);}catch(IOException cleanup){error.addSuppressed(cleanup);}
             if(error instanceof IOException e)throw e;throw new IOException("Live 发布失败，已尝试撤销本次创建的媒体",error);
         }
     }

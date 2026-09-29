@@ -6,6 +6,7 @@ import android.net.Uri;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -98,6 +99,14 @@ public final class SavedPhotoStore {
         records.sort(Comparator.comparingLong(Record::savedAt).reversed());return records;
     }
     public synchronized void removeUri(String uri){List<Record> next=load();next.removeIf(record->uri.equals(record.uri()));save(next,false);}
+    /** Recovery must not interpret a corrupt saved-record database as proof that Live media is orphaned. */
+    public synchronized boolean containsDurableUri(String uri) throws IOException {
+        try {
+            JSONArray rows=new JSONArray(prefs.getString(KEY_RECORDS,"[]"));
+            for(int i=0;i<rows.length();i++)if(uri.equals(rows.getJSONObject(i).getString("uri")))return true;
+            return false;
+        }catch(Exception error){throw new IOException("Saved Live records unreadable; media left untouched",error);}
+    }
     private void save(List<Record> records,boolean durable) {
         JSONArray rows=new JSONArray();
         for(Record record:records){JSONObject row=new JSONObject();try{

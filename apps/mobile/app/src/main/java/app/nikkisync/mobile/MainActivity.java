@@ -37,6 +37,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import app.nikkisync.mobile.media.ImageLoader;
 import app.nikkisync.mobile.media.live.LivePhotoControls;
 import app.nikkisync.mobile.media.live.LivePhotoExporter;
+import app.nikkisync.mobile.media.live.LivePublishJournal;
 import app.nikkisync.mobile.media.live.LivePhotoProfile;
 import app.nikkisync.mobile.media.HuaweiMovingPhotoSaver;
 import app.nikkisync.mobile.media.MotionPhotoSaver;
@@ -111,6 +112,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private ServerStore serverStore;
     private SavedPhotoStore savedPhotoStore;
+    private LivePublishJournal livePublishJournal;
     private SavedPhotoHealthStore savedPhotoHealthStore;
     private EditedVariantStore editedVariantStore;
     private SavedMetadataSnapshotStore savedMetadataSnapshotStore;
@@ -170,6 +172,17 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         );
         serverStore = new ServerStore(this);
         savedPhotoStore = new SavedPhotoStore(this);
+        livePublishJournal = new LivePublishJournal(this);
+        // The single worker recovers incomplete Live publications before it can start another export.
+        io.execute(() -> {
+            try {
+                livePublishJournal.recover(savedPhotoStore::containsDurableUri,
+                        LivePublishJournal.androidMedia(getContentResolver(), getPackageName()));
+            } catch (Exception error) {
+                android.util.Log.w("NikkiSyncLive", "Live recovery remains pending", error);
+                main.post(() -> { if (!isFinishing() && !isDestroyed()) toast("LIVE 清理待重试；已有相册照片不会被批量删除"); });
+            }
+        });
         savedPhotoHealthStore = new SavedPhotoHealthStore(this);
         editedVariantStore = new EditedVariantStore(this);
         savedMetadataSnapshotStore = new SavedMetadataSnapshotStore(this);
@@ -1553,12 +1566,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 }
                 AssetSummary asset = selected.get(i);
                 int index = i + 1; main.post(() -> setStatus("正在保存 " + index + " / " + selected.size()));
+                LivePhotoExporter.Result liveResult = null;
                 try {
                     Uri savedUri;
                     String savedFormat;
                     int savedRotation = rotationsSnapshot.getOrDefault(asset.assetId(), 0);
-                    LivePhotoExporter.Result liveResult = null;
-
                     if (asset.hasMotion()) {
                         liveResult = LivePhotoExporter.save(this, current, asset, savedRotation, liveProfile,
                                 (stage, percent) -> main.post(() -> {
@@ -1575,6 +1587,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     if (liveResult != null) {
                         savedPhotoStore.recordMotion(asset, savedUri, liveResult.companionUris(), savedRotation,
                                 savedFormat, liveResult.profileId(), liveResult.presentationUs(), liveResult.timestampSource());
+                        try { livePublishJournal.complete(liveResult.publishTransactionId()); }
+                        catch (Exception journalError) {
+                            // The durable Saved record protects this media on next startup; do not report a false save failure.
+                            android.util.Log.w("NikkiSyncLive", "Saved Live media; journal cleanup deferred", journalError);
+                        }
                     } else {
                         savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
                     }
@@ -1588,6 +1605,13 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     savedMotion |= liveResult != null;
                     completed.add(asset);
                 } catch (Exception error) {
+                    if (liveResult != null) {
+                        try {
+                            livePublishJournal.recoverOne(liveResult.publishTransactionId(),
+                                    savedPhotoStore::containsDurableUri,
+                                    LivePublishJournal.androidMedia(getContentResolver(), getPackageName()));
+                        } catch (Exception cleanup) { error.addSuppressed(cleanup); }
+                    }
                     failure++;
                     if (firstFailure == null) firstFailure = message(error);
                 }
