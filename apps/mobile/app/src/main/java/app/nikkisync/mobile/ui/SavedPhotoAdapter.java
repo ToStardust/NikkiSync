@@ -21,12 +21,14 @@ import app.nikkisync.mobile.R;
 import app.nikkisync.mobile.storage.EditedVariantStore;
 import app.nikkisync.mobile.storage.SavedPhotoGroups;
 import app.nikkisync.mobile.storage.SavedPhotoStore;
+import app.nikkisync.mobile.storage.SavedPhotoHealthStore;
 
 import java.text.DateFormat;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -44,10 +46,16 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
     private final List<Row> rows = new ArrayList<>();
     private final ExecutorService thumbnails = Executors.newFixedThreadPool(2);
     private final Handler main = new Handler(Looper.getMainLooper());
+    private Map<String, SavedPhotoHealthStore.Entry> health = Map.of();
 
     public SavedPhotoAdapter(Activity activity, Listener listener) {
         this.activity = activity;
         this.listener = listener;
+    }
+
+    public void setHealth(Map<String, SavedPhotoHealthStore.Entry> entries) {
+        health = Map.copyOf(entries);
+        notifyDataSetChanged();
     }
 
     public void setGroups(List<SavedPhotoGroups.Group> groups) {
@@ -193,6 +201,12 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
                 String badge = record.hasMotion()
                         ? "LIVE"
                         : record.rotationDegrees() == 0 ? "原图" : "旋转 " + record.rotationDegrees() + "°";
+                SavedPhotoHealthStore.Entry entry = health.get(record.uri());
+                if (entry != null && entry.isMissing()) badge = "文件缺失";
+                else if (record.hasMotion()) {
+                    if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_MISSING) badge = "LIVE 不完整";
+                    else if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_UNVERIFIED) badge = "LIVE 待核验";
+                }
                 state.setText(badge);
                 date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(record.savedAt())));
             } else {
