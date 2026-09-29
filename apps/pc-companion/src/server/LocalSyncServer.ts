@@ -24,6 +24,8 @@ import {
   type WsEvent
 } from '@nikkisync/protocol'
 import type { MetadataThumbnailCache } from '../metadata/MetadataThumbnailCache.js'
+import type { RemoteBridgeService } from '../remote/RemoteBridgeService.js'
+import { RemoteRoutes } from '../remote/RemoteRoutes.js'
 import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
@@ -42,6 +44,7 @@ export interface LocalSyncServerConfig {
   mdns?: boolean
   maxJsonBodyBytes?: number
   metadataThumbnailCache?: MetadataThumbnailCache
+  remoteBridge?: RemoteBridgeService
 }
 
 export interface LocalSyncServerAddress {
@@ -141,7 +144,8 @@ export class LocalSyncServer {
   private suitSearchSourceCache: { libraryRevision: number; items: SuitSearchAsset[] } | undefined
   private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
   private readonly clothingSearchResponseCache = new Map<string, ClothingSearchResponse>()
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache'>
+  private readonly remoteRoutes: RemoteRoutes | undefined
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
@@ -149,6 +153,7 @@ export class LocalSyncServer {
     this.dictionary = new MetadataDictionaryRepository(database)
     this.auth = new AuthService(database)
     this.pairing = new PairingService(database)
+    this.remoteRoutes = config.remoteBridge ? new RemoteRoutes(config.remoteBridge) : undefined
     this.config = {
       name: config.name ?? 'NikkiSync PC',
       host: config.host ?? '0.0.0.0',
@@ -157,7 +162,8 @@ export class LocalSyncServer {
       mdns: config.mdns ?? true,
       maxJsonBodyBytes: config.maxJsonBodyBytes ?? 1024 * 1024,
       ...(config.tls ? { tls: config.tls } : {}),
-      ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {})
+      ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {}),
+      ...(config.remoteBridge ? { remoteBridge: config.remoteBridge } : {})
     }
   }
 
@@ -165,6 +171,7 @@ export class LocalSyncServer {
 
   async start(): Promise<LocalSyncServerAddress> {
     if (this.server) return this.address!
+    if (this.remoteRoutes && !this.config.tls) throw new Error('TLS is required for Remote Bridge routes')
     this.server = this.config.tls
       ? https.createServer(this.config.tls, (req, res) => { void this.handle(req, res) })
       : http.createServer((req, res) => { void this.handle(req, res) })
@@ -186,6 +193,7 @@ export class LocalSyncServer {
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
     this.mdns.stop(); this.sockets.close()
+    this.config.remoteBridge?.closeAllSessions()
     const server = this.server
     this.server = undefined; this.address = undefined
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -205,6 +213,10 @@ export class LocalSyncServer {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://nikkisync.local')
+      if (this.remoteRoutes && url.pathname.startsWith('/remote/')) {
+        await this.remoteRoutes.handle(req, res)
+        return
+      }
       if (req.method === 'GET' && url.pathname === API_ROUTES.serverInfo) return this.serverInfo(res)
       if (req.method === 'POST' && url.pathname === API_ROUTES.pair) return void await this.handlePair(req, res)
       const metadataMatch = /^\/v1\/assets\/([^/]+)\/metadata$/.exec(url.pathname)
@@ -545,3 +557,4 @@ export class LocalSyncServer {
     }
   }
 }
+
