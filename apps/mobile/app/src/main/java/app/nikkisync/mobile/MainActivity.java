@@ -35,6 +35,7 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import app.nikkisync.mobile.media.ImageLoader;
+import app.nikkisync.mobile.inspiration.InspirationActivity;
 import app.nikkisync.mobile.media.live.LivePhotoControls;
 import app.nikkisync.mobile.media.live.LivePhotoExporter;
 import app.nikkisync.mobile.media.live.LivePhotoProfile;
@@ -482,6 +483,9 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private void refreshMyPage() {
         if (myContent == null) return;
         myContent.removeAllViews();
+
+        addMyActionCard("穿搭灵感库", "离线收藏暖暖搭配码、染色码、来源与参考图；随时查找和复制。",
+                "打开灵感库", () -> startActivity(new Intent(this, InspirationActivity.class)));
 
         Map<String, Integer> uidCounts = new LinkedHashMap<>();
         Map<String, Integer> versionCounts = new LinkedHashMap<>();
