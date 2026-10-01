@@ -10,11 +10,13 @@ import type { MetadataResolverServiceConfig, PhotoMetadataResolver } from './met
 import { MetadataDictionaryService } from './metadata/MetadataDictionaryService.js'
 import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceConfig } from './metadata/MetadataDictionaryUpdateService.js'
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
+import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
 
 export interface PcCompanionRuntimeConfig {
   databaseFile?: string
   scanner?: ScannerConfig
   server?: LocalSyncServerConfig
+  remoteBridge?: boolean
   metadataResolver?: {
     resolver: PhotoMetadataResolver
     service?: MetadataResolverServiceConfig
@@ -36,6 +38,7 @@ export class PcCompanionRuntime {
   readonly database: DatabaseManager
   readonly scanner: ScannerService
   readonly server: LocalSyncServer
+  readonly remoteBridge: RemoteBridgeService | undefined
   readonly metadataResolver?: MetadataResolverService
   readonly metadataDictionary?: MetadataDictionaryService
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
@@ -64,7 +67,8 @@ export class PcCompanionRuntime {
         this.metadataDictionary
       )
     }
-    const serverConfig = config.server ?? {}
+    this.remoteBridge = config.remoteBridge ? new RemoteBridgeService(this.database) : config.server?.remoteBridge
+    const serverConfig = { ...config.server, ...(this.remoteBridge ? { remoteBridge: this.remoteBridge } : {}) }
     if (serverConfig.tls) {
       this.server = new LocalSyncServer(this.database, serverConfig)
     } else {

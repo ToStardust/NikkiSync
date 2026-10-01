@@ -1,6 +1,7 @@
 import type { DatabaseManager } from '@nikkisync/database'
 import { RemoteFileProvider, type LocalRemotePhotoResource, type RemotePhotoResource } from './RemoteFileProvider.js'
 import { RemoteSessionStore, type CreatedRemoteSession, type RemoteAccessFailure } from './RemoteSessionStore.js'
+import { validateRemoteConnection, type RemoteConnection } from './RemoteConnection.js'
 
 type RemoteListResult = { status: 'ok'; resources: RemotePhotoResource[] } | { status: RemoteAccessFailure }
 type RemoteResourceResult = { status: 'ok' } & LocalRemotePhotoResource | { status: RemoteAccessFailure }
@@ -14,13 +15,16 @@ export class RemoteBridgeService {
     this.sessions = new RemoteSessionStore(options.now)
   }
 
-  createSession(selectedResourceIds: readonly string[]): CreatedRemoteSession {
+  createSession(selectedResourceIds: readonly string[], connection: RemoteConnection): CreatedRemoteSession {
+    const validatedConnection = validateRemoteConnection(connection)
     const ids = [...new Set(selectedResourceIds)]
     if (ids.length === 0 || ids.length > 100) throw new Error('Select 1 to 100 photos before creating a remote session')
-    for (const id of ids) {
-      if (!this.files.getPhoto(id)) throw new Error(`Selected resource is not an available photo: ${id}`)
-    }
-    return this.sessions.create(ids)
+    const selections = ids.map((id) => {
+      const photo = this.files.getPhoto(id)
+      if (!photo) throw new Error(`Selected resource is not an available photo: ${id}`)
+      return { resourceId: id, sha256: photo.sha256 }
+    })
+    return this.sessions.create(selections, validatedConnection)
   }
 
   listResources(sessionId: string, token: string): RemoteListResult {
@@ -28,8 +32,8 @@ export class RemoteBridgeService {
     if (access.status !== 'ok') return access
     const resources = access.resourceIds.flatMap((id) => {
       const resource = this.files.getPhoto(id)
-      if (!resource) return []
-      const { sourcePath: _sourcePath, ...publicResource } = resource
+      if (!resource || resource.sha256 !== access.hashes.get(id)) return []
+      const { sourcePath: _sourcePath, sha256: _sha256, ...publicResource } = resource
       return [publicResource]
     })
     return { status: 'ok', resources }
@@ -40,10 +44,13 @@ export class RemoteBridgeService {
     if (access.status !== 'ok') return access
     if (!access.resourceIds.includes(resourceId)) return { status: 'not_found' }
     const resource = this.files.getPhoto(resourceId)
-    return resource ? { status: 'ok', ...resource } : { status: 'not_found' }
+    return resource && resource.sha256 === access.hashes.get(resourceId) ? { status: 'ok', ...resource } : { status: 'not_found' }
   }
 
   closeSession(sessionId: string): void { this.sessions.close(sessionId) }
   closeAllSessions(): void { this.sessions.closeAll() }
+  getSessionStatus(sessionId: string) { return this.sessions.status(sessionId) }
+  listSelectablePhotos(cursor?: string) { return this.files.listPhotos(cursor) }
+  getLocalPreview(resourceId: string) { return this.files.getPhoto(resourceId) }
 }
 

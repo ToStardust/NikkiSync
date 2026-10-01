@@ -75,6 +75,7 @@ async function main(): Promise<void> {
 
   const runtime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
+    remoteBridge: true,
     scanner: {
       ...(cachedGameRoot ? { cachedInstallRoot: cachedGameRoot } : {}),
       startingPaths: gameRootCandidates
@@ -113,7 +114,14 @@ async function main(): Promise<void> {
   const dashboard = createDesktopControlServer({
     getStatus: () => status.getStatus({ host: pairingHost, port: started.server.port }),
     createPairingUri: () => runtime.createPairingUri(pairingHost),
-    qrSvg
+    qrSvg,
+    remoteBridge: {
+      listPhotos: (cursor) => runtime.remoteBridge!.listSelectablePhotos(cursor),
+      createSession: (ids) => runtime.server.createRemoteSession(pairingHost, ids),
+      closeSession: (id) => runtime.remoteBridge!.closeSession(id),
+      getSessionStatus: (id) => runtime.remoteBridge!.getSessionStatus(id),
+      getPreview: (id) => runtime.remoteBridge!.getLocalPreview(id)
+    }
   })
   await new Promise<void>((resolve, reject) => {
     dashboard.once('error', reject)

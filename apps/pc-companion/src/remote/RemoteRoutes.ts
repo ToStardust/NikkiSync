@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { open } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { RemoteBridgeService } from './RemoteBridgeService.js'
 
@@ -76,15 +76,25 @@ export class RemoteRoutes {
       failure(res, result.status)
       return true
     }
-    let info
-    try { info = await stat(result.sourcePath) }
+    let file
+    try { file = await open(result.sourcePath, 'r') }
     catch { failure(res, 'not_found'); return true }
-    if (!info.isFile()) { failure(res, 'not_found'); return true }
+    let info
+    try {
+      info = await file.stat()
+      if (!info.isFile() || info.size !== result.sizeBytes) throw new Error('Source changed')
+      const hash = createHash('sha256')
+      for await (const chunk of file.createReadStream({ autoClose: false, start: 0 })) hash.update(chunk)
+      if (hash.digest('hex') !== result.sha256) throw new Error('Source changed')
+    } catch { await file.close(); failure(res, 'not_found'); return true }
+    const stillAuthorized = this.bridge.getResource(sessionId, token, fileMatch![2]!)
+    if (stillAuthorized.status !== 'ok') { await file.close(); failure(res, stillAuthorized.status); return true }
     const rangeHeader = req.headers.range
     const range = parseRange(Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader, info.size)
     if (range === null) {
       res.writeHead(416, { 'Content-Range': `bytes */${info.size}`, 'Cache-Control': 'no-store' })
       res.end()
+      await file.close()
       return true
     }
     const headers: Record<string, string | number> = {
@@ -98,9 +108,16 @@ export class RemoteRoutes {
     }
     if (range) headers['Content-Range'] = `bytes ${range.start}-${range.end}/${info.size}`
     res.writeHead(range ? 206 : 200, headers)
-    if (req.method === 'HEAD') { res.end(); return true }
-    const stream = createReadStream(result.sourcePath, range ?? undefined)
+    if (req.method === 'HEAD') { res.end(); await file.close(); return true }
+    const stream = file.createReadStream({ start: range?.start ?? 0, ...(range ? { end: range.end } : {}), autoClose: true })
+    const authorizationTimer = setInterval(() => {
+      const state = this.bridge.getSessionStatus(sessionId)?.state
+      if (state !== 'created' && state !== 'connected') { stream.destroy(); res.destroy() }
+    }, 250)
+    authorizationTimer.unref()
+    stream.on('close', () => clearInterval(authorizationTimer))
     stream.on('error', () => res.destroy())
+    res.on('close', () => { clearInterval(authorizationTimer); stream.destroy() })
     stream.pipe(res)
     return true
   }

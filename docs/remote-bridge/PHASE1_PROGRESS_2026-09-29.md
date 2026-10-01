@@ -1,5 +1,7 @@
 # Remote Bridge Phase 1 progress (2026-09-29)
 
+Historical baseline. For the subsequent PC UI, startup composition, security checks and verification, read `PHASE1_PC_UI_PROGRESS_2026-10-02.md`; Mini Program/iPhone acceptance is still pending.
+
 Source handoff: `CODEX_HANDOFF_2026-09-29.md` on `feature/outfit-inspiration`.
 
 Implemented locally:

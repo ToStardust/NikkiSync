@@ -210,6 +210,14 @@ export class LocalSyncServer {
     })
   }
 
+  createRemoteSession(host: string, resourceIds: readonly string[]) {
+    if (!this.address || !this.config.tls || !this.config.remoteBridge) throw new Error('Remote Bridge is not running')
+    return this.config.remoteBridge.createSession(resourceIds, {
+      endpoint: `https://${host}:${this.address.port}`,
+      tlsFingerprintSha256: pemFingerprint(this.config.tls.cert)
+    })
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://nikkisync.local')
