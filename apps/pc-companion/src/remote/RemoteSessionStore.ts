@@ -85,4 +85,3 @@ export class RemoteSessionStore {
     return { sessionId, expiresAt: new Date(session.expiresAtMs).toISOString(), state: session.state, selectedCount: session.resourceIds.length }
   }
 }
-

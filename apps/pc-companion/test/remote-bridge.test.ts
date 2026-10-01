@@ -239,4 +239,3 @@ test('remote routes require the session token and stream only selected bytes wit
     await rm(directory, { recursive: true, force: true })
   }
 })
-

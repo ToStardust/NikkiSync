@@ -53,4 +53,3 @@ export class RemoteBridgeService {
   listSelectablePhotos(cursor?: string) { return this.files.listPhotos(cursor) }
   getLocalPreview(resourceId: string) { return this.files.getPhoto(resourceId) }
 }
-
