@@ -1,0 +1,15 @@
+<view class="intro">
+  <text class="title">大喵相机助手</text>
+  <text class="subtitle">无限暖暖玩家的非官方摄影助手</text>
+  <view class="notice">
+    <text class="heading">开发准备中</text>
+    <text>可扫描并检查电脑二维码，照片浏览和下载尚未开放。</text>
+    <text>后续连接自己的电脑，查看自己选定的照片；照片不上传云端图库。</text>
+  </view>
+  <button class="scan" bindtap="scanQr" loading="{{scanning}}" disabled="{{scanning}}">扫描电脑二维码</button>
+  <view class="status">
+    <text>{{message}}</text>
+    <text wx:if="{{endpoint}}">电脑地址：{{endpoint}}</text>
+    <text wx:if="{{expiresAt}}">有效期至：{{expiresAt}}</text>
+  </view>
+</view>
