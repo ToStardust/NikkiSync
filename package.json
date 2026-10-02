@@ -12,7 +12,7 @@
     "tools/*"
   ],
   "scripts": {
-    "test:wechat": "npm run build && node --test --test-isolation=none tools/wechat-project.test.mjs tools/wechat-scan.test.mjs",
+    "test:wechat": "npm run build && node --test --test-isolation=none tools/wechat-project.test.mjs tools/wechat-scan.test.mjs tools/wechat-lan-probe.test.mjs tools/wechat-lan-server.test.mjs",
     "clean": "node scripts/clean.mjs",
     "build:core": "npm exec --workspace @nikkisync/core -- tsc -p tsconfig.json",
     "build:protocol": "npm exec --workspace @nikkisync/protocol -- tsc -p tsconfig.json",

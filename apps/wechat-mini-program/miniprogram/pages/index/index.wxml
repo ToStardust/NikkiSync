@@ -7,6 +7,7 @@
     <text>后续连接自己的电脑，查看自己选定的照片；照片不上传云端图库。</text>
   </view>
   <button class="scan" bindtap="scanQr" loading="{{scanning}}" disabled="{{scanning}}">扫描电脑二维码</button>
+  <navigator url="/pages/diagnostics/index">开发测试：局域网 HTTPS</navigator>
   <view class="status">
     <text>{{message}}</text>
     <text wx:if="{{endpoint}}">电脑地址：{{endpoint}}</text>

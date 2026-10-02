@@ -17,7 +17,7 @@ test('WeChat project uses the supplied public AppID and retains URL checks', asy
 
 test('landing page is present and does not claim a working download connection', async () => {
   const app = await json('miniprogram/app.json');
-  assert.deepEqual(app.pages, ['pages/index/index']);
+  assert.deepEqual(app.pages, ['pages/index/index', 'pages/diagnostics/index']);
   assert.equal(app.window.navigationBarTitleText, '大喵相机助手');
   const page = await readFile(new URL('miniprogram/pages/index/index.wxml', root), 'utf8');
   assert.match(page, /开发准备中/);
