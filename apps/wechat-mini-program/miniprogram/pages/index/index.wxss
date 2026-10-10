@@ -1,9 +1,25 @@
-.intro { padding: 80rpx 40rpx; }
-text { display: block; line-height: 1.7; }
-.title { font-size: 48rpx; font-weight: 600; }
-.subtitle { margin-top: 12rpx; font-size: 26rpx; color: #62776c; }
-.notice { margin-top: 48rpx; padding: 32rpx; border-radius: 28rpx; background: #ffffff; }
-.heading { margin-bottom: 16rpx; font-size: 32rpx; font-weight: 600; }
-.notice text + text { margin-top: 16rpx; }
-.scan { margin-top: 36rpx; background: #335b4e; color: #fff; border-radius: 24rpx; font-size: 30rpx; }
-.status { margin-top: 24rpx; font-size: 26rpx; color: #62776c; word-break: break-all; }
+
+.intro { position: relative; padding: 56rpx 40rpx calc(48rpx + env(safe-area-inset-bottom)); }
+.eyebrow { font-size: 21rpx; letter-spacing: 4rpx; color: var(--nikki-accent); }
+.title { margin-top: 22rpx; font-size: 64rpx; line-height: 1.28; letter-spacing: -2rpx; font-weight: 600; }
+.subtitle { margin-top: 22rpx; font-size: 25rpx; color: var(--nikki-secondary); }
+.welcome-card { margin-top: 52rpx; padding: 48rpx 40rpx 30rpx; border-radius: 56rpx; text-align: center; }
+.album-art { position: relative; height: 192rpx; width: 210rpx; margin: 0 auto 28rpx; }
+.art-frame { position: absolute; width: 150rpx; height: 170rpx; border: 8rpx solid #fff; border-radius: 24rpx; box-shadow: 0 10rpx 26rpx rgba(86,65,95,.10); }
+.art-back { left: 6rpx; top: 6rpx; transform: rotate(-12deg); background: linear-gradient(140deg,#fff1cf,#f8d4bf); }
+.art-front { right: 2rpx; top: 12rpx; transform: rotate(10deg); background: linear-gradient(140deg,#fbe6ed,#f6bcc0); display: flex; justify-content: center; align-items: center; }
+.camera-mark { position: relative; width: 78rpx; height: 56rpx; border: 3rpx solid var(--nikki-accent); border-radius: 13rpx; display: flex; justify-content: center; align-items: center; }
+.camera-mark::before { content: ''; position: absolute; width: 28rpx; height: 9rpx; top: -11rpx; left: 12rpx; border: 3rpx solid var(--nikki-accent); border-bottom: none; border-radius: 5rpx 5rpx 0 0; }
+.camera-lens { width: 25rpx; height: 25rpx; border: 3rpx solid var(--nikki-accent); border-radius: 50%; }
+.card-title { font-size: 37rpx; font-weight: 600; }
+.card-copy { margin: 18rpx 0 32rpx; font-size: 27rpx; line-height: 1.7; color: var(--nikki-secondary); }
+.primary-action text { margin-left: 14rpx; }
+.local-note { margin-top: 26rpx; display: flex; align-items: center; justify-content: center; font-size: 21rpx; color: var(--nikki-secondary); }
+.status-dot { width: 10rpx; height: 10rpx; margin-right: 10rpx; border-radius: 50%; background: #83a094; }
+.preview-note { margin-top: 26rpx; text-align: center; color: var(--nikki-secondary); font-size: 22rpx; }
+.tools-toggle { margin: 24rpx auto 0; padding: 15rpx 25rpx; background: transparent; color: var(--nikki-secondary); font-size: 24rpx; width: 230rpx; }
+.tools-toggle text { margin-left: 16rpx; }
+.tools { padding: 30rpx; margin-top: 12rpx; border-radius: 40rpx; }
+.tools-caption { font-size: 23rpx; color: var(--nikki-secondary); margin-bottom: 22rpx; }
+.tools navigator { display: flex; justify-content: space-between; padding: 24rpx 6rpx; font-size: 26rpx; color: var(--nikki-accent); }
+.status { font-size: 23rpx; color: var(--nikki-secondary); line-height: 1.7; word-break: break-all; padding-top: 18rpx; }

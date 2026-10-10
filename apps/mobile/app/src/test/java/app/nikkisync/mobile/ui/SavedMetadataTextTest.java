@@ -7,7 +7,7 @@ import java.util.List;
 import org.junit.Test;
 
 public final class SavedMetadataTextTest {
-    @Test public void summaryShowsCameraFilterLightingAndClothingCount() {
+    @Test public void summaryShowsOnlyPlayerFacingOutfitCount() {
         String json = """
                 {
                   "camera":{"focalLength":50,"exposure":1.2},
@@ -20,19 +20,24 @@ public final class SavedMetadataTextTest {
                 }
                 """;
         String text = SavedMetadataText.summary(json);
-        assertTrue(text.contains("焦距：50"));
-        assertTrue(text.contains("滤镜：filter-a"));
-        assertTrue(text.contains("光照：light-b"));
-        assertTrue(text.contains("穿搭：2 件"));
+        assertEquals("穿搭：2 件", text);
     }
 
     @Test public void clothingLinesKeepHumanReadableNamesOffline() {
         String json = "{\"dressing\":{\"clothes\":[{\"id\":\"10201\",\"name\":\"裙子\",\"category\":\"dresses\"}]}}";
-        assertEquals(List.of("裙子 · 连衣裙 · ID 10201"), SavedMetadataText.clothingLines(json));
+        assertEquals(List.of("裙子 · 连衣裙"), SavedMetadataText.clothingLines(json));
+    }
+
+    @Test public void unknownClothingNameNeverLeaksInternalId() {
+        String json = "{\"dressing\":{\"clothes\":[{\"id\":\"981234\",\"category\":\"shoes\"}]}}";
+        assertEquals(List.of("名称暂缺 · 鞋子"), SavedMetadataText.clothingLines(json));
+        assertFalse(SavedMetadataText.summary(json).contains("981234"));
+        String placeholder = "{\"dressing\":{\"clothes\":[{\"id\":\"981234\",\"name\":\"服装 981234\",\"category\":\"shoes\"}]}}";
+        assertEquals(List.of("名称暂缺 · 鞋子"), SavedMetadataText.clothingLines(placeholder));
     }
 
     @Test public void invalidMetadataDoesNotCrashSavedDetails() {
-        assertTrue(SavedMetadataText.summary("{broken").contains("参数数据损坏"));
+        assertEquals("暂无可展示的穿搭信息", SavedMetadataText.summary("{broken"));
         assertTrue(SavedMetadataText.clothingLines("{broken").isEmpty());
     }
 }

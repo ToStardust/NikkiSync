@@ -22,7 +22,12 @@ export interface PcCompanionRuntimeConfig {
     service?: MetadataResolverServiceConfig
   }
   metadataDictionary?: MetadataDictionaryManifest
+  metadataDictionarySupplement?: MetadataDictionaryManifest
   metadataDictionaryRemote?: {
+    provider: MetadataDictionaryProvider
+    service?: MetadataDictionaryUpdateServiceConfig
+  }
+  metadataDictionarySupplementRemote?: {
     provider: MetadataDictionaryProvider
     service?: MetadataDictionaryUpdateServiceConfig
   }
@@ -42,13 +47,14 @@ export class PcCompanionRuntime {
   readonly metadataResolver?: MetadataResolverService
   readonly metadataDictionary?: MetadataDictionaryService
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
+  readonly metadataDictionarySupplementUpdater?: MetadataDictionaryUpdateService
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
-    if (config.metadataDictionary || config.metadataDictionaryRemote) {
-      this.metadataDictionary = new MetadataDictionaryService(this.database)
+    if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
+      this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
       if (config.metadataDictionaryRemote) {
         this.metadataDictionaryUpdater = new MetadataDictionaryUpdateService(
@@ -56,6 +62,12 @@ export class PcCompanionRuntime {
           this.metadataDictionary,
           config.metadataDictionaryRemote.provider,
           config.metadataDictionaryRemote.service
+        )
+      }
+      if (config.metadataDictionarySupplementRemote) {
+        this.metadataDictionarySupplementUpdater = new MetadataDictionaryUpdateService(
+          this.database, this.metadataDictionary, config.metadataDictionarySupplementRemote.provider,
+          { ...config.metadataDictionarySupplementRemote.service, mode: 'supplement' }
         )
       }
     }
@@ -83,6 +95,7 @@ export class PcCompanionRuntime {
       const server = await this.server.start()
       this.metadataDictionary?.reenrichResolvedAssets()
       this.metadataDictionaryUpdater?.start()
+      this.metadataDictionarySupplementUpdater?.start()
       this.metadataResolver?.start()
       return { scan, server }
     } catch (error) {
@@ -94,6 +107,7 @@ export class PcCompanionRuntime {
   async stop(): Promise<void> {
     this.metadataResolver?.stop()
     this.metadataDictionaryUpdater?.stop()
+    this.metadataDictionarySupplementUpdater?.stop()
     await this.server.stop()
     await this.scanner.stop()
     this.database.close()

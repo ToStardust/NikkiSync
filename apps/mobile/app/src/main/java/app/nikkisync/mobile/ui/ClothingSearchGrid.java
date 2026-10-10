@@ -18,10 +18,16 @@ import app.nikkisync.mobile.model.Models.ClothingSearchResult;
 import app.nikkisync.mobile.net.NikkiSyncClient;
 
 import java.util.List;
+import java.util.ArrayList;
 
 public final class ClothingSearchGrid {
     public interface Listener {
         void onPhotoClick(AssetSummary asset);
+    }
+
+    @FunctionalInterface
+    public interface ContextListener {
+        void onPhotoClick(AssetSummary asset, List<AssetSummary> displayedPhotos);
     }
 
     private static final int MAX_PHOTOS = 60;
@@ -35,11 +41,25 @@ public final class ClothingSearchGrid {
             ClothingSearchResult item,
             Listener listener
     ) {
+        return createWithContext(activity, client, images, item,
+                (asset, displayedPhotos) -> listener.onPhotoClick(asset));
+    }
+
+    public static View createWithContext(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ClothingSearchResult item,
+            ContextListener listener
+    ) {
         LinearLayout grid = new LinearLayout(activity);
         grid.setOrientation(LinearLayout.VERTICAL);
 
         List<ClothingSearchPhoto> photos = item.photos();
         int limit = Math.min(photos.size(), MAX_PHOTOS);
+        List<AssetSummary> displayed = new ArrayList<>(limit);
+        for (int i = 0; i < limit; i++) displayed.add(photos.get(i).asset());
+        List<AssetSummary> displayedPhotos = List.copyOf(displayed);
         int index = 0;
         while (index < limit) {
             LinearLayout row = new LinearLayout(activity);
@@ -64,7 +84,7 @@ public final class ClothingSearchGrid {
                         1
                 );
                 if (column > 0) cellLp.leftMargin = dp(activity, 7);
-                row.addView(photoCell(activity, client, images, item, photo, listener), cellLp);
+                row.addView(photoCell(activity, client, images, item, photo, displayedPhotos, listener), cellLp);
             }
             grid.addView(row, rowLp);
         }
@@ -89,7 +109,8 @@ public final class ClothingSearchGrid {
             ImageLoader images,
             ClothingSearchResult item,
             ClothingSearchPhoto photo,
-            Listener listener
+            List<AssetSummary> displayedPhotos,
+            ContextListener listener
     ) {
         int width = activity.getResources().getDisplayMetrics().widthPixels;
         int cellSize = Math.max(dp(activity, 92), (width - dp(activity, 88)) / 3);
@@ -138,7 +159,7 @@ public final class ClothingSearchGrid {
             cell.addView(live, liveLp);
         }
 
-        cell.setOnClickListener(v -> listener.onPhotoClick(photo.asset()));
+        cell.setOnClickListener(v -> listener.onPhotoClick(photo.asset(), displayedPhotos));
         return cell;
     }
 

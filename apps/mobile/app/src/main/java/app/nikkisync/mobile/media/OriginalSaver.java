@@ -20,6 +20,7 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 
 import app.nikkisync.mobile.util.Hex;
+import app.nikkisync.mobile.util.TaskProgress;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -34,6 +35,10 @@ public final class OriginalSaver {
      * SHA-256 verification, so NikkiSync does not recompress or degrade the source image.
      */
     public Uri save(Context context, NikkiSyncClient client, AssetSummary asset, int rotationDegrees) throws Exception {
+        return save(context,client,asset,rotationDegrees,TaskProgress.NONE);
+    }
+    public Uri save(Context context,NikkiSyncClient client,AssetSummary asset,int rotationDegrees,TaskProgress progress) throws Exception {
+        progress.update("读取照片信息",0,0);
         int normalizedRotation = normalizeRotation(rotationDegrees);
         AssetDetail detail = client.asset(asset.assetId());
         MediaResource original = detail.originalStill();
@@ -42,11 +47,20 @@ public final class OriginalSaver {
             throw new IllegalStateException("当前仅支持 JPEG 普通照片旋转保存");
         }
 
-        HttpsURLConnection connection = client.resource(asset.assetId(), original.resourceId());
+        boolean attachExif = context.getSharedPreferences("nikkisync.export", Context.MODE_PRIVATE).getBoolean("writeExif", true);
+        boolean exported = isJpeg(original.mimeType()) && (attachExif || normalizedRotation != 0);
+        HttpsURLConnection connection = exported ? client.exportStill(asset.assetId(), original.resourceId(), attachExif, normalizedRotation)
+                : client.resource(asset.assetId(), original.resourceId());
         int status = connection.getResponseCode();
-        if (status != 200) throw new IllegalStateException("原图请求失败：HTTP " + status);
+        if (status != 200) { connection.disconnect(); throw new IllegalStateException(exported ? "照片导出失败，请确认电脑已更新 NikkiSync：HTTP " + status : "原图请求失败：HTTP " + status); }
+        if (exported && (!Integer.toString(normalizedRotation).equals(connection.getHeaderField("X-NikkiSync-Rotation"))
+                || !(attachExif ? "1" : "0").equals(connection.getHeaderField("X-NikkiSync-Exif"))
+                || !"jpeg-exif-v1".equals(connection.getHeaderField("X-NikkiSync-Export")))) {
+            connection.disconnect(); throw new SecurityException("电脑返回的照片导出选项不一致");
+        }
         String expectedHash = connection.getHeaderField("X-NikkiSync-SHA256");
         if (expectedHash == null || !expectedHash.matches("[0-9a-fA-F]{64}")) {
+            connection.disconnect();
             throw new SecurityException("PC 未返回有效原图 SHA-256");
         }
 
@@ -61,22 +75,31 @@ public final class OriginalSaver {
 
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long length=connection.getContentLengthLong();long completed=0;int last=-1;
+            progress.update("下载并写入原图",0,length);
             try (InputStream raw = connection.getInputStream();
                  DigestInputStream input = new DigestInputStream(raw, digest);
                  OutputStream output = resolver.openOutputStream(uri, "w")) {
                 if (output == null) throw new IllegalStateException("系统相册无法写入文件");
                 byte[] buffer = new byte[128 * 1024]; int read;
-                while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+                while ((read = input.read(buffer)) >= 0) {
+                    if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("保存已取消");
+                    output.write(buffer, 0, read);completed+=read;
+                    int percent=length>0?(int)Math.min(100,completed*100.0/length):-1;
+                    if(percent!=last){last=percent;progress.update("下载并写入原图",completed,length);}
+                }
                 output.flush();
             }
             String actualHash = Hex.lower(digest.digest());
+            progress.update("校验原图并完成保存",0,0);
             if (!actualHash.equalsIgnoreCase(expectedHash)) {
                 throw new SecurityException("原图 SHA-256 校验失败，已取消保存");
             }
-            if (normalizedRotation != 0) applyExifRotation(resolver, uri, normalizedRotation);
+            if (!exported && normalizedRotation != 0) applyExifRotation(resolver, uri, normalizedRotation);
             ContentValues ready = new ContentValues();
             ready.put(MediaStore.Images.Media.IS_PENDING, 0);
             resolver.update(uri, ready, null, null);
+            progress.update("保存完成",1,1);
             return uri;
         } catch (Exception error) {
             resolver.delete(uri, null, null);

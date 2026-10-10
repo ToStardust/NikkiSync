@@ -33,7 +33,10 @@ data/
 *.env
 *.env.*
 local.properties
+project.private.config.json
 apps/mobile/.gradle/
 apps/mobile/app/build/
 apps/mobile/build/
 apps/mobile/local.properties
+apps/pc-companion/src/wechat/GalleryRuntime.cjs
+apps/pc-companion/src/wechat/GalleryRuntime.mjs

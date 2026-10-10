@@ -11,6 +11,9 @@ export class ScannerService {
   private status: ScannerStatus = 'stopped'; private installation?: Awaited<ReturnType<ScannerDiscovery['discover']>>
   private watcher: ScannerWatcher | undefined; private coordinator: ScanCoordinator; private reconciler: ScanReconciler
   private lastScan: ScanResult | undefined
+  private readonly pendingRoots = new Map<string, string>()
+  private pendingWaiters: Array<{ resolve: (result: ScanResult) => void; reject: (error: unknown) => void }> = []
+  private draining: Promise<void> | undefined
   constructor(private readonly database: DatabaseManager, config: ScannerConfig = {}) {
     const stability = { pollIntervalMs: 200, stableChecks: 3, maxWaitMs: 10_000, assumeStableIfOlderMs: 2000, ...config.stability }
     this.coordinator = new ScanCoordinator(new FileStabilityGuard(stability))
@@ -29,12 +32,16 @@ export class ScannerService {
     }
     this.status = 'running'; return result
   }
-  async stop(): Promise<void> { this.watcher?.stop(); this.watcher = undefined; this.status = 'stopped' }
+  async stop(): Promise<void> {
+    this.watcher?.stop(); this.watcher = undefined
+    await this.draining
+    this.status = 'stopped'
+  }
   async fullScan(): Promise<ScanResult> {
     if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
     if (!this.installation) throw new Error('Infinity Nikki installation was not found')
     const roots = [...this.installation.photoRoots, ...this.installation.motionRoots.filter((motionRoot) => !this.installation?.photoRoots.some((photoRoot) => motionRoot.toLowerCase().startsWith(`${photoRoot.toLowerCase()}\\`)))]
-    return this.runScan(roots)
+    return this.enqueueScan(roots)
   }
   async rescanPath(filePath: string): Promise<ScanResult> {
     if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
@@ -44,7 +51,33 @@ export class ScannerService {
     if (!sourceRoot) return this.fullScan()
     const relative = path.relative(sourceRoot, filePath).split(path.sep)
     const uid = relative.find((part) => /^\d{5,}$/.test(part))
-    return this.runScan([uid ? path.join(sourceRoot, uid) : sourceRoot])
+    return this.enqueueScan([uid ? path.join(sourceRoot, uid) : sourceRoot])
+  }
+  private enqueueScan(roots: string[]): Promise<ScanResult> {
+    // There is no queued pass to resolve waiters when a new install has no media directories.
+    if (roots.length === 0) return this.runScan([])
+    for (const root of roots) {
+      const key = path.resolve(root).toLowerCase()
+      if ([...this.pendingRoots.keys()].some(parent => key === parent || key.startsWith(parent + path.sep))) continue
+      for (const child of this.pendingRoots.keys()) if (child.startsWith(key + path.sep)) this.pendingRoots.delete(child)
+      this.pendingRoots.set(key, root)
+    }
+    const waiting = new Promise<ScanResult>((resolve, reject) => { this.pendingWaiters.push({ resolve, reject }) })
+    // One microtask coalesces a burst; new events during a pass form the next pass.
+    this.draining ??= Promise.resolve().then(() => this.drainScans())
+    return waiting
+  }
+  private async drainScans(): Promise<void> {
+    try {
+      while (this.pendingRoots.size) {
+        const roots = [...this.pendingRoots.values()], waiters = this.pendingWaiters
+        this.pendingRoots.clear(); this.pendingWaiters = []
+        try {
+          const result = await this.runScan(roots)
+          for (const waiter of waiters) waiter.resolve(result)
+        } catch (error) { for (const waiter of waiters) waiter.reject(error) }
+      }
+    } finally { this.draining = undefined; this.config.onSettled?.() }
   }
   private async runScan(roots: string[]): Promise<ScanResult> {
     this.status = 'scanning'; const scanId = `scan_${Date.now().toString(36)}`; const all = [] as Awaited<ReturnType<ScanCoordinator['scanRoot']>>[]

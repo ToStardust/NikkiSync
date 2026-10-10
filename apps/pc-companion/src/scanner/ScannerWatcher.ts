@@ -4,7 +4,7 @@ import path from 'node:path'
 export interface WatcherEvent { type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'; path: string }
 
 export class ScannerWatcher {
-  private watcher: FSWatcher | undefined
+  private watchers: FSWatcher[] = []
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private callback: ((event: WatcherEvent) => void) | undefined
   constructor(private readonly debounceMs = 250) {}
@@ -13,11 +13,11 @@ export class ScannerWatcher {
     this.stop(); this.callback = callback
     for (const root of roots) {
       try {
-        this.watcher = watch(root, { recursive: true }, (_event, fileName) => {
+        this.watchers.push(watch(root, { recursive: true }, (_event, fileName) => {
           if (!fileName) return
           const target = path.join(root, fileName.toString())
           this.push({ type: 'change', path: target })
-        })
+        }))
       } catch { /* a later full scan can still recover from unavailable watchers */ }
     }
   }
@@ -32,7 +32,8 @@ export class ScannerWatcher {
   }
 
   stop(): void {
-    this.watcher?.close(); this.watcher = undefined
+    for (const watcher of this.watchers) watcher.close()
+    this.watchers = []
     for (const timer of this.timers.values()) clearTimeout(timer)
     this.timers.clear(); this.callback = undefined
   }

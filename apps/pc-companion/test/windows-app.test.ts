@@ -1,10 +1,28 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { DatabaseManager } from '@nikkisync/database'
+import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import { DesktopStatusService } from '../src/desktop/DesktopStatusService.js'
 import { createDesktopControlServer } from '../src/desktop/DesktopControlServer.js'
 import { remotePanelScript } from '../src/desktop/RemoteBridgePanel.js'
+import { startupFailureRecord } from '../src/desktop/StartupFailure.js'
+
+test('startup report identifies common failures without logging source, paths or secrets', () => {
+  const privateText = ' C:\\Users\\PrivateUser\\photo.jpg token=private-token https://private.example uid=123456789'
+  for (const [message, expected] of [
+    ['Infinity Nikki installation was not found', 'GAME_NOT_FOUND'],
+    ['未找到局域网 IPv4 地址', 'NO_LAN'],
+    ['listen EADDRINUSE', 'PORT_IN_USE'],
+    ['SQLITE_CORRUPT', 'DATABASE_ERROR'],
+    ['unknown error', 'SERVICE_EXIT']
+  ]) {
+    const report = startupFailureRecord(new Error(message + privateText), 'scanner-and-lan')
+    assert.equal(report.code, expected)
+    const text = JSON.stringify(report)
+    for (const secret of ['PrivateUser', 'private-token', 'private.example', '123456789']) assert.ok(!text.includes(secret))
+    assert.equal(report.phase, 'scanner-and-lan')
+  }
+})
 
 test('closing the remote panel during its first status request cannot restart polling', async () => {
   class Element {
@@ -89,6 +107,22 @@ test('desktop remote controls require a local page token, select resources, repo
     assert.equal((await fetch(`${base}/api/remote/session/session-1`, { method: 'DELETE', headers })).status, 200)
     assert.equal(closed, true)
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())) }
+})
+
+test('desktop status counts current assets without loading library rows or large parameters', () => {
+  const database = new DatabaseManager(':memory:'); database.initialize()
+  const assets = new AssetRepository(database), service = new DesktopStatusService(database)
+  service['assets'].list = () => { throw new Error('Status must not hydrate the library') }
+  const input = { host: '192.168.1.8', port: 28080 }
+  try {
+    assets.create({ assetId: 'large', assetType: 'photo', discoveredAt: '2026-10-05T00:00:00.000Z', metadata: { raw: { nativeParamPayload: 'A'.repeat(256 * 1024) } } })
+    assert.equal(service.getStatus(input).assets, 1)
+    assets.create({ assetId: 'deleted', assetType: 'photo', assetState: 'deleted', discoveredAt: '2026-10-05T00:00:00.000Z' })
+    assert.equal(service.getStatus(input).assets, 2, 'retain the existing count of all indexed assets')
+    assets.hardDelete('large')
+    assert.equal(service.getStatus(input).assets, 1, 'counts read current rows instead of stale cached results')
+    assert.equal(service.getStatus({ ...input, assets: 0 }).assets, 0)
+  } finally { database.close() }
 })
 
 test('desktop status marks an empty device list as first run', () => {

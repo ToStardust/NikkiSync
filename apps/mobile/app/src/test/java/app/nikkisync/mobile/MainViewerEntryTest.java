@@ -1,0 +1,107 @@
+package app.nikkisync.mobile;
+
+import android.widget.Button;
+import app.nikkisync.mobile.model.Models.AssetSummary;
+import app.nikkisync.mobile.media.ImageLoader;
+import app.nikkisync.mobile.share.ShareCardExportCoordinator;
+import app.nikkisync.mobile.storage.SavedPhotoStore;
+import app.nikkisync.mobile.storage.EditedVariantStore;
+import java.lang.reflect.*;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
+import org.robolectric.RobolectricTestRunner;
+import static org.junit.Assert.*;
+
+@RunWith(RobolectricTestRunner.class)
+public class MainViewerEntryTest {
+    @Test public void viewerFindsPhotoThumbnailWithComputerScopedCacheKey() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic","photo","ready","2026-09-25T10:20:00Z",null,
+                    1,1000,1200,false,false,null,null,"2.9","inferred");
+            var scope=new android.widget.FrameLayout(activity);
+            var thumbnail=new android.widget.ImageView(activity);scope.addView(thumbnail);
+            Field loader=MainActivity.class.getDeclaredField("imageLoader");loader.setAccessible(true);
+            ((ImageLoader)loader.get(activity)).load(null,asset,thumbnail);
+            Method find=MainActivity.class.getDeclaredMethod("findThumbnail",android.view.View.class,String.class);find.setAccessible(true);
+            assertSame("The viewer must locate its original tile independently of the disk cache key",thumbnail,find.invoke(activity,scope,"synthetic:"));
+            assertNull(find.invoke(activity,scope,"another-photo:"));
+            // Recycled holders must not be mistaken for the previously opened photo.
+            var other=new AssetSummary("another-photo","photo","ready",null,null,2,1000,1200,false,false,null,null,null,null);
+            ((ImageLoader)loader.get(activity)).load(null,other,thumbnail);
+            assertNull(find.invoke(activity,scope,"synthetic:"));
+        } finally {cleanup(activity);}
+    }
+    private MainActivity fixture() throws Exception {
+        var activity=Robolectric.buildActivity(MainActivity.class).get();
+        set(activity,"shareCardExportCoordinator",new ShareCardExportCoordinator(activity,Runnable::run,Runnable::run));
+        set(activity,"imageLoader",new ImageLoader(activity));
+        set(activity,"savedPhotoStore",new SavedPhotoStore(activity));
+        invoke(activity,"buildUi",new Class<?>[0]);
+        return activity;
+    }
+    @Test public void openingFirstPhotoWithoutShareWorkShowsFullscreenViewer() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic","photo","ready","2026-09-25T10:20:00Z",null,
+                    1,1000,1200,false,false,null,null,"2.9","inferred");
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    @Test public void noPendingShareWorkCanBeCancelledWithoutTouchingButtons() throws Exception {
+        var activity=fixture();
+        try {invoke(activity,"cancelShareCardFrom",new Class<?>[]{Button.class},(Object)null);}
+        finally {cleanup(activity);}
+    }
+    @Test public void openingSavedPhotoWithoutShareWorkShowsFullscreenViewer() throws Exception {
+        var activity=fixture();
+        try {
+            var record=new SavedPhotoStore.Record("synthetic","content://media/external/images/media/100",0,false,0,
+                    "2026-09-25T10:20:00Z","2.9","jpg");
+            invoke(activity,"showSavedPhotoDetails",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    @Test public void openingEditedPhotoWithoutShareWorkShowsFullscreenViewer() throws Exception {
+        var activity=fixture();
+        try {
+            var variant=new EditedVariantStore.Variant("variant","synthetic","content://media/external/images/media/101",
+                    0,"synthetic.jpg","image/jpeg","content://media/external/images/media/100");
+            invoke(activity,"showEditedPhotoDetails",new Class<?>[]{EditedVariantStore.Variant.class},variant);
+            assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    private static void invoke(MainActivity activity,String name,Class<?>[] types,Object... args) throws Exception {
+        Method method=MainActivity.class.getDeclaredMethod(name,types);method.setAccessible(true);
+        try {method.invoke(activity,args);}catch(InvocationTargetException error){throw (Exception)error.getCause();}
+    }
+    @Test public void savingRotatedPhotoKeepsViewerDirectionForFollowingShare() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic","photo","ready","2026-09-25T10:20:00Z",null,
+                    1,1000,1200,false,false,null,null,"2.9","inferred");
+            invoke(activity,"rememberRotation",new Class<?>[]{String.class,int.class},"synthetic",90);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            invoke(activity,"applyCompletedSaves",new Class<?>[]{java.util.List.class,java.util.Map.class,boolean.class},
+                    java.util.List.of(asset),java.util.Map.of("synthetic",90),false);
+            Field field=MainActivity.class.getDeclaredField("rotationByAssetId");field.setAccessible(true);
+            assertEquals("Sharing must keep the direction still shown in the open viewer",90,((java.util.Map<?,?>)field.get(activity)).get("synthetic"));
+        } finally {cleanup(activity);}
+    }
+    private static void set(MainActivity activity,String name,Object value) throws Exception {
+        Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);field.set(activity,value);
+    }
+    private static void cleanup(MainActivity activity) throws Exception {
+        activity.navigationHost().close();
+        for(String name:new String[]{"io","shareWorker"}) {
+            Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);
+            ((java.util.concurrent.ExecutorService)field.get(activity)).shutdownNow();
+        }
+        Field field=MainActivity.class.getDeclaredField("imageLoader");field.setAccessible(true);
+        ((ImageLoader)field.get(activity)).shutdown();
+        field=MainActivity.class.getDeclaredField("savedAdapter");field.setAccessible(true);
+        ((app.nikkisync.mobile.ui.SavedPhotoAdapter)field.get(activity)).shutdown();
+    }
+}

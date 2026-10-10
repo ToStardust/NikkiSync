@@ -208,6 +208,11 @@ export class AssetRepository {
     ).all() as Record<string, unknown>[]
   }
 
+  /** Return the indexed asset count without materializing metadata or resource rows. */
+  count(): number {
+    return Number(this.database.connection.prepare('SELECT COUNT(*) AS count FROM assets').get()?.count ?? 0)
+  }
+
   updateState(assetId: string, state: AssetState, updatedAt = new Date().toISOString()): number {
     return this.database.transaction(() => {
       if (!this.getById(assetId)) throw new Error(`Asset not found: ${assetId}`)

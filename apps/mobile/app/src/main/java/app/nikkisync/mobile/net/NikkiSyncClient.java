@@ -24,10 +24,17 @@ import javax.net.ssl.HttpsURLConnection;
 public final class NikkiSyncClient {
     private final PairedServer server;
     private final SignedHttpClient http;
+    private final CachedAssetDetails details;
 
     public NikkiSyncClient(PairedServer server, DeviceIdentity identity) throws Exception {
+        this(server,identity,null);
+    }
+
+    public NikkiSyncClient(PairedServer server, DeviceIdentity identity, app.nikkisync.mobile.storage.AssetDetailCache cache) throws Exception {
         this.server = server;
         this.http = new SignedHttpClient(server, identity);
+        this.details=cache==null?null:new CachedAssetDetails(cache,server.serverId()+"\n"+server.tlsFingerprintSha256(),
+                id->http.json("GET","/v1/assets/"+encode(id)));
     }
 
     public static PairedServer pair(PairingPayload payload, DeviceIdentity identity) throws Exception {
@@ -57,25 +64,32 @@ public final class NikkiSyncClient {
     public AssetPage assets(String cursor, int limit) throws Exception {
         String path = "/v1/assets?limit=" + limit;
         if (cursor != null) path += "&cursor=" + encode(cursor);
-        return JsonCodec.assetPage(http.json("GET", path));
+        AssetPage page=JsonCodec.assetPage(http.json("GET", path));
+        if(details!=null) for(var asset:page.items()) details.observe(asset.assetId(),asset.revision());
+        return page;
     }
 
     public AssetDetail asset(String assetId) throws Exception {
-        return JsonCodec.assetDetail(http.json("GET", "/v1/assets/" + encode(assetId)));
+        return details==null?JsonCodec.assetDetail(http.json("GET", "/v1/assets/" + encode(assetId))):details.get(assetId);
     }
 
     public AssetDetail updateMetadata(String assetId, JSONObject patch) throws Exception {
         byte[] body = patch.toString().getBytes(StandardCharsets.UTF_8);
         HttpsURLConnection connection = http.open("PATCH", "/v1/assets/" + encode(assetId) + "/metadata", body, true);
-        return JsonCodec.assetDetail(SignedHttpClient.readUtf8(connection));
+        String response=SignedHttpClient.readUtf8(connection);
+        return details==null?JsonCodec.assetDetail(response):details.remember(assetId,response);
     }
 
     public SuitSearchResponse searchSuits(String query) throws Exception {
-        return JsonCodec.suitSearch(http.json("GET", "/v1/search/suits?q=" + encode(query)));
+        SuitSearchResponse response=JsonCodec.suitSearch(http.json("GET", "/v1/search/suits?q=" + encode(query)));
+        if(details!=null) for(var suit:response.items()) for(var photo:suit.photos()) details.observe(photo.asset().assetId(),photo.asset().revision());
+        return response;
     }
 
     public ClothingSearchResponse searchClothing(String query) throws Exception {
-        return JsonCodec.clothingSearch(http.json("GET", "/v1/search/clothing?q=" + encode(query)));
+        ClothingSearchResponse response=JsonCodec.clothingSearch(http.json("GET", "/v1/search/clothing?q=" + encode(query)));
+        if(details!=null) for(var clothing:response.items()) for(var photo:clothing.photos()) details.observe(photo.asset().assetId(),photo.asset().revision());
+        return response;
     }
 
     public ProfileStatsResponse profileStats() throws Exception {
@@ -83,11 +97,33 @@ public final class NikkiSyncClient {
     }
 
     public Changes changes(long after) throws Exception {
-        return JsonCodec.changes(http.json("GET", "/v1/changes?after=" + after));
+        Changes changes=JsonCodec.changes(http.json("GET", "/v1/changes?after=" + after));
+        if(details!=null) {
+            if(changes.fullResyncRequired()) details.clear();
+            else for(var change:changes.items()) details.observe(change.assetId(),change.revision());
+        }
+        return changes;
+    }
+
+    public void clearDetailCache() {if(details!=null) details.clear();}
+
+    public String clothingCacheVersion(String assetId) throws Exception {
+        String cached=details==null?null:details.peek(assetId);
+        if(cached==null)return "";
+        String metadata=JsonCodec.assetDetail(cached).metadataJson();
+        if(metadata==null) return "";
+        JSONObject raw=new JSONObject(metadata).optJSONObject("raw");
+        JSONObject dictionary=raw==null?null:raw.optJSONObject("dictionary");
+        return dictionary==null?"":dictionary.optString("providerVersion","");
     }
 
     public HttpsURLConnection resource(String assetId, String resourceId) throws Exception {
         return http.resource("/v1/assets/" + encode(assetId) + "/resources/" + encode(resourceId));
+    }
+    public HttpsURLConnection exportStill(String assetId, String resourceId, boolean exif, int rotation) throws Exception {
+        if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) throw new IllegalArgumentException("Invalid rotation");
+        return http.resource("/v1/assets/" + encode(assetId) + "/resources/" + encode(resourceId)
+                + "/export?exif=" + exif + "&rotation=" + rotation);
     }
 
     public HttpsURLConnection clothingThumbnail(String assetId, String clothingId) throws Exception {

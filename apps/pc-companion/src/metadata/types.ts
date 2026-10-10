@@ -51,4 +51,5 @@ export interface MetadataResolverServiceConfig {
   intervalMs?: number
   batchSize?: number
   retryAfterMs?: number
+  onWorkSettled?(): void
 }

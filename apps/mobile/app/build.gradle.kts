@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2.0-m2"
+        versionCode = 12
+        versionName = "0.2.11-rotation-return"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -39,4 +39,13 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.17")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
+
+// Keep the user-facing APK beside the existing desktop bundle after an Android build.
+tasks.register<Copy>("stageDebugApk") {
+    dependsOn("assembleDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")) {
+        rename { "NikkiSync-Android.apk" }
+    }
+    into(rootProject.projectDir.resolve("../../release/NikkiSync"))
 }

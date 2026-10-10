@@ -1,4 +1,4 @@
-import type { InfinityNikkiInstallation } from '../game-directory-discovery.js'
+import type { GameDiscoveryOptions, InfinityNikkiInstallation } from '../game-directory-discovery.js'
 import type { ResourceRole } from '@nikkisync/core'
 import type { ResolverCandidateInput } from '@nikkisync/database'
 import type { AssetReconcileResult, DatabaseManager } from '@nikkisync/database'
@@ -38,14 +38,12 @@ export interface StabilityConfig {
   assumeStableIfOlderMs: number
 }
 
-export interface ScannerConfig {
-  cachedInstallRoot?: string
-  startingPaths?: string[]
-  runningExecutablePaths?: string[]
+export interface ScannerConfig extends GameDiscoveryOptions {
   stability?: Partial<StabilityConfig>
   watcher?: boolean
   debounceMs?: number
   motionAssemblyGraceMs?: number
+  onSettled?(): void
 }
 
 export interface ScanResult {

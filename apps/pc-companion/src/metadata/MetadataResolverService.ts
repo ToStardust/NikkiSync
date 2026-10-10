@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { InfinityPhotoMetadata } from '@nikkisync/core'
-import { AssetRepository, type DatabaseManager } from '@nikkisync/database'
+import { AssetRepository, SyncReadRepository, type DatabaseManager } from '@nikkisync/database'
 import type { MetadataResolverServiceConfig, PhotoMetadataResolver } from './types.js'
 
 export interface PhotoMetadataDictionaryEnricher {
@@ -28,6 +28,8 @@ export class MetadataResolverService {
   private readonly assets: AssetRepository
   private timer: NodeJS.Timeout | undefined
   private running = false
+  private readonly reads: SyncReadRepository
+  private checked: { revision: number; provider: string; version: string | undefined; retryAt: number } | undefined
   private readonly config: Required<MetadataResolverServiceConfig>
 
   constructor(
@@ -37,11 +39,13 @@ export class MetadataResolverService {
     private readonly dictionaryEnricher?: PhotoMetadataDictionaryEnricher
   ) {
     this.assets = new AssetRepository(database)
+    this.reads = new SyncReadRepository(database)
     this.config = {
       enabled: config.enabled ?? true,
       intervalMs: config.intervalMs ?? 15_000,
       batchSize: config.batchSize ?? 12,
-      retryAfterMs: config.retryAfterMs ?? 10 * 60_000
+      retryAfterMs: config.retryAfterMs ?? 10 * 60_000,
+      onWorkSettled: config.onWorkSettled ?? (() => {})
     }
   }
 
@@ -58,8 +62,10 @@ export class MetadataResolverService {
 
   async runOnce(): Promise<number> {
     if (this.running || !this.config.enabled) return 0
+    const revision = this.reads.currentRevision(), provider = this.resolver.id, version = this.resolver.version
+    if (this.checked?.revision === revision && this.checked.provider === provider && this.checked.version === version && Date.now() < this.checked.retryAt) return 0
     this.running = true
-    let resolved = 0
+    let resolved = 0, attempts = 0, retryAt = Infinity
     try {
       const candidates = this.assets.listMetadataResolutionCandidates(this.config.batchSize)
       for (const row of candidates) {
@@ -92,9 +98,13 @@ export class MetadataResolverService {
           && state?.inputFingerprint === fingerprint
           && state?.lastAttemptAt) {
           const elapsed = Date.now() - Date.parse(String(state.lastAttemptAt))
-          if (Number.isFinite(elapsed) && elapsed < this.config.retryAfterMs) continue
+          if (Number.isFinite(elapsed) && elapsed < this.config.retryAfterMs) {
+            retryAt = Math.min(retryAt, Date.parse(String(state.lastAttemptAt)) + this.config.retryAfterMs)
+            continue
+          }
         }
         const attemptedAt = new Date().toISOString()
+        attempts++
         try {
           const result = await this.resolver.resolve({
             assetId, uid, nativeParamToken: token,
@@ -126,6 +136,7 @@ export class MetadataResolverService {
           })
           resolved++
         } catch (error) {
+          retryAt = Math.min(retryAt, Date.parse(attemptedAt) + this.config.retryAfterMs)
           this.assets.updateMetadata(assetId, {
             raw: {
               resolver: {
@@ -140,9 +151,11 @@ export class MetadataResolverService {
           })
         }
       }
+      this.checked = { revision, provider, version, retryAt }
       return resolved
     } finally {
       this.running = false
+      if (attempts) this.config.onWorkSettled()
     }
   }
 }

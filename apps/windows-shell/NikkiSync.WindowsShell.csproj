@@ -6,8 +6,15 @@
     <OutputType>WinExe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+    <Resource Include="..\..\assets\branding\momo-camera.png" Link="Assets\brand.png" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(PortablePayloadDirectory)' != ''">
+    <EmbeddedResource Include="$(PortablePayloadDirectory)\runtime.zip" LogicalName="NikkiSync.Runtime.zip" />
+    <EmbeddedResource Include="$(PortablePayloadDirectory)\runtime.json" LogicalName="NikkiSync.Runtime.json" />
   </ItemGroup>
 </Project>

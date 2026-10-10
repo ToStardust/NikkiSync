@@ -1,7 +1,8 @@
 const { parseRemoteQr } = require('../../lib/remote-qr.js');
 
 Page({
-  data: { state: 'idle', message: '请先在电脑选择照片，生成临时二维码。', endpoint: '', expiresAt: '', scanning: false },
+  data: { state: 'idle', message: '请先在电脑选择照片，生成临时二维码。', endpoint: '', expiresAt: '', scanning: false, toolsOpen: false },
+  toggleTools() { this.setData({ toolsOpen: !this.data.toolsOpen }); },
   onLoad() { this._generation = 0; this._alive = true; this._expiresAtMs = 0; },
   onShow() {
     if (this._expiresAtMs && Date.now() >= this._expiresAtMs) {

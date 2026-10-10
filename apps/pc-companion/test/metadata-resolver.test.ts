@@ -12,6 +12,25 @@ import { loadMetadataResolverConfigFile } from '../src/metadata/MetadataResolver
 import { Nuan5CompatibleResolver } from '../src/metadata/Nuan5CompatibleResolver.js'
 import { MetadataDictionaryService } from '../src/metadata/MetadataDictionaryService.js'
 
+test('unchanged resolver input does not keep loading parameter payloads and failed work still retries', async (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-05T00:00:00.000Z') })
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db)
+  assets.create({assetId:'idle-resolver',assetType:'photo',uid:'10001',discoveredAt:'2026-09-03T00:00:00.000Z',metadata:{raw:{nativeParamToken:'abc123=='}}})
+  let calls = 0, queries = 0
+  const resolver: PhotoMetadataResolver = {id:'idle-test', resolve:async()=>{calls++;throw new Error('Retry fixture')}}
+  const service = new MetadataResolverService(db,resolver,{retryAfterMs:30})
+  const repository=service['assets'],original=repository.listMetadataResolutionCandidates.bind(repository)
+  repository.listMetadataResolutionCandidates=(...args)=>{queries++;return original(...args)}
+  try {
+    await service.runOnce(); await service.runOnce(); await service.runOnce()
+    assert.equal(calls,1)
+    assert.equal(queries,2,'once the revision is unchanged, do not deserialize the same large parameters again')
+    context.mock.timers.tick(40)
+    await service.runOnce(); assert.equal(calls,2,'the retry deadline still wakes failed work')
+  } finally { service.stop(); db.close() }
+})
+
 test('NUAN5 resolver sends the verified decode-photo2 tuple without source media bytes', async () => {
   let received: { headers: http.IncomingHttpHeaders, body: Record<string, unknown> } | undefined
   const server = http.createServer(async (request, response) => {

@@ -1,0 +1,19 @@
+<view class="page">
+  <view class="eyebrow">开发实验 · 非正式功能</view>
+  <view class="title">电脑封装，微信保存。</view>
+  <view class="copy">仅使用动态彩色测试画面。无私人照片、无云端照片上传，不需要辅助 App。</view>
+  <view class="device">{{device}}</view>
+  <button class="primary" bindtap="scanTest" loading="{{busy}}" disabled="{{busy || saving}}">接收电脑的合成测试素材</button>
+  <view wx:if="{{ready}}" class="card">
+    <image class="cover" src="{{previewPath}}" mode="aspectFit" bindload="imageLoaded" binderror="imageFailed" />
+    <video class="clip" src="{{videoPath}}" controls="{{true}}" autoplay="{{false}}" show-fullscreen-btn="{{false}}" binderror="videoFailed" />
+    <view class="copy">视频是播放器对照，不是相册 LIVE 验收。请先播放，检查运动和测试音。</view>
+    <picker range="{{modes}}" value="{{mode}}" bindchange="changeMode" disabled="{{saving}}"><view class="selector">{{modes[mode]}} <text>⌄</text></view></picker>
+    <view class="warning">每次测试会尝试新增 1 个项目；方式 4 最多新增 2 个项目。不会删除已有相册内容。</view>
+    <button class="primary" bindtap="saveCandidate" loading="{{saving}}" disabled="{{saving || busy || !previewReady}}">测试所选保存方式</button>
+  </view>
+  <view class="status">{{message}}</view>
+  <view wx:if="{{result}}" class="result">{{result}}</view>
+  <view class="checklist">验收：回到 iPhone 系统相册 → 是否只有一个 LIVE 项目 → 长按能否播放完整 2 秒与声音 → 关闭相册重开后能否继续播放。静态图、普通视频、两条独立项目均不算通过。</view>
+  <view class="copy">方式 3 与 4 之间请手动清除本次测试产生的合成项目后再试，避免同一测试标识的重复导入干扰结果。不要删除自己的其他照片。</view>
+</view>

@@ -1,5 +1,8 @@
 using System.Windows;
+using System.IO;
+using System.Text.Json;
 using NikkiSync.WindowsShell.Services;
+using Microsoft.Web.WebView2.Core;
 
 namespace NikkiSync.WindowsShell;
 
@@ -9,8 +12,72 @@ public partial class App : System.Windows.Application
     private MainWindow? _mainWindow;
     private bool _activationPending;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
+        // Full boot acceptance bypasses the normal single-instance activation only
+        // with explicitly isolated data and loopback ports; never scan into the real DB.
+        if (e.Args.Length == 3 && e.Args[0] == "--verify-startup")
+        {
+            var directory = Path.GetFullPath(e.Args[1]);
+            var privateData = Path.Combine(directory, "localdata");
+            if (!string.Equals(Path.GetFullPath(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? ""), privateData, StringComparison.OrdinalIgnoreCase)
+                || !int.TryParse(e.Args[2], out var port) || port is < 1 or > 65535 || port == 28950
+                || Environment.GetEnvironmentVariable("NIKKISYNC_BIND") != "127.0.0.1"
+                || Environment.GetEnvironmentVariable("NIKKISYNC_PORT") != "0"
+                || Environment.GetEnvironmentVariable("NIKKISYNC_MDNS") != "0")
+            { Shutdown(2); return; }
+            base.OnStartup(e);
+            var verificationWindow = new MainWindow(port, directory) { Left = -10000, Top = -10000, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual };
+            MainWindow = verificationWindow;
+            verificationWindow.Show();
+            var ok = await verificationWindow.StartupCompleted;
+            File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
+            {
+                ok,
+                stages = verificationWindow.StartupTimings,
+                browserVisible = verificationWindow.ControlPage.Visibility == Visibility.Visible,
+                loaderHidden = verificationWindow.StartupPanel.Visibility == Visibility.Collapsed,
+                privateData = true
+            }));
+            await verificationWindow.ExitAsync();
+            return;
+        }
+        // Build verification: exercise the actual embedded payload without opening a
+        // browser, scanning the game, touching the user's database or activating an old app.
+        if (e.Args.Length == 2 && (e.Args[0] == "--verify-package" || e.Args[0] == "--verify-webview"))
+        {
+            var directory = Path.GetFullPath(e.Args[1]);
+            Window? verificationWindow = null;
+            try
+            {
+                var runtime = RuntimePayload.Prepare(Path.Combine(directory, "runtime-cache"));
+                Directory.CreateDirectory(directory);
+                string? browserVersion = null;
+                if (e.Args[0] == "--verify-webview")
+                {
+                    var webview = new Microsoft.Web.WebView2.Wpf.WebView2();
+                    verificationWindow = new Window { Width = 32, Height = 32, Left = -10000, Top = -10000, ShowInTaskbar = false, Content = webview };
+                    verificationWindow.Show();
+                    var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(directory, "webview2"));
+                    await webview.EnsureCoreWebView2Async(environment);
+                    browserVersion = webview.CoreWebView2.Environment.BrowserVersionString;
+                    var script = await webview.ExecuteScriptAsync("JSON.stringify({ready:1+1===2})");
+                    if (!script.Contains("ready")) throw new InvalidDataException("WebView script engine did not respond.");
+                    webview.Dispose();
+                }
+                File.WriteAllText(Path.Combine(directory, "verification.json"), JsonSerializer.Serialize(new { ok = true, runtimeDirectory = runtime, payloadEmbedded = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceNames().Contains(RuntimePayload.ArchiveResource), browserVersion }));
+                verificationWindow?.Close();
+                Shutdown(0);
+            }
+            catch (Exception error)
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, "verification.json"), JsonSerializer.Serialize(new { ok = false, error = error.Message }));
+                verificationWindow?.Close();
+                Shutdown(1);
+            }
+            return;
+        }
         _singleInstance = new SingleInstanceCoordinator();
         _singleInstance.ActivationRequested += OnActivationRequested;
 
