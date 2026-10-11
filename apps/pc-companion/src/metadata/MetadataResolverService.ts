@@ -30,6 +30,10 @@ export class MetadataResolverService {
   private running = false
   private readonly reads: SyncReadRepository
   private checked: { revision: number; provider: string; version: string | undefined; retryAt: number } | undefined
+  private sweep: {
+    revision: number; provider: string; version: string | undefined; retryAt: number
+    after: { discoveredAt: string; assetId: string }
+  } | undefined
   private readonly config: Required<MetadataResolverServiceConfig>
 
   constructor(
@@ -66,92 +70,115 @@ export class MetadataResolverService {
     if (this.checked?.revision === revision && this.checked.provider === provider && this.checked.version === version && Date.now() < this.checked.retryAt) return 0
     this.running = true
     let resolved = 0, attempts = 0, retryAt = Infinity
+    let expectedRevision = revision, externallyChanged = false, exhausted = false, visited = 0
+    const continuation = this.sweep?.revision === revision && this.sweep.provider === provider
+      && this.sweep.version === version && Date.now() < this.sweep.retryAt ? this.sweep : undefined
+    let after = continuation?.after
+    retryAt = continuation?.retryAt ?? Infinity
+    const batchSize = Math.max(1, Math.floor(this.config.batchSize))
+    const visitBudget = Math.max(128, batchSize)
+    const recordMutation = (nextRevision: number) => {
+      // Dictionary/scanner edits during an awaited request may affect rows before the cursor.
+      if (nextRevision !== expectedRevision + 1) externallyChanged = true
+      expectedRevision = nextRevision
+    }
     try {
-      const candidates = this.assets.listMetadataResolutionCandidates(this.config.batchSize)
-      for (const row of candidates) {
-        const metadata = metadataOf(row)
-        const state = metadata.raw?.resolver
-        const assetId = String(row.asset_id)
-        const uid = String(row.uid ?? '')
-        const token = String(metadata.raw?.nativeParamToken ?? '')
-        const payload = typeof metadata.raw?.nativeParamPayload === 'string'
-          ? String(metadata.raw.nativeParamPayload)
-          : undefined
-        const nuan5Md5 = typeof metadata.raw?.nativeParamNuan5Md5 === 'string'
-          ? String(metadata.raw.nativeParamNuan5Md5)
-          : undefined
-        if (!uid || !token) continue
-        const fingerprint = inputFingerprint(uid, token, payload, nuan5Md5)
-        const payloadMd5 = payload ? createHash('md5').update(payload, 'ascii').digest('hex') : undefined
-        const payloadFormat = classifyPayload(payload)
-        const payloadDecodedBytes = payloadFormat ? Buffer.from(payload!, 'base64').length : undefined
-        const currentProviderVersion = this.resolver.version
-        const providerVersionMatches = currentProviderVersion === undefined
-          || String(state?.providerVersion ?? '') === currentProviderVersion
-        if (state?.status === 'resolved'
-          && state?.provider === this.resolver.id
-          && providerVersionMatches
-          && state?.inputFingerprint === fingerprint) continue
-        if (state?.status === 'failed'
-          && state?.provider === this.resolver.id
-          && providerVersionMatches
-          && state?.inputFingerprint === fingerprint
-          && state?.lastAttemptAt) {
-          const elapsed = Date.now() - Date.parse(String(state.lastAttemptAt))
-          if (Number.isFinite(elapsed) && elapsed < this.config.retryAfterMs) {
-            retryAt = Math.min(retryAt, Date.parse(String(state.lastAttemptAt)) + this.config.retryAfterMs)
-            continue
+      while (attempts < batchSize && visited < visitBudget) {
+        const pageSize = Math.min(batchSize, visitBudget - visited)
+        const candidates = this.assets.listMetadataResolutionCandidates(pageSize, after)
+        if (candidates.length === 0) { exhausted = true; break }
+        for (const row of candidates) {
+          if (attempts >= batchSize) break
+          visited++
+          after = { discoveredAt: String(row.discovered_at), assetId: String(row.asset_id) }
+          const metadata = metadataOf(row)
+          const state = metadata.raw?.resolver
+          const assetId = String(row.asset_id)
+          const uid = String(row.uid ?? '')
+          const token = String(metadata.raw?.nativeParamToken ?? '')
+          const payload = typeof metadata.raw?.nativeParamPayload === 'string'
+            ? String(metadata.raw.nativeParamPayload)
+            : undefined
+          const nuan5Md5 = typeof metadata.raw?.nativeParamNuan5Md5 === 'string'
+            ? String(metadata.raw.nativeParamNuan5Md5)
+            : undefined
+          if (!uid || !token) continue
+          const fingerprint = inputFingerprint(uid, token, payload, nuan5Md5)
+          const payloadMd5 = payload ? createHash('md5').update(payload, 'ascii').digest('hex') : undefined
+          const payloadFormat = classifyPayload(payload)
+          const payloadDecodedBytes = payloadFormat ? Buffer.from(payload!, 'base64').length : undefined
+          const currentProviderVersion = this.resolver.version
+          const providerVersionMatches = currentProviderVersion === undefined
+            || String(state?.providerVersion ?? '') === currentProviderVersion
+          if (state?.status === 'resolved'
+            && state?.provider === this.resolver.id
+            && providerVersionMatches
+            && state?.inputFingerprint === fingerprint) continue
+          if (state?.status === 'failed'
+            && state?.provider === this.resolver.id
+            && providerVersionMatches
+            && state?.inputFingerprint === fingerprint
+            && state?.lastAttemptAt) {
+            const elapsed = Date.now() - Date.parse(String(state.lastAttemptAt))
+            if (Number.isFinite(elapsed) && elapsed < this.config.retryAfterMs) {
+              retryAt = Math.min(retryAt, Date.parse(String(state.lastAttemptAt)) + this.config.retryAfterMs)
+              continue
+            }
+          }
+          const attemptedAt = new Date().toISOString()
+          attempts++
+          try {
+            const result = await this.resolver.resolve({
+              assetId, uid, nativeParamToken: token,
+              ...(payload ? { nativeParamPayload: payload } : {}),
+              ...(payloadMd5 ? { nativeParamPayloadMd5: payloadMd5 } : {}),
+              ...(payloadFormat ? { nativeParamPayloadFormat: payloadFormat } : {}),
+              ...(payloadDecodedBytes === undefined ? {} : { nativeParamPayloadDecodedBytes: payloadDecodedBytes }),
+              ...(nuan5Md5 ? { nativeParamNuan5Md5: nuan5Md5 } : {})
+            })
+            const enrichedMetadata = this.dictionaryEnricher?.enrichMetadata(result.metadata) ?? result.metadata
+            const providerRaw = enrichedMetadata.raw && typeof enrichedMetadata.raw === 'object'
+              ? enrichedMetadata.raw as Record<string, unknown>
+              : {}
+            recordMutation(this.assets.updateMetadata(assetId, {
+              ...enrichedMetadata,
+              raw: {
+                ...providerRaw,
+                resolver: {
+                  status: 'resolved',
+                  provider: result.provider,
+                  ...(result.providerVersion ?? currentProviderVersion
+                    ? { providerVersion: result.providerVersion ?? currentProviderVersion }
+                    : {}),
+                  inputFingerprint: fingerprint,
+                  resolvedAt: new Date().toISOString()
+                },
+                ...(result.rawResponse === undefined ? {} : { resolverResponse: result.rawResponse })
+              }
+            }))
+            resolved++
+          } catch (error) {
+            retryAt = Math.min(retryAt, Date.parse(attemptedAt) + this.config.retryAfterMs)
+            recordMutation(this.assets.updateMetadata(assetId, {
+              raw: {
+                resolver: {
+                  status: 'failed',
+                  provider: this.resolver.id,
+                  ...(currentProviderVersion ? { providerVersion: currentProviderVersion } : {}),
+                  inputFingerprint: fingerprint,
+                  lastAttemptAt: attemptedAt,
+                  error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
+                }
+              }
+            }))
           }
         }
-        const attemptedAt = new Date().toISOString()
-        attempts++
-        try {
-          const result = await this.resolver.resolve({
-            assetId, uid, nativeParamToken: token,
-            ...(payload ? { nativeParamPayload: payload } : {}),
-            ...(payloadMd5 ? { nativeParamPayloadMd5: payloadMd5 } : {}),
-            ...(payloadFormat ? { nativeParamPayloadFormat: payloadFormat } : {}),
-            ...(payloadDecodedBytes === undefined ? {} : { nativeParamPayloadDecodedBytes: payloadDecodedBytes }),
-            ...(nuan5Md5 ? { nativeParamNuan5Md5: nuan5Md5 } : {})
-          })
-          const enrichedMetadata = this.dictionaryEnricher?.enrichMetadata(result.metadata) ?? result.metadata
-          const providerRaw = enrichedMetadata.raw && typeof enrichedMetadata.raw === 'object'
-            ? enrichedMetadata.raw as Record<string, unknown>
-            : {}
-          this.assets.updateMetadata(assetId, {
-            ...enrichedMetadata,
-            raw: {
-              ...providerRaw,
-              resolver: {
-                status: 'resolved',
-                provider: result.provider,
-                ...(result.providerVersion ?? currentProviderVersion
-                  ? { providerVersion: result.providerVersion ?? currentProviderVersion }
-                  : {}),
-                inputFingerprint: fingerprint,
-                resolvedAt: new Date().toISOString()
-              },
-              ...(result.rawResponse === undefined ? {} : { resolverResponse: result.rawResponse })
-            }
-          })
-          resolved++
-        } catch (error) {
-          retryAt = Math.min(retryAt, Date.parse(attemptedAt) + this.config.retryAfterMs)
-          this.assets.updateMetadata(assetId, {
-            raw: {
-              resolver: {
-                status: 'failed',
-                provider: this.resolver.id,
-                ...(currentProviderVersion ? { providerVersion: currentProviderVersion } : {}),
-                inputFingerprint: fingerprint,
-                lastAttemptAt: attemptedAt,
-                error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
-              }
-            }
-          })
-        }
+        if (candidates.length < pageSize && attempts < batchSize) { exhausted = true; break }
       }
-      this.checked = { revision, provider, version, retryAt }
+      if (this.reads.currentRevision() !== expectedRevision) externallyChanged = true
+      this.checked = !externallyChanged && exhausted ? { revision: expectedRevision, provider, version, retryAt } : undefined
+      this.sweep = !externallyChanged && !exhausted && after
+        ? { revision: expectedRevision, provider, version, retryAt, after } : undefined
       return resolved
     } finally {
       this.running = false

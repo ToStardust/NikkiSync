@@ -11,6 +11,136 @@ import type { PhotoMetadataResolver } from '../src/metadata/types.js'
 import { loadMetadataResolverConfigFile } from '../src/metadata/MetadataResolverConfigFile.js'
 import { Nuan5CompatibleResolver } from '../src/metadata/Nuan5CompatibleResolver.js'
 import { MetadataDictionaryService } from '../src/metadata/MetadataDictionaryService.js'
+import { metadataResolutionDiagnostics } from '../src/metadata/MetadataResolutionDiagnostics.js'
+
+function seedFirstRun(assets: AssetRepository, count: number): void {
+  for (let index = 0; index < count; index++) assets.create({
+    assetId: `first-run-${String(index).padStart(3, '0')}`, assetType: 'photo', uid: '10001',
+    discoveredAt: '2026-09-03T00:00:00.000Z',
+    metadata: { camera: {}, raw: { nativeParamToken: `fixture-${index}` } }
+  })
+}
+
+test('metadata diagnostic report contains only aggregate counts and allowlisted failure categories', () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 3)
+  assets.updateMetadata('first-run-000', { camera: { focalLength: 50 }, dressing: { clothes: [{ id: '101', name: 'private outfit name' }] },
+    raw: { nativeParamPayload: 'private-payload', nativeParamNuan5Md5: 'private-digest', resolver: { status: 'resolved' } } })
+  assets.updateMetadata('first-run-001', { raw: { resolver: { status: 'failed', error: 'fetch failed https://private.example/?secret=credential' } } })
+  assets.create({ assetId: 'private-live-id', assetType: 'motion_photo', uid: '987654321', discoveredAt: '2026-09-03', metadata: {} })
+  try {
+    const report = metadataResolutionDiagnostics(db, true)
+    assert.equal(report.ordinaryPhotos, 3)
+    assert.equal(report.withNativeToken, 3)
+    assert.equal(report.withCompleteEnvelope, 1)
+    assert.equal(report.resolved, 1)
+    assert.equal(report.failed, 1)
+    assert.equal(report.pending, 1)
+    assert.equal(report.withOutfit, 1)
+    assert.equal(report.withCamera, 1)
+    assert.equal(report.motionPhotos, 1)
+    assert.deepEqual(report.failureCategories, { networkOrTimeout: 1 })
+    const text = JSON.stringify(report)
+    for (const secret of ['first-run-', '10001', '987654321', 'private', 'credential', 'fixture-', 'https://']) assert.equal(text.includes(secret), false)
+    assert.equal(metadataResolutionDiagnostics(db, false).resolverEnabled, false)
+  } finally { db.close() }
+})
+
+test('clean first run resolves photos beyond the first batch and stops querying when complete', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 25)
+  const calls: string[] = []
+  const resolver: PhotoMetadataResolver = { id: 'first-run', resolve: async request => {
+    calls.push(request.assetId)
+    return { provider: 'first-run', metadata: { camera: { focalLength: 50 }, dressing: { clothes: [101] } } }
+  } }
+  const service = new MetadataResolverService(db, resolver)
+  let queries = 0
+  const repository = service['assets'], original = repository.listMetadataResolutionCandidates.bind(repository)
+  repository.listMetadataResolutionCandidates = (...args) => { queries++; return original(...args) }
+  try {
+    assert.equal(await service.runOnce(), 12)
+    assert.equal(await service.runOnce(), 12, 'resolved first batch must not hide the next batch')
+    assert.equal(await service.runOnce(), 1)
+    assert.equal(new Set(calls).size, 25)
+    for (let index = 0; index < 25; index++) {
+      const metadata = JSON.parse(String(assets.getById(`first-run-${String(index).padStart(3, '0')}`)?.metadata_json))
+      assert.equal(metadata.camera.focalLength, 50)
+      assert.deepEqual(metadata.dressing.clothes, [101])
+    }
+    await service.runOnce(); const completedQueries = queries
+    await service.runOnce(); await service.runOnce()
+    assert.equal(queries, completedQueries, 'idle polling must not reload large native payloads')
+    assert.equal(calls.length, 25, 'completed photos must not trigger duplicate remote calls')
+  } finally { service.stop(); db.close() }
+})
+
+test('a large already-resolved library is walked in bounded pages and becomes idle without remote calls', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 300)
+  let calls = 0
+  const resolver: PhotoMetadataResolver = { id: 'bounded-sweep', resolve: async () => {
+    calls++; return { provider: 'bounded-sweep', metadata: { camera: { focalLength: 50 } } }
+  } }
+  const initial = new MetadataResolverService(db, resolver, { batchSize: 400 })
+  const restarted = new MetadataResolverService(db, resolver)
+  const repository = restarted['assets'], original = repository.listMetadataResolutionCandidates.bind(repository)
+  let rowsRead = 0
+  repository.listMetadataResolutionCandidates = (...args) => {
+    const rows = original(...args); assert.ok(rows.length <= 12); rowsRead += rows.length; return rows
+  }
+  try {
+    assert.equal(await initial.runOnce(), 300)
+    for (let turn = 0; turn < 3; turn++) {
+      const before = rowsRead; await restarted.runOnce()
+      assert.ok(rowsRead - before <= 128, 'cached native envelopes must not all be read in one idle tick')
+    }
+    assert.equal(rowsRead, 300)
+    await restarted.runOnce(); assert.equal(rowsRead, 300)
+    assert.equal(calls, 300, 'restart must not submit already resolved photos again')
+  } finally { initial.stop(); restarted.stop(); db.close() }
+})
+
+test('a failed first batch in retry cooldown does not starve later first-run photos', async context => {
+  context.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-11T00:00:00Z') })
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 25)
+  const calls: string[] = []
+  const resolver: PhotoMetadataResolver = { id: 'partial-failure', resolve: async request => {
+    calls.push(request.assetId)
+    if (Number(request.assetId.slice(-3)) < 12) throw new Error('Temporary provider outage fixture')
+    return { provider: 'partial-failure', metadata: { dressing: { clothes: [101] } } }
+  } }
+  const service = new MetadataResolverService(db, resolver, { retryAfterMs: 60_000 })
+  try {
+    assert.equal(await service.runOnce(), 0)
+    assert.equal(await service.runOnce(), 12, 'failed photos must not block eligible later photos')
+    assert.equal(await service.runOnce(), 1)
+    assert.equal(calls.length, 25)
+    await service.runOnce(); assert.equal(calls.length, 25)
+    context.mock.timers.tick(60_001)
+    await service.runOnce()
+    assert.equal(calls.length, 37, 'retry deadline must revisit the failed batch without repeating successes')
+  } finally { service.stop(); db.close() }
+})
+
+test('first-run continuation does not miss earlier input changes during a remote resolve', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 3)
+  const calls: string[] = []
+  const resolver: PhotoMetadataResolver = { id: 'changed-input', resolve: async request => {
+    calls.push(`${request.assetId}:${request.nativeParamToken}`)
+    if (request.assetId === 'first-run-001') assets.updateMetadata('first-run-000', { raw: { nativeParamToken: 'changed' } })
+    return { provider: 'changed-input', metadata: { camera: { focalLength: 50 } } }
+  } }
+  const service = new MetadataResolverService(db, resolver, { batchSize: 1 })
+  try {
+    await service.runOnce(); await service.runOnce(); await service.runOnce()
+    assert.ok(calls.includes('first-run-000:changed'), 'external writes during a batch must restart the sweep')
+    await service.runOnce(); await service.runOnce()
+    assert.ok(calls.some(call => call.startsWith('first-run-002:')))
+  } finally { service.stop(); db.close() }
+})
 
 test('unchanged resolver input does not keep loading parameter payloads and failed work still retries', async (context) => {
   context.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-05T00:00:00.000Z') })
@@ -25,7 +155,7 @@ test('unchanged resolver input does not keep loading parameter payloads and fail
   try {
     await service.runOnce(); await service.runOnce(); await service.runOnce()
     assert.equal(calls,1)
-    assert.equal(queries,2,'once the revision is unchanged, do not deserialize the same large parameters again')
+    assert.equal(queries,1,'completed sweep accounts for its own revisions without reloading the same large parameters')
     context.mock.timers.tick(40)
     await service.runOnce(); assert.equal(calls,2,'the retry deadline still wakes failed work')
   } finally { service.stop(); db.close() }

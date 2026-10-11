@@ -5,6 +5,7 @@ import { PcCompanionRuntime } from './runtime.js'
 import { RuntimeMemoryMaintenance } from './RuntimeMemoryMaintenance.js'
 import { qrSvg } from './qr.js'
 import { loadMetadataResolverConfigFile } from './metadata/MetadataResolverConfigFile.js'
+import { metadataResolutionDiagnostics } from './metadata/MetadataResolutionDiagnostics.js'
 import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigFile.js'
 import { clothingNameSupplement } from './metadata/VerifiedClothingNames.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
@@ -84,13 +85,14 @@ async function main(): Promise<void> {
       : {})
   } : undefined
   const resolver = composeMetadataResolver(resolverFile, environmentResolverConfig)
+  let metadataDiagnosticRevision: number | undefined
 
   startupPhase = 'database-and-tls'
-  const runtime = new PcCompanionRuntime({
+  const runtime: PcCompanionRuntime = new PcCompanionRuntime({
     databaseFile: DATABASE_FILE,
     remoteBridge: true,
     scanner: {
-      onSettled: () => memoryMaintenance.schedule(),
+      onSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() },
       ...(cachedGameRoot ? { cachedInstallRoot: cachedGameRoot } : {}),
       onDiscoveryComplete: report => {
         try { writeFileSync(path.join(APP_DATA, 'game-discovery.log'), JSON.stringify({ build: '2026.10.11-auto-discovery', ...report }, null, 2), 'utf8') } catch { /* best-effort diagnostics */ }
@@ -118,7 +120,7 @@ async function main(): Promise<void> {
     ...(resolver ? {
       metadataResolver: {
         resolver,
-        service: { onWorkSettled: () => memoryMaintenance.schedule() }
+        service: { onWorkSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() } }
       }
     } : {}),
     server: {
@@ -129,8 +131,17 @@ async function main(): Promise<void> {
       metadataThumbnailCache
     }
   })
+  function writeMetadataStatus(): void {
+    try {
+      const row = runtime.database.connection.prepare('SELECT library_revision FROM library_state WHERE id = 1').get() as { library_revision: number }
+      if (metadataDiagnosticRevision === row.library_revision) return
+      writeFileSync(path.join(APP_DATA, 'metadata-status.json'), JSON.stringify(metadataResolutionDiagnostics(runtime.database, Boolean(resolver)), null, 2), 'utf8')
+      metadataDiagnosticRevision = row.library_revision
+    } catch { /* best-effort aggregate diagnostics; never include raw data in a fallback */ }
+  }
   startupPhase = 'scanner-and-lan'
   const started = await runtime.start()
+  writeMetadataStatus()
   const installRoot = runtime.scanner.getStatus().installation?.installRoot
   if (installRoot) {
     try { writeFileSync(GAME_ROOT_CACHE_FILE, `${installRoot}\n`, 'utf8') } catch { /* best-effort startup cache */ }
