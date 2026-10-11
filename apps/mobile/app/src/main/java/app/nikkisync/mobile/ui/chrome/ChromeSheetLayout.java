@@ -62,6 +62,7 @@ public final class ChromeSheetLayout extends ViewGroup {
     }
     public View getDragHandle(){return dragHandle;}
     void setPhotoDetailGeometryListener(Runnable listener){geometryChanged=listener;}
+    @Override public void setTranslationY(float value){super.setTranslationY(value);if(geometryChanged!=null)geometryChanged.run();}
     private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private boolean handleDrag(MotionEvent event){
         switch(event.getActionMasked()){
@@ -89,6 +90,8 @@ public final class ChromeSheetLayout extends ViewGroup {
     private void settleExpanded(boolean value){expanded=value;draggedFormHeight=-1;requestLayout();geometryChanged.run();}
     @Override protected LayoutParams generateDefaultLayoutParams(){return new LayoutParams(-1,-2);}
     @Override protected void onMeasure(int widthSpec,int heightSpec){
+        // Expanded photo details still leave the upper third for the actual photo.
+        if(dragHandle!=null)heightSpec=MeasureSpec.makeMeasureSpec(MeasureSpec.getSize(heightSpec)*2/3,MeasureSpec.AT_MOST);
         int width=MeasureSpec.getSize(widthSpec),available=Math.max(0,MeasureSpec.getSize(heightSpec)-getPaddingTop()-getPaddingBottom());
         int childWidth=MeasureSpec.makeMeasureSpec(Math.max(0,width-getPaddingLeft()-getPaddingRight()),MeasureSpec.EXACTLY);
         if(dragHandle!=null){dragHandle.measure(childWidth,MeasureSpec.makeMeasureSpec(dp(24),MeasureSpec.EXACTLY));available=Math.max(0,available-dragHandle.getMeasuredHeight());}

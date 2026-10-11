@@ -22,6 +22,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     private View header;
     private LinearLayout details;
     private View sheet;
+    private float detailsBottom=Float.NaN;
     private float reveal;
     private boolean chromeVisible=true;
     private float zoom=1,dragX,dragY;
@@ -49,7 +50,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(image!=null)image.animate().cancel();resetAdjacent();
         source=thumbnail;sourceTag=sourceIdentity(thumbnail);transition.seed=thumbnail==null?null:copy(thumbnail.getDrawable());
         removeAllViews();addView(backdrop,new LayoutParams(-1,-1));toolbar.removeAllViews();
-        image=null;previousPhoto=nextPhoto=null;header=null;details=null;sheet=null;zoom=1;dragX=dragY=0;chromeVisible=true;
+        image=null;previousPhoto=nextPhoto=null;header=null;details=null;sheet=null;detailsBottom=Float.NaN;zoom=1;dragX=dragY=0;chromeVisible=true;
     }
 
     public PhotoViewerPage(Activity activity,ImageView source){
@@ -156,6 +157,9 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     public void dismiss(){navigation.dismiss(this);}
     public void openDetails(){
         if(sheet!=null&&sheet.getParent()!=null)return;
+        if(zoomAnimation!=null)zoomAnimation.cancel();
+        image.animate().cancel();resetAdjacent();
+        float savedZoom=zoom,savedX=dragX,savedY=dragY;
         if(details.getParent() instanceof android.view.ViewGroup parent)parent.removeView(details);
         ScrollView scroller=new ScrollView(getContext());scroller.addView(details);
         LinearLayout heading=new LinearLayout(getContext());heading.setGravity(Gravity.CENTER_VERTICAL);heading.setPadding(dp(8),0,0,dp(12));
@@ -165,7 +169,10 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         heading.addView(done,new LinearLayout.LayoutParams(dp(72),dp(48)));
         ChromeSheetLayout opened=new ChromeSheetLayout(getContext(),heading,scroller,new FrameLayout(getContext()));sheet=opened;
         done.setOnClickListener(v->navigation.dismiss(opened));
-        navigation.showPhotoDetails(opened,()->{if(sheet==opened)sheet=null;});
+        navigation.showPhotoDetails(opened,()->{
+            if(sheet==opened){sheet=null;detailsBottom=Float.NaN;refreshImageTransform();}
+        },top->{if(sheet==opened){detailsBottom=(float)top;applyDetailsViewport();}});
+        setZoom(savedZoom);dragX=savedX;dragY=savedY;applyPan();
     }
     public boolean isChromeVisible(){return chromeVisible;}
     private void toggleChrome(){chromeVisible=!chromeVisible;header.setVisibility(chromeVisible?VISIBLE:INVISIBLE);toolbar.setVisibility(chromeVisible?VISIBLE:INVISIBLE);}
@@ -189,12 +196,30 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     }
     @Override protected void onDetachedFromWindow(){if(zoomAnimation!=null)zoomAnimation.cancel();super.onDetachedFromWindow();}
     public void refreshImageTransform(){if(image!=null)setZoom(zoom);}
+    @Override protected void onLayout(boolean changed,int l,int t,int r,int b){super.onLayout(changed,l,t,r,b);refreshImageTransform();}
     private void applyPan(){
         float x=0,y=0;Drawable d=image.getDrawable();
         if(d!=null){boolean sideways=Math.round(image.getRotation()/90)%2!=0;float iw=d.getIntrinsicWidth(),ih=d.getIntrinsicHeight();
             float scale=fitScale(getWidth(),getHeight(),iw,ih,image.getRotation())*zoom;
             x=Math.max(0,((sideways?ih:iw)*scale-getWidth())/2);y=Math.max(0,((sideways?iw:ih)*scale-getHeight())/2);}
         dragX=Math.max(-x,Math.min(x,dragX));dragY=Math.max(-y,Math.min(y,dragY));image.setTranslationX(dragX);image.setTranslationY(dragY);
+        applyDetailsViewport();
+    }
+    /** Use the sheet's actual animated edge; no second animator or bitmap capture. */
+    private void applyDetailsViewport(){
+        if(image==null||sheet==null||Float.isNaN(detailsBottom)||getWidth()<=0||getHeight()<=0)return;
+        Drawable d=image.getDrawable();if(d==null)return;
+        float bottom=Math.max(0,Math.min(getHeight(),detailsBottom));
+        float fraction=Math.max(0,Math.min(1,(getHeight()-bottom)/Math.max(1,sheet.getHeight())));
+        float margin=dp(12)*fraction;
+        float top=(header==null?dp(12):header.getBottom()+dp(12))*fraction;
+        float height=Math.max(0,bottom-margin-top),width=Math.max(0,getWidth()-2*margin);
+        float iw=d.getIntrinsicWidth(),ih=d.getIntrinsicHeight();
+        float base=fitScale(getWidth(),getHeight(),iw,ih,0);
+        float scale=fitScale(width,height,iw,ih,image.getRotation())/base*(zoom+(1-zoom)*fraction);
+        image.setScaleX(scale);image.setScaleY(scale);
+        image.setTranslationX(dragX*(1-fraction));
+        image.setTranslationY(top+height/2-getHeight()/2f+dragY*(1-fraction));
     }
     @Override public float getReveal(){return reveal;}
     @Override public void setReveal(float value){

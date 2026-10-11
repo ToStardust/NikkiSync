@@ -63,13 +63,16 @@ public final class ChromeNavigationHost extends FrameLayout {
             animate(300,t->photo.setReveal(ease(t)),()->reset(e));});
     }
     public void showSheet(View sheet){showSheet(sheet,()->{});}
-    public void showSheet(View sheet,Runnable closed){showSheet(sheet,closed,false);}
+    public void showSheet(View sheet,Runnable closed){showSheet(sheet,closed,false,top->{});}
     public void showPhotoDetails(ChromeSheetLayout sheet){showPhotoDetails(sheet,()->{});}
     public void showPhotoDetails(ChromeSheetLayout sheet,Runnable closed){
-        sheet.enablePhotoDetailDragging(()->dismiss(sheet));
-        showSheet(sheet,closed,true);
+        showPhotoDetails(sheet,closed,top->{});
     }
-    private void showSheet(View sheet,Runnable closed,boolean dismissOutside){
+    public void showPhotoDetails(ChromeSheetLayout sheet,Runnable closed,java.util.function.DoubleConsumer visibleTop){
+        sheet.enablePhotoDetailDragging(()->dismiss(sheet));
+        showSheet(sheet,closed,true,visibleTop);
+    }
+    private void showSheet(View sheet,Runnable closed,boolean dismissOutside,java.util.function.DoubleConsumer visibleTop){
         interrupt();FrameLayout layer=new FrameLayout(getContext()){
             private boolean outside;
             @Override public boolean onInterceptTouchEvent(MotionEvent event){
@@ -95,19 +98,34 @@ public final class ChromeNavigationHost extends FrameLayout {
         layer.addView(recording,new LayoutParams(-1,-1));
         LiquidGlassDockView glass=new LiquidGlassDockView(getContext(),source,sheet,true);
         recording.addView(glass,new LayoutParams(-1,-1));
-        if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(glass::invalidate);
-        View.OnLayoutChangeListener geometry=(v,l,t,r,b,ol,ot,or,ob)->glass.invalidate();
+        Runnable updateGeometry=()->{
+            glass.invalidate();
+            if(dismissOutside&&sheet.getHeight()>0)visibleTop.accept(layer.getTop()+sheet.getY());
+        };
+        if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(updateGeometry);
+        View.OnLayoutChangeListener geometry=(v,l,t,r,b,ol,ot,or,ob)->updateGeometry.run();
         sheet.addOnLayoutChangeListener(geometry);
+        if(dismissOutside)sheet.setTranslationY(getHeight());
         layer.addView(sheet,new LayoutParams(-1,-2,Gravity.BOTTOM));sheet.setClickable(true);
         layer.setOnApplyWindowInsetsListener((v,insets)->{
             var safe=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
             layer.setPadding(safe.left,safe.top, safe.right,safe.bottom);return insets;
         });
         addView(layer,new LayoutParams(-1,-1));
-        Entry e=new Entry(layer,sheet,glass,BackPreviewState.Kind.SHEET,()->{sheet.removeOnLayoutChangeListener(geometry);if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(()->{});source.close();closed.run();});stack.add(e);sync();
+        View.OnLayoutChangeListener[] pendingEntry={null};
+        Entry e=new Entry(layer,sheet,glass,BackPreviewState.Kind.SHEET,()->{sheet.removeOnLayoutChangeListener(geometry);if(pendingEntry[0]!=null)sheet.removeOnLayoutChangeListener(pendingEntry[0]);if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(()->{});source.close();closed.run();});stack.add(e);sync();
         if(lastInsets!=null)layer.dispatchApplyWindowInsets(lastInsets);
         long ticket=navigationGeneration;
-        layer.post(()->{if(top()!=e||committing||ticket!=navigationGeneration)return;animate(300,t->sheet.setTranslationY(sheet.getHeight()*(1-t)),()->reset(e));});
+        Runnable enter=()->{if(top()!=e||committing||ticket!=navigationGeneration)return;animate(300,t->sheet.setTranslationY(sheet.getHeight()*(1-t)),()->reset(e));};
+        if(dismissOutside){
+            // Start only after the first measured layout, never with a zero-height sheet.
+            pendingEntry[0]=new View.OnLayoutChangeListener(){
+                @Override public void onLayoutChange(View v,int l,int t,int r,int b,int ol,int ot,int or,int ob){
+                    if(b<=t)return;sheet.removeOnLayoutChangeListener(this);pendingEntry[0]=null;enter.run();
+                }
+            };
+            sheet.addOnLayoutChangeListener(pendingEntry[0]);
+        }else layer.post(enter);
         layer.requestApplyInsets();
     }
     public void dismiss(View page){
