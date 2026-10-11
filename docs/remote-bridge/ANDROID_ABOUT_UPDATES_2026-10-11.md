@@ -34,4 +34,4 @@ Use case: background-extraction. Edit target: the supplied square avatar. Produc
 - 新便携目录 `release/NikkiSync-Portable-About`，包括 `NikkiSync-PC.exe` 和单独的 `NikkiSync0.2.15-Android.apk`。EXE SHA-256：`64727f0141a1a49a97c50109ba32dc1ac70b304d51e6c4f1250d45fd48b626f6`。
 - 实际 EXE `--verify-package` 隔离展开验证通过，内嵌 APK 与上述 APK 哈希完全一致，证据 `out/embedded-apk-uJ8cyb/report.json`；没有启动后台或读取/清空用户配置。Windows 保留既有自动发现及运行环境复用。
 - 头像 SHA-256：`a866b23bbbd5c91a44b7ec24a5060de0b2cdc7fd675f8f5161a3901d8eb8e51c`。生成结果以此 PNG 为准，非游戏截图或用户照片样本。
-- 本轮为本地新版包；此前公开的 v0.2.14 资产不覆盖。本轮公开源码推送被自动审批拦截，原因是既有开源授权没有明确包括用户所提供作者头像的公开上传，已请求用户授权，当前未执行推送。二进制发布状态不能由源码 push 推断。
+- 本轮为本地新版包；此前公开的 v0.2.14 资产不覆盖。首次源码推送因头像公开范围被自动审批拦截，随后用户明确回复“允许随源码公开”，授权头像随源码上传 GitHub。源码按该授权推送到 main 与 feature/remote-bridge-foundation，二进制发布状态不能由源码 push 推断。
