@@ -1,5 +1,7 @@
 # NikkiSync workspace instructions
 
+Latest Android addition (2026-10-11): Settings exposes 关于&更新 using the existing ChromeHost/glass/top GPU blur/navigation. Installed version comes from BuildConfig, author is 星尘（支持粉毛拯救世界版）, avatar is the bundled transparent author_avatar.png, and updates open https://github.com/ToStardust/NikkiSync/releases explicitly (not releases/latest, since test versions are prereleases). Keep offline access and real-removal cleanup/reopening. Read docs/remote-bridge/ANDROID_ABOUT_UPDATES_2026-10-11.md. Latest local APK is 0.2.15-about / versionCode 16, with matching single EXE and standalone APK in release/NikkiSync-Portable-About. Android 202 tests, signature and actual embedded APK hash passed; no phone installation/hardware UI acceptance in this round. Previously published v0.2.14 remains a separate public release.
+
 Before changing any NikkiSync file, read:
 
 ```text

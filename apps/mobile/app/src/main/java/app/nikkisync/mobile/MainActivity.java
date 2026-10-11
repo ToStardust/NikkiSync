@@ -103,6 +103,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private static final int TAB_GALLERY = 0;
     private static final int TAB_SAVED = 1;
     private static final int TAB_MY = 2;
+    private static final String PROJECT_URL = "https://github.com/ToStardust/NikkiSync";
+    private static final String UPDATES_URL = PROJECT_URL + "/releases";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -149,8 +151,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private TextView savedEmpty;
     private TextView savedSummary;
     private LinearLayout myContent;
-    private LinearLayout settingsContent, profileStatsContent;
-    private app.nikkisync.mobile.ui.chrome.ChromeHost settingsPage, profileStatsPage;
+    private LinearLayout settingsContent, profileStatsContent, aboutContent;
+    private app.nikkisync.mobile.ui.chrome.ChromeHost settingsPage, profileStatsPage, aboutPage;
     private app.nikkisync.mobile.storage.StylistProfileStore stylistProfiles;
     private Button settingsButton;
     private Button pairButton;
@@ -596,6 +598,44 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     getSharedPreferences("nikkisync.export",MODE_PRIVATE).edit().putBoolean("writeExif",!writeExif).apply();
                     refreshSettingsPage();
                 });
+        addMyActionCard(settingsContent,"应用信息","当前版本 " + BuildConfig.VERSION_NAME,
+                "关于&更新",this::showAboutUpdates);
+    }
+
+    private void showAboutUpdates() {
+        if(aboutPage!=null)return;
+        aboutContent=new LinearLayout(this);
+        aboutPage=createMySubpage("关于&更新",aboutContent);
+        LinearLayout author=new LinearLayout(this);
+        author.setOrientation(LinearLayout.VERTICAL);
+        author.setGravity(Gravity.CENTER_HORIZONTAL);
+        author.setPadding(dp(18),dp(22),dp(18),dp(22));
+        author.setBackgroundResource(R.drawable.bg_glass_card);
+        ImageView avatar=new ImageView(this);
+        avatar.setImageResource(R.drawable.author_avatar);
+        avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        avatar.setContentDescription("星尘的头像");
+        author.addView(avatar,new LinearLayout.LayoutParams(dp(132),dp(132)));
+        TextView appName=text("NikkiSync",25,true,getColor(R.color.text_primary));
+        appName.setPadding(0,dp(12),0,dp(6));author.addView(appName);
+        TextView version=text("版本 " + BuildConfig.VERSION_NAME + "\n构建号 " + BuildConfig.VERSION_CODE,
+                13,false,getColor(R.color.text_secondary));
+        version.setGravity(Gravity.CENTER);author.addView(version);
+        TextView authorLabel=text("作者",13,false,getColor(R.color.text_secondary));
+        authorLabel.setPadding(0,dp(18),0,dp(5));author.addView(authorLabel);
+        TextView authorName=text("星尘（支持粉毛拯救世界版）",16,true,getColor(R.color.text_primary));
+        authorName.setGravity(Gravity.CENTER);author.addView(authorName);
+        LinearLayout.LayoutParams authorLayout=new LinearLayout.LayoutParams(-1,-2);
+        authorLayout.bottomMargin=dp(10);aboutContent.addView(author,authorLayout);
+        addMyActionCard(aboutContent,"版本更新",UPDATES_URL,"查看更新",()->openProjectLink(UPDATES_URL));
+        addMyActionCard(aboutContent,"开源项目",PROJECT_URL,"GitHub 项目",()->openProjectLink(PROJECT_URL));
+        var page=aboutPage;
+        navigation.push(page,()->{page.backdrop().close();aboutPage=null;aboutContent=null;});
+    }
+
+    private void openProjectLink(String url) {
+        try {startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}
+        catch(android.content.ActivityNotFoundException error) {copyText("NikkiSync GitHub",url);}
     }
 
     private void showProfileStats() {
