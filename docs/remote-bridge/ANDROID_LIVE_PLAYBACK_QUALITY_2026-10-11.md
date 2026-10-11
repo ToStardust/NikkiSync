@@ -2,6 +2,8 @@
 
 ## 反馈与结论边界
 
+更新：用户提供测试者系统 `16.0.5`、相册 `16.50.8`，随后反馈 0.2.14 修改后“LIVE 不会卡了”，并允许公开上传。该测试者的未旋转流畅度回归可按用户转述记录为通过；清晰度、重启、音轨和其他角度未取得新反馈。以下调查过程保留为历史，最新结论见 [Oplus 容器对齐记录](ANDROID_OPLUS_CONTAINER_2026-10-11.md)。
+
 反馈来自远程的一加 Ace 2V 测试者，用户明确说明不是自己手机。扫码已恢复；测试者认为保存后的 LIVE 比电脑游戏原视频模糊、有抽帧感，且保存前没有在 NikkiSync 旋转。随后按照同机对照请求反馈“原视频正常、LIVE 卡顿”，问题范围缩小到 LIVE 封装或相册的动态播放路径。未取得测试者的原 MP4、保存后的 LIVE 文件、系统/相册完整版本或播放日志，仍不能确认具体原因或记为播放已修复。后续封装修正见 [Oplus 容器对齐记录](ANDROID_OPLUS_CONTAINER_2026-10-11.md)。
 
 当前 `MainActivity.savePhotos` 使用 `LivePhotoExporter`，不是历史 OppoLivePhotoSaver。`AssetDetail.motionResource()` 选择 PC 提供的完整 `source_motion`；PC 资源接口返回源文件，没有手机专用低清视频。`LivePhotoRotation.rotate(...,0,...)` 返回原 JPEG/MP4；`MotionContainer` 对原 MP4 进行字节复制；`MotionContainerVerifier` 在发布前逐字节核对嵌入的视频。零角度不会经过 Media3 编码，不会主动改变码率、分辨率、帧数或时间戳。

@@ -2,6 +2,12 @@
 
 工作分支：`feature/remote-bridge-foundation`，修改基线 `fe3e706`。反馈对象是远程测试者的一加 Ace 2V，未旋转；用户按照上一轮同机对照请求反馈“原视频正常、LIVE 卡顿”。这支持继续调查 LIVE 格式与相册播放路径，不能证明视频解码能力不足，也不能据此认定某个字段是卡顿原因。
 
+## 远程复测反馈（2026-10-11）
+
+用户随后提供系统 `16.0.5`、相册 `16.50.8`，并在新版交付后转述：“修改后那个用户的 live 照片就不会卡了”，明确要求将该 APK 打包入 EXE 并允许公开上传。版本字符串按原话记录，没有据此推断完整构建号、Android API、地区版、相册包名或版本码。
+
+本次可记录为这位 Ace 2V 测试者的**未旋转 LIVE 流畅度回归通过（用户转述）**。没有独立的清晰度改善、音轨、重新索引/重启、90/180/270 度或其他机型结果；手机相机原生 LIVE 对照也未提供。不能确认到底是哪一项字段/布局变更起了作用。
+
 ## 格式依据与实际修改
 
 公开逆向实现 [oppo-live-photo-maker 的固定版本 muxer](https://github.com/Young-Spark/oppo-live-photo-maker/blob/3d020598789e8eebb0fa042b993ea03e4d21c2f9/src/oppo_live_photo/muxer.py#L175) 给出了 `MotionPhotoPrimaryPresentationTimestampUs` 和显式零填充媒体目录。其许可证为 [MIT](https://github.com/Young-Spark/oppo-live-photo-maker/blob/3d020598789e8eebb0fa042b993ea03e4d21c2f9/LICENSE)，查阅日期 2026-10-11。这是公开格式参考，非 Oplus 官方规范；其 README 的测试机为 Find X7 Ultra / ColorOS 14，不能作为 Ace 2V 验收。代码仍在 NikkiSync 原有 writer/verifier 中实现，没有增加外部工具或 SDK。
@@ -24,8 +30,8 @@
 - APK `0.2.14-oplus-container` / versionCode 15，minSdk 33 / targetSdk 35，21,729,994 字节，SHA-256 `9D6BCA0B81C720A4EF064DE0FE1DD3509EA288FABF1F43900A85C5619E9B22AC`。v2 签名通过，签名证书与 0.2.13 相同，可保留配对/缓存覆盖安装。
 - 匹配便携目录 `release/NikkiSync-Portable-OplusContainer` 内有单文件 `NikkiSync-PC.exe` 与独立 `NikkiSync-Android.apk`；EXE 为 120,563,602 字节，SHA-256 `9BC9CB4C8D930F34716C87381F97E556F85B1F4C3AFE3E33505765555AC37375`。实际 EXE 的 `--verify-package` 验证内嵌 APK 与独立 APK 完全一致，证据 `out/embedded-apk-R3WQfi/report.json`；没有启动后台或读取用户 AppData。PC 功能没有改动，此次手机复测无需替换已正常工作的电脑端。
 
-## 测试者复测方式与缺失证据
+## 交付与剩余验证
 
-覆盖安装新 APK，然后将**同一张照片重新保存为 LIVE**，在 Ace 2V 自带相册播放新文件，并与已有“保存原视频”对照。旧文件不会因更新 APK 自动改变。仍卡顿时需要记录 ColorOS 完整版本、系统相册版本、手机相机原生 LIVE 是否流畅，再比较获授权的非私人原生/导出 LIVE 文件；目前这些证据缺失。
+公开交付目录 `release/NikkiSync-0.2.14-Public` 包含单文件 EXE、同版独立 APK 和 `SHA256SUMS.txt`。程序内容与已测试的 OplusContainer 包相同，没有重编译/变更版本；再次通过实际 EXE 提取校验，报告 `out/embedded-apk-p6XUg2/report.json`。公开发布说明见 [v0.2.14](../releases/v0.2.14.md)。
 
-容器修正已经完成，**Ace 2V 的清晰度/流畅度验收仍未完成**。不把字段对齐、JVM 测试或本机 4K 文件一致性称为该手机已修复。
+更新旧版本后需要**重新保存 LIVE**，旧导出文件不会自动改变。本次该测试者的卡顿反馈已解除；清晰度和其他播放/旋转条件仍待分别验证，不把单个流畅度反馈扩展为所有 Oplus 设备完整适配。

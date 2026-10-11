@@ -8,6 +8,8 @@
 
 照片同步在本机/局域网完成；默认的服装字典和拍摄参数查询可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 关闭。源码不含个人照片、数据库、配对密钥、签名文件和编译包。
 
+**下载 [0.2.14 测试版](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14)**：Windows 用户只需 `NikkiSync-PC.exe`，内含同版 Android APK；另提供独立 APK 与校验值。已收到一加 Ace 2V 测试者更新后 LIVE 不卡顿的反馈，其他机型仍分别测试。[本版说明](docs/releases/v0.2.14.md)
+
 下面保留早期里程碑记录；当前功能与构建入口以 [INTEGRATION.md](docs/INTEGRATION.md) 和 `docs/remote-bridge` 最新验收记录为准。
 
 面向《无限暖暖》的本地摄影同步 App monorepo。PC Companion 是远程图库的 source of truth；移动端按需缓存预览、按用户操作保存原图。媒体字节使用 HTTP(S)，WebSocket 只承载事件，断线恢复以 revision journal 为准。
