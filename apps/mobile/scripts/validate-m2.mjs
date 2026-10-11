@@ -79,6 +79,7 @@ const required = [
   'app/src/main/java/app/nikkisync/mobile/share/ShareCardPreviewDialog.java',
   'app/src/main/java/app/nikkisync/mobile/media/ImageLoader.java',
   'app/src/main/java/app/nikkisync/mobile/media/OriginalSaver.java',
+  'app/src/main/java/app/nikkisync/mobile/media/OriginalVideoSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/MotionPhotoSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/OppoLivePhotoSaver.java',
   'app/src/main/java/app/nikkisync/mobile/media/SamsungMotionPhotoSaver.java',

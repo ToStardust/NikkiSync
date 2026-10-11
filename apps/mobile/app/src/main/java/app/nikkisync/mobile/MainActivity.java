@@ -1705,6 +1705,27 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         });
     }
 
+    private void saveOriginalVideo(AssetSummary asset,Button source) {
+        NikkiSyncClient current=client;
+        if(current==null){toast("请先连接电脑");return;}
+        if(photoSaveProgress!=null&&photoSaveProgress.isShowing()){toast("正在保存，请等待完成");return;}
+        var saving=new app.nikkisync.mobile.ui.OperationProgressDialog(this,"保存原视频",null);
+        photoSaveProgress=saving;source.setEnabled(false);saving.update("准备下载原视频",0,0);saving.show();
+        io.execute(()->{
+            String failure=null;
+            try {
+                app.nikkisync.mobile.media.OriginalVideoSaver.save(this,current,asset,
+                    (stage,done,total)->main.post(()->{if(!isFinishing()&&!isDestroyed())saving.update(stage,done,total);}));
+            } catch(Exception error){failure=message(error);}
+            String result=failure;
+            main.post(()->{
+                if(isFinishing()||isDestroyed())return;
+                saving.dismiss();if(photoSaveProgress==saving)photoSaveProgress=null;source.setEnabled(true);
+                toast(result==null?"原视频已保存到相册 · 保留电脑原始画质、帧率和方向": "原视频保存失败："+result);
+            });
+        });
+    }
+
     private void applyCompletedSaves(List<AssetSummary> completed,Map<String,Integer> rotationsSnapshot,boolean clearSelection) {
         for (AssetSummary item : completed) {
             if (!rotationByAssetId.getOrDefault(item.assetId(), 0).equals(rotationsSnapshot.getOrDefault(item.assetId(), 0))) continue;
@@ -1823,6 +1844,15 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         );
         shareLp.topMargin = dp(8);
         infoSheet.addView(shareCard, shareLp);
+
+        if(asset.hasMotion()) {
+            Button originalVideo=button("保存原视频");
+            LinearLayout.LayoutParams videoLp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+            videoLp.topMargin=dp(8);infoSheet.addView(originalVideo,videoLp);
+            originalVideo.setOnClickListener(v->saveOriginalVideo(asset,originalVideo));
+            TextView videoNote=text("保留电脑原视频的画质、帧率和方向，可与 LIVE 在同一手机上对比播放。",12,false,getColor(R.color.text_secondary));
+            videoNote.setPadding(dp(2),dp(6),dp(2),0);infoSheet.addView(videoNote);
+        }
 
         AssetDetail[] detailHolder = new AssetDetail[1];
         io.execute(() -> {

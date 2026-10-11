@@ -48,7 +48,30 @@ public class MainViewerEntryTest {
                     1,1000,1200,false,false,null,null,"2.9","inferred");
             invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
             assertEquals(1,activity.navigationHost().overlayCount());
+            findButton(activity.navigationHost(),"详情").performClick();
+            assertNull(findButton(activity.navigationHost(),"保存原视频"));
         } finally {cleanup(activity);}
+    }
+    @Test public void liveViewerOffersOriginalVideoForSamePhonePlaybackComparison() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic-live","motion_photo","ready",null,null,
+                    1,3840,2160,true,false,null,null,null,null);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            findButton(activity.navigationHost(),"详情").performClick();
+            Button video=findButton(activity.navigationHost(),"保存原视频");
+            assertNotNull("LIVE needs an unmodified MP4 playback comparison on the same phone",video);
+            assertTrue(video.isEnabled());
+            video.performClick();
+            assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+        } finally {cleanup(activity);}
+    }
+    private static Button findButton(android.view.View view,String text) {
+        if(view instanceof Button button&&text.contentEquals(button.getText()))return button;
+        if(view instanceof android.view.ViewGroup group)for(int i=0;i<group.getChildCount();i++){
+            Button found=findButton(group.getChildAt(i),text);if(found!=null)return found;
+        }
+        return null;
     }
     @Test public void noPendingShareWorkCanBeCancelledWithoutTouchingButtons() throws Exception {
         var activity=fixture();
