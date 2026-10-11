@@ -1,4 +1,5 @@
-// New-profile boot and real early-exit diagnostics. No user DB, photos or settings are read.
+// Isolated-profile boot and real early-exit diagnostics. Optional cached-library mode
+// reads existing game media/cache only; it never writes the real user's DB/settings.
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
@@ -6,20 +7,28 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep, relative } from 'node:path';
 import { mkdtemp, mkdir, writeFile, readFile, copyFile, rm, readdir, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 const root = resolve(import.meta.dirname, '../..');
-const release = join(root, 'release', 'NikkiSync-Portable-StartupFix');
+const release = resolve(root, process.argv[2] ?? 'release/NikkiSync-Portable-StartupHealth');
+if (!release.startsWith(join(root, 'release') + sep)) throw new Error('Release must be inside workspace/release');
+const cachedLibrary = process.argv[3] === '--cached-library';
+const cacheFile = join(process.env.LOCALAPPDATA, 'NikkiSync', 'game-install-root.txt');
+const originalCache = cachedLibrary ? await readFile(cacheFile) : null;
 const output = await mkdtemp(join(root, 'out', 'startup-fix-'));
 const relocated = await mkdtemp(join(tmpdir(), 'nikkisync-startup-fix-'));
 const exe = join(relocated, 'NikkiSync-PC.exe');
 await copyFile(join(release, 'NikkiSync-PC.exe'), exe);
-const game = join(output, 'new-game', 'InfinityNikki');
-await mkdir(join(game, 'X6Game'), { recursive: true });
-await writeFile(join(game, 'InfinityNikki.exe'), ''); // Discovery marker; never executed.
+const game = cachedLibrary ? originalCache.toString('utf8').trim() : join(output, 'new-game', 'InfinityNikki');
+if (!cachedLibrary) {
+  await mkdir(join(game, 'X6Game'), { recursive: true });
+  await writeFile(join(game, 'InfinityNikki.exe'), ''); // Discovery marker; never executed.
+}
 async function prepareProfile(directory) {
   const data = join(directory, 'localdata', 'NikkiSync');
   await mkdir(data, { recursive: true });
   await writeFile(join(data, 'metadata-resolver.json'), JSON.stringify({ enabled: false }));
   await writeFile(join(data, 'metadata-dictionary-remote.json'), JSON.stringify({ enabled: false, provider: { type: 'nikki-albums-public' }, gallery: { enabled: false } }));
+  if (cachedLibrary) await writeFile(join(data, 'game-install-root.txt'), originalCache);
 }
 async function fingerprints(directory) {
   const files = {};
@@ -35,11 +44,13 @@ async function boot(directory, occupied = false, gameRoot = game) {
   await new Promise((resolve, reject) => { reserve.once('error', reject); reserve.listen(0, '127.0.0.1', resolve); });
   const port = reserve.address().port;
   if (!occupied) await new Promise(resolve => reserve.close(resolve));
-  const child = spawn(exe, ['--verify-startup', directory, String(port)], { cwd: relocated, windowsHide: true, stdio: 'ignore', env: {
+  const environment = {
     ...process.env, LOCALAPPDATA: join(directory, 'localdata'),
     DOTNET_BUNDLE_EXTRACT_BASE_DIR: join(output, 'native-cache'),
     NIKKISYNC_GAME_ROOT: gameRoot, NIKKISYNC_BIND: '127.0.0.1', NIKKISYNC_PORT: '0', NIKKISYNC_MDNS: '0'
-  } });
+  };
+  if (cachedLibrary) delete environment.NIKKISYNC_GAME_ROOT;
+  const child = spawn(exe, ['--verify-startup', directory, String(port)], { cwd: relocated, windowsHide: true, stdio: 'ignore', env: environment });
   const watchdog = setTimeout(() => child.kill(), 120000);
   try {
     const [exit] = await once(child, 'exit');
@@ -61,7 +72,17 @@ try {
     const result = await boot(success);
     if (!result.ok || !result.browserVisible || !result.loaderHidden) throw new Error('Fresh-profile dashboard did not open: ' + JSON.stringify(result.diagnostics));
     if ((await readFile(join(success, 'localdata', 'NikkiSync', 'game-install-root.txt'), 'utf8')).trim() !== game) throw new Error('Selected game directory was not persisted');
-    runs.push({ stages: result.stages, payload: await fingerprints(join(success, 'runtime-cache')) });
+    const timing = JSON.parse(await readFile(join(success, 'localdata', 'NikkiSync', 'startup-timings.json'), 'utf8'));
+    if (timing.status !== 'ready') throw new Error('Successful startup did not persist phase timings');
+    const discovery = JSON.parse(await readFile(join(success, 'localdata', 'NikkiSync', 'game-discovery.log'), 'utf8'));
+    if (cachedLibrary && discovery.source !== 'cached') throw new Error('Valid cache was not reused');
+    const database = new DatabaseSync(join(success, 'localdata', 'NikkiSync', 'nikkisync.sqlite'), { readOnly: true });
+    let assetCount;
+    try { assetCount = database.prepare("SELECT count(*) AS count FROM assets WHERE asset_state = 'ready'").get().count; }
+    finally { database.close(); }
+    if (cachedLibrary && assetCount === 0) throw new Error('Actual library was not indexed');
+    runs.push({ stages: result.stages, discovery, assetCount, payload: await fingerprints(join(success, 'runtime-cache')) });
+    console.log(JSON.stringify({ run: run + 1, stages: result.stages, assetCount, cached: discovery.source === 'cached', discoveryMs: discovery.elapsedMs }));
   }
   const payloadReused = JSON.stringify(runs[0].payload) === JSON.stringify(runs[1].payload);
   if (!payloadReused) throw new Error('Restart rewrote the runtime');
@@ -74,7 +95,8 @@ try {
   if (failed.ok) throw new Error('An occupied desktop port was accepted as ready');
   const diagnostics = JSON.parse(await readFile(join(failure, 'localdata', 'NikkiSync', 'startup-diagnostics.log'), 'utf8'));
   if (diagnostics.code !== 'PORT_IN_USE' || diagnostics.exitCode !== 1) throw new Error('Real child error/exit code was lost');
-  const report = { actualSingleExe: true, relocatedExe: true, freshProfile: true, noPhotoFolders: true, selectedRootPersisted: true,
+  if (cachedLibrary && !(await readFile(cacheFile)).equals(originalCache)) throw new Error('Actual user cache changed');
+  const report = { actualSingleExe: true, relocatedExe: true, freshProfile: true, noPhotoFolders: !cachedLibrary, actualCachedLibrary: cachedLibrary, selectedRootPersisted: true,
     payloadReused, apkUnchanged: true, apkHash, errorCode: diagnostics.code, exitCode: diagnostics.exitCode,
     onlineResolversDisabled: true, userDataUntouched: true, runs };
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2));

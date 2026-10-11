@@ -50,7 +50,8 @@ public sealed class ServiceProcessHost(
             Path.Combine(releaseDirectory, "runtime", "NikkiSync-PC-service.exe"),
             $"--desktop-port {desktopPort}",
             environment);
-        var started = DateTimeOffset.UtcNow;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_startupTimeout);
         try
         {
             while (true)
@@ -61,10 +62,14 @@ public sealed class ServiceProcessHost(
                     var output = await _child.ReadOutputAsync(cancellationToken);
                     throw new ServiceStartException(StartupFailure.FromServiceExit(_child.ExitCode, output));
                 }
-                if (await healthClient.IsReadyAsync(endpoint, cancellationToken)) return endpoint;
-                if (DateTimeOffset.UtcNow - started >= _startupTimeout) throw new ServiceStartException(StartupFailure.Create("SERVICE_TIMEOUT"));
-                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+                if (await healthClient.IsReadyAsync(endpoint, deadline.Token)) return endpoint;
+                await Task.Delay(TimeSpan.FromMilliseconds(100), deadline.Token);
             }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            await StopAsync();
+            throw new ServiceStartException(StartupFailure.Create("SERVICE_TIMEOUT"));
         }
         catch
         {
@@ -162,11 +167,28 @@ public sealed class ProcessServiceFactory : IServiceProcessFactory
     }
 }
 
-public sealed class HttpHealthClient(HttpClient client) : IHealthClient
+public sealed class HttpHealthClient(HttpClient client, TimeSpan? probeTimeout = null) : IHealthClient, IDisposable
 {
+    private readonly TimeSpan _probeTimeout = probeTimeout ?? TimeSpan.FromSeconds(1);
+
+    // Loopback readiness must not depend on VPN/system proxy routing or follow a remote redirect.
+    public static HttpHealthClient CreateLoopback() => new(new HttpClient(new SocketsHttpHandler
+    {
+        UseProxy = false, AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromMilliseconds(500)
+    }) { Timeout = Timeout.InfiniteTimeSpan });
+
     public async Task<bool> IsReadyAsync(Uri endpoint, CancellationToken cancellationToken)
     {
-        try { using var response = await client.GetAsync(endpoint, cancellationToken); return response.IsSuccessStatusCode; }
+        using var probe = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probe.CancelAfter(_probeTimeout);
+        try
+        {
+            using var response = await client.GetAsync(endpoint, HttpCompletionOption.ResponseHeadersRead, probe.Token);
+            return response.IsSuccessStatusCode;
+        }
         catch (HttpRequestException) { return false; }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return false; }
     }
+
+    public void Dispose() => client.Dispose();
 }

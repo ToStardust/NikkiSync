@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.IO;
 using System.Diagnostics;
-using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
@@ -13,6 +12,7 @@ public partial class MainWindow : Window
 {
     private readonly DesktopWindowLifecycle _lifecycle = new();
     private readonly ServiceProcessHost _service;
+    private readonly HttpHealthClient _health = HttpHealthClient.CreateLoopback();
     private readonly AutostartService _autostart = new(new RegistryRunEntryStore());
     private readonly TrayService _tray = new();
     private Uri? _controlOrigin;
@@ -32,7 +32,7 @@ public partial class MainWindow : Window
 
     public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
     {
-        _service = new(new ProcessServiceFactory(), new HttpHealthClient(new HttpClient()), desktopPort: desktopPort);
+        _service = new(new ProcessServiceFactory(), _health, desktopPort: desktopPort);
         _verificationDirectory = verificationDirectory;
         InitializeComponent();
         _startupContent = Content;
@@ -63,10 +63,12 @@ public partial class MainWindow : Window
     {
         Loaded -= OnLoaded;
         _startupWatch.Restart();
+        StartupTimings.Clear();
         _startupTimer.Start();
         try
         {
             _startupPhase = "runtime";
+            RecordStartupTimings("starting");
             StartupText.Text = "1 / 4 · 检查并准备运行文件…";
             StartupProgress.IsIndeterminate = false;
             var lastProgress = DateTime.MinValue;
@@ -80,14 +82,16 @@ public partial class MainWindow : Window
             StartupTimings["runtimeReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             StartupText.Text = "2 / 4 · 准备界面显示组件…";
             _startupPhase = "webview";
+            RecordStartupTimings("starting");
             StartupProgress.IsIndeterminate = true;
             // Windows special-folder lookup does not honor a diagnostic LOCALAPPDATA override.
             var environment = await CoreWebView2Environment.CreateAsync(null, _verificationDirectory is null ? Path.Combine(RuntimePayload.UserDirectory, "webview2") : Path.Combine(_verificationDirectory, "localdata", "NikkiSync", "webview2"));
             await ControlPage.EnsureCoreWebView2Async(environment);
             _startupCancellation.Token.ThrowIfCancellationRequested();
             StartupTimings["browserReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
-            StartupText.Text = "3 / 4 · 自动查找游戏安装位置并读取相册…";
+            StartupText.Text = "3 / 4 · 正在同步相册并启动连接服务…";
             _startupPhase = "service";
+            RecordStartupTimings("starting");
             if (_verificationDirectory is not null)
             {
                 await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
@@ -116,18 +120,21 @@ public partial class MainWindow : Window
             ControlPage.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
             StartupText.Text = "4 / 4 · 正在打开电脑相册…";
             _startupPhase = "dashboard";
+            RecordStartupTimings("starting");
             await WaitForDashboardAsync(_startupCancellation.Token);
             _startupTimer.Stop();
             StartupPanel.Visibility = Visibility.Collapsed;
             await UpdateViewPowerAsync();
             StartupTimings["dashboardReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
+            RecordStartupTimings("ready");
             _startupCompleted.TrySetResult(true);
         }
         catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
-        { _startupTimer.Stop(); _startupCompleted.TrySetResult(false); }
+        { _startupTimer.Stop(); RecordStartupTimings("cancelled"); _startupCompleted.TrySetResult(false); }
         catch (Exception error)
         {
             _startupTimer.Stop();
+            RecordStartupTimings("failed");
             _viewPower?.Stop();
             ControlPage.Visibility = Visibility.Collapsed;
             await _service.StopAsync();
@@ -165,7 +172,7 @@ public partial class MainWindow : Window
                 var openLogs = new System.Windows.Controls.Button { Content = "打开日志文件夹", Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(14, 8, 14, 8) };
                 openLogs.Click += (_, _) => Process.Start(new ProcessStartInfo(diagnosticsDirectory) { UseShellExecute = true });
                 panel.Children.Add(openLogs);
-                panel.Children.Add(new TextBlock { Text = "反馈 startup-diagnostics.log 和 game-discovery.log；日志不包含照片、个人路径、配对码或密钥。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 16, 0, 0) });
+                panel.Children.Add(new TextBlock { Text = "反馈 startup-diagnostics.log、game-discovery.log 和 startup-timings.json；日志不包含照片、个人路径、配对码或密钥。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 16, 0, 0) });
             }
             else panel.Children.Add(new TextBlock { Text = "日志无法写入，请截取上方错误代码反馈。", Margin = new Thickness(0, 16, 0, 0), TextWrapping = TextWrapping.Wrap });
             Content = panel;
@@ -190,6 +197,10 @@ public partial class MainWindow : Window
         StartupPanel.Visibility = Visibility.Visible;
         OnLoaded(this, new RoutedEventArgs());
     }
+
+    private void RecordStartupTimings(string status) => StartupDiagnostics.WriteTimings(
+        _verificationDirectory is null ? RuntimePayload.UserDirectory : Path.Combine(_verificationDirectory, "localdata", "NikkiSync"),
+        _startupPhase, status, _startupWatch.Elapsed.TotalMilliseconds, StartupTimings);
 
     private async Task WaitForDashboardAsync(CancellationToken cancellationToken)
     {
@@ -266,6 +277,7 @@ public partial class MainWindow : Window
         _viewPower?.Stop();
         _tray.Dispose();
         await _service.StopAsync();
+        _health.Dispose();
         ControlPage.Dispose();
         System.Windows.Application.Current.Shutdown();
     }

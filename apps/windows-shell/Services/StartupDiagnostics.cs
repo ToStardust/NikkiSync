@@ -58,7 +58,29 @@ public sealed record StartupFailure(string Code, string Hint, int? ExitCode = nu
 
 public static class StartupDiagnostics
 {
-    public const string BuildLabel = "2026.10.11-auto-discovery";
+    public const string BuildLabel = "2026.10.12-startup-health";
+
+    public static string? WriteTimings(string directory, string phase, string status, double elapsedMs, IReadOnlyDictionary<string, double> timings)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var stages = new Dictionary<string, double>();
+            foreach (var key in new[] { "runtimeReadyMs", "browserReadyMs", "serviceReadyMs", "dashboardReadyMs" })
+                if (timings.TryGetValue(key, out var value) && double.IsFinite(value) && value >= 0) stages[key] = value;
+            var file = Path.Combine(directory, "startup-timings.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(new
+            {
+                timestamp = DateTimeOffset.UtcNow, build = BuildLabel,
+                phase = phase is "runtime" or "webview" or "service" or "dashboard" ? phase : "unknown",
+                status = status is "starting" or "ready" or "failed" or "cancelled" ? status : "unknown",
+                elapsedMs = double.IsFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : 0,
+                stages
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            return file;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
     public static string? Write(string directory, string phase, StartupFailure failure)
     {
         try
