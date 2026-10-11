@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.2.13-live-video"
+        versionCode = 15
+        versionName = "0.2.14-oplus-container"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

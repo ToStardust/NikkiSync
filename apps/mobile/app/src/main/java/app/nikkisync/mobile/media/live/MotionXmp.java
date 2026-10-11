@@ -28,6 +28,7 @@ public final class MotionXmp {
 
     public static byte[] create(LivePhotoProfile profile,long length,long pts,long padding) {
         if(length<=0 || pts<0 || padding<0)throw new IllegalArgumentException("无效 Motion Photo 长度/时间戳");
+        if(profile==LivePhotoProfile.OPLUS&&padding!=0)throw new IllegalArgumentException("Oplus 视频必须紧接 JPEG EOI");
         String head="<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\""+RDF+"\"><rdf:Description rdf:about=\"\"";
         if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR || profile==LivePhotoProfile.HUAWEI_LEGACY)
             return (head+"/></rdf:RDF></x:xmpmeta>").getBytes(StandardCharsets.UTF_8);
@@ -36,14 +37,19 @@ public final class MotionXmp {
         if(profile==LivePhotoProfile.XIAOMI) s.append(" GCamera:MicroVideo=\"1\" GCamera:MicroVideoVersion=\"1\" GCamera:MicroVideoOffset=\"")
             .append(length).append("\" GCamera:MicroVideoPresentationTimestampUs=\"").append(pts).append("\"");
         if(profile==LivePhotoProfile.OPLUS) s.append(" xmlns:OpCamera=\"").append(OPLUS)
+            .append("\" OpCamera:MotionPhotoPrimaryPresentationTimestampUs=\"").append(pts)
             .append("\" OpCamera:MotionPhotoOwner=\"oplus\" OpCamera:OLivePhotoVersion=\"2\" OpCamera:MotionPhotoFeatureFlag=\"1\" OpCamera:VideoLength=\"").append(length).append("\"");
         if(profile==LivePhotoProfile.VIVO_SINGLE_XMP) s.append(" xmlns:VCamera=\"").append(VIVO)
             .append("\" VCamera:VMotionPhotoVersion=\"1\" VCamera:VMotionPhotoSource=\"1\" VCamera:VMediaKitVersion=\"1.0.0.9\"");
         if(profile==LivePhotoProfile.SAMSUNG_SEF) return s.append("/></rdf:RDF></x:xmpmeta>").toString().getBytes(StandardCharsets.UTF_8);
         s.append(" xmlns:Container=\"").append(CONTAINER).append("\" xmlns:Item=\"").append(ITEM).append("\"><Container:Directory><rdf:Seq>")
-            .append("<rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Mime=\"image/jpeg\" Item:Semantic=\"Primary\" Item:Padding=\"").append(padding).append("\"/></rdf:li>")
+            .append("<rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Mime=\"image/jpeg\" Item:Semantic=\"Primary\"");
+        if(profile==LivePhotoProfile.OPLUS)s.append(" Item:Length=\"0\"");
+        s.append(" Item:Padding=\"").append(padding).append("\"/></rdf:li>")
             .append("<rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Mime=\"video/mp4\" Item:Semantic=\"MotionPhoto\" Item:Length=\"").append(length)
-            .append("\"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>");
+            .append("\"");
+        if(profile==LivePhotoProfile.OPLUS)s.append(" Item:Padding=\"0\"");
+        s.append("/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>");
         return s.toString().getBytes(StandardCharsets.UTF_8);
     }
     public static byte[] merge(byte[] previous,byte[] replacement) throws IOException {
@@ -96,7 +102,10 @@ public final class MotionXmp {
     public static long videoLength(byte[] xmp)throws IOException{return itemNumber(xmp,"MotionPhoto","Length",-1);}
     public static long primaryPadding(byte[] xmp)throws IOException{return itemNumber(xmp,"Primary","Padding",0);}
     private static long itemNumber(byte[] xmp,String semantic,String field,long fallback)throws IOException{
-        NodeList items=parse(xmp).getElementsByTagNameNS(CONTAINER,"Item");Element match=null;
+        return itemNumber(parse(xmp),semantic,field,fallback);
+    }
+    private static long itemNumber(Document doc,String semantic,String field,long fallback)throws IOException{
+        NodeList items=doc.getElementsByTagNameNS(CONTAINER,"Item");Element match=null;
         for(int i=0;i<items.getLength();i++){Element e=(Element)items.item(i);if(semantic.equals(e.getAttributeNS(ITEM,"Semantic"))){if(match!=null)throw new IOException("重复的 XMP 媒体项");match=e;}}
         if(match==null)throw new IOException("缺少 XMP "+semantic+" 项");
         String expected="Primary".equals(semantic)?"image/jpeg":"video/mp4";
@@ -105,9 +114,25 @@ public final class MotionXmp {
         try{long n=Long.parseLong(value);if(n<0)throw new NumberFormatException();return n;}catch(NumberFormatException e){throw new IOException("无效 XMP "+field,e);}
     }
     public static long timestamp(byte[] xmp)throws IOException{
-        NodeList all=parse(xmp).getElementsByTagName("*");String value=null;
-        for(int i=0;i<all.getLength();i++){Element e=(Element)all.item(i);if(e.hasAttributeNS(CAMERA,"MotionPhotoPresentationTimestampUs")){
-            if(value!=null)throw new IOException("重复的封面时间戳");value=e.getAttributeNS(CAMERA,"MotionPhotoPresentationTimestampUs");}}
-        try{long n=Long.parseLong(value);if(n<0)throw new NumberFormatException();return n;}catch(Exception e){throw new IOException("封面时间戳缺失/无效",e);}
+        return numberAttribute(parse(xmp),CAMERA,"MotionPhotoPresentationTimestampUs");
+    }
+    static void verifyOplus(byte[] xmp,long length,long pts)throws IOException{
+        Document doc=parse(xmp);
+        JpegSegments.require(numberAttribute(doc,OPLUS,"MotionPhotoPrimaryPresentationTimestampUs")==pts,"Oplus 私有封面时间不一致");
+        JpegSegments.require(numberAttribute(doc,OPLUS,"VideoLength")==length,"Oplus 私有视频长度不一致");
+        JpegSegments.require("oplus".equals(attribute(doc,OPLUS,"MotionPhotoOwner"))
+            &&numberAttribute(doc,OPLUS,"OLivePhotoVersion")==2&&numberAttribute(doc,OPLUS,"MotionPhotoFeatureFlag")==1,"Oplus 格式标记不一致");
+        JpegSegments.require(itemNumber(doc,"Primary","Length",-1)==0&&itemNumber(doc,"Primary","Padding",-1)==0
+            &&itemNumber(doc,"MotionPhoto","Padding",-1)==0,"Oplus 媒体目录需要显式零长度/填充字段");
+    }
+    private static String attribute(Document doc,String ns,String field)throws IOException{
+        NodeList all=doc.getElementsByTagName("*");String value=null;
+        for(int i=0;i<all.getLength();i++){Element e=(Element)all.item(i);if(e.hasAttributeNS(ns,field)){
+            if(value!=null)throw new IOException("重复的 XMP "+field);value=e.getAttributeNS(ns,field);}}
+        if(value==null)throw new IOException("缺少 XMP "+field);return value;
+    }
+    private static long numberAttribute(Document doc,String ns,String field)throws IOException{
+        try{long n=Long.parseLong(attribute(doc,ns,field));if(n<0)throw new NumberFormatException();return n;}
+        catch(NumberFormatException e){throw new IOException("无效 XMP "+field,e);}
     }
 }

@@ -41,6 +41,9 @@ public final class VerifyUnrotatedQuality {
             throw new IllegalStateException("Embedded video or source files changed");
         String report="{\n  \"scope\": \"Oplus container only, not device playback\",\n  \"sourceVideoSha256\": \""+videoHash+"\",\n"
                 +"  \"embeddedVideoSha256\": \""+extractedHash+"\",\n  \"videoBytes\": "+length+",\n"
+                +"  \"sourceJpegTrailerBytes\": "+(source.length-JpegSegments.endOffset(source))+",\n"
+                +"  \"exportedVideoGapBytes\": "+(product.primary().length()-length-JpegSegments.endOffset(container))+",\n"
+                +"  \"primaryPadding\": "+MotionXmp.primaryPadding(xmp)+",\n  \"oplusLayoutVerified\": true,\n"
                 +"  \"videoUnchanged\": true,\n  \"jpegCompressedPixelsUnchanged\": true,\n  \"sourceFilesUnchanged\": true\n}\n";
         Files.writeString(new File(out,"quality-report.json").toPath(),report);System.out.print(report);
     }
