@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.2.15-about"
+        versionCode = 17
+        versionName = "0.2.16-camera-permission"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
