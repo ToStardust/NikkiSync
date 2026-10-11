@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.2.11-rotation-return"
+        versionCode = 13
+        versionName = "0.2.12-identity-compat"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -26,6 +26,8 @@ android {
 }
 
 dependencies {
+    // Lightweight Ed25519 only; do not register a global BC provider or rely on OEM JCA order.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     // 1.13.0 requires SDK 36 / AGP 8.9.1; this branch intentionally builds on SDK 35 / AGP 8.7.3.
     implementation("androidx.activity:activity:1.10.1")

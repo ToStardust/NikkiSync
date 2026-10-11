@@ -30,3 +30,9 @@ The Momo branding source and transformations are documented in `assets/branding/
 - `apps/wechat-mini-program/miniprogram/lib/THIRD_PARTY.md` and `THIRD_PARTY_LICENSES.txt`: Noise/encryption runtime dependencies.
 - `apps/windows-shell/PORTABLE_NOTICES.md`: Windows single-file runtime notices; the packaging script preserves .NET, WebView2 and JavaScript dependency notices.
 - Dependency license terms remain applicable independently of NikkiSync's MIT license.
+
+## Android Ed25519 compatibility
+
+Android uses Bouncy Castle `bcprov-jdk18on:1.86` lightweight Ed25519 and ASN.1 APIs for protocol identity generation, PKCS#8 loading and signing. It does not register a global provider. The existing AndroidKeyStore AES-GCM wrapping key remains responsible for private-key encryption at rest.
+
+Upstream: https://github.com/bcgit/bc-java ; license: https://www.bouncycastle.org/licence.html . The full copyright and permission notice is included in the APK as `res/raw/bouncycastle_license.txt`.
