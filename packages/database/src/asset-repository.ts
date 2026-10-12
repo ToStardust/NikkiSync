@@ -208,6 +208,11 @@ export class AssetRepository {
     ).all() as Record<string, unknown>[]
   }
 
+  /** Return the indexed asset count without materializing metadata or resource rows. */
+  count(): number {
+    return Number(this.database.connection.prepare('SELECT COUNT(*) AS count FROM assets').get()?.count ?? 0)
+  }
+
   updateState(assetId: string, state: AssetState, updatedAt = new Date().toISOString()): number {
     return this.database.transaction(() => {
       if (!this.getById(assetId)) throw new Error(`Asset not found: ${assetId}`)
@@ -235,16 +240,17 @@ export class AssetRepository {
   }
 
   /** Assets that contain a native Infinity Nikki token. Resolver service decides whether cached enrichment is current. */
-  listMetadataResolutionCandidates(limit = 50): Array<Record<string, unknown>> {
+  listMetadataResolutionCandidates(limit = 50, after?: { discoveredAt: string; assetId: string }): Array<Record<string, unknown>> {
     return this.database.connection.prepare(`
       SELECT * FROM assets
       WHERE asset_state <> 'deleted'
         AND uid IS NOT NULL
         AND metadata_json IS NOT NULL
         AND json_extract(metadata_json, '$.raw.nativeParamToken') IS NOT NULL
+        ${after ? 'AND (discovered_at > ? OR (discovered_at = ? AND asset_id > ?))' : ''}
       ORDER BY discovered_at ASC, asset_id ASC
       LIMIT ?
-    `).all(limit) as Array<Record<string, unknown>>
+    `).all(...(after ? [after.discoveredAt, after.discoveredAt, after.assetId, limit] : [limit])) as Array<Record<string, unknown>>
   }
 
   softDelete(assetId: string, deletedAt = new Date().toISOString()): number {

@@ -22,6 +22,8 @@ function closeFrame(): Buffer { return Buffer.from([0x88, 0x00]) }
 
 export class WebSocketHub {
   private readonly sockets = new Set<Duplex>()
+  constructor(private readonly changed: () => void = () => {}) {}
+  get size(): number { return this.sockets.size }
 
   upgrade(req: IncomingMessage, socket: Duplex): boolean {
     const key = req.headers['sec-websocket-key']
@@ -36,8 +38,10 @@ export class WebSocketHub {
       '\r\n'
     ].join('\r\n'))
     this.sockets.add(socket)
-    socket.on('close', () => this.sockets.delete(socket))
-    socket.on('error', () => this.sockets.delete(socket))
+    this.changed()
+    const removed = () => { if (this.sockets.delete(socket)) this.changed() }
+    socket.on('close', removed)
+    socket.on('error', removed)
     socket.on('data', (chunk) => this.handleClientFrame(socket, chunk))
     return true
   }
@@ -56,6 +60,7 @@ export class WebSocketHub {
       if (!socket.destroyed) { socket.write(closeFrame()); socket.end() }
     }
     this.sockets.clear()
+    this.changed()
   }
 
   private handleClientFrame(socket: Duplex, chunk: Buffer): void {

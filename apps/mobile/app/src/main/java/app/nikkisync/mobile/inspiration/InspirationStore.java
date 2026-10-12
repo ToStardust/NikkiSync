@@ -50,12 +50,12 @@ public final class InspirationStore extends SQLiteOpenHelper {
 
     public synchronized Entry create(Draft draft, long now) {
         if (draft == null) throw new IllegalArgumentException("Missing inspiration draft");
-        String title = required(draft.title(), "title", 200);
+        String title = limited(draft.title(), 200).trim();
         String code = limited(draft.rawCode(), 20000);
         String source = limited(draft.sourceText(), 20000);
         // A reference screenshot may be collected before anyone knows its share code.
         String type = oneOf(draft.codeType(), "unknown", "outfit", "dye");
-        String status = oneOf(draft.status(), "want", "tried", "reproduced", "archived");
+        String status = oneOf(draft.status(), "self", "want", "tried", "reproduced", "archived");
         String id = UUID.randomUUID().toString(), codeId = UUID.randomUUID().toString();
         long time = Math.max(1L, now);
         SQLiteDatabase db = getWritableDatabase();
@@ -86,9 +86,9 @@ public final class InspirationStore extends SQLiteOpenHelper {
         Entry before = get(id);
         if (before == null) throw new IllegalArgumentException("Inspiration entry not found");
         ContentValues values = new ContentValues();
-        values.put("title", required(title, "title", 200)); values.put("notes", limited(notes, 20000));
+        values.put("title", limited(title, 200).trim()); values.put("notes", limited(notes, 20000));
         values.put("tags_json", jsonNames(tags)); values.put("categories_json", jsonNames(categories));
-        values.put("status", oneOf(status, "want", "tried", "reproduced", "archived"));
+        values.put("status", oneOf(status, "self", "want", "tried", "reproduced", "archived"));
         values.put("updated_at", Math.max(now, before.updatedAt() + 1));
         if (getWritableDatabase().update("inspiration_entries", values, "id = ? AND deleted_at = 0", new String[] {id}) != 1)
             throw new IllegalStateException("Inspiration update failed");
@@ -193,6 +193,14 @@ public final class InspirationStore extends SQLiteOpenHelper {
             }
         }
         return result;
+    }
+
+    public synchronized List<String> categoryNames() {
+        LinkedHashSet<String> result=new LinkedHashSet<>();
+        try(Cursor cursor=getReadableDatabase().query("inspiration_entries",new String[]{"categories_json"},"deleted_at = 0",null,null,null,"updated_at DESC")) {
+            while(cursor.moveToNext())result.addAll(names(cursor.getString(0)));
+        }
+        return List.copyOf(result);
     }
 
     private Entry readEntry(SQLiteDatabase db, String id, boolean includeDeleted) {

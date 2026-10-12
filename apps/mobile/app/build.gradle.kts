@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2.0-m2"
+        versionCode = 19
+        versionName = "0.2.18-motion-video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -26,6 +26,8 @@ android {
 }
 
 dependencies {
+    // Lightweight Ed25519 only; do not register a global BC provider or rely on OEM JCA order.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     // 1.13.0 requires SDK 36 / AGP 8.9.1; this branch intentionally builds on SDK 35 / AGP 8.7.3.
     implementation("androidx.activity:activity:1.10.1")
@@ -39,4 +41,13 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.17")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
+
+// Keep the user-facing APK beside the existing desktop bundle after an Android build.
+tasks.register<Copy>("stageDebugApk") {
+    dependsOn("assembleDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk")) {
+        rename { "NikkiSync-Android.apk" }
+    }
+    into(rootProject.projectDir.resolve("../../release/NikkiSync"))
 }

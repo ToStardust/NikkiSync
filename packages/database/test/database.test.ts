@@ -198,3 +198,15 @@ test('paired-device count excludes revoked devices', () => {
   assert.equal(pairing.countActiveDevices(), 1)
   database.close()
 })
+
+test('dictionary thumbnail fallbacks round-trip with canonical entries and legacy raw data', () => {
+  const { database, dictionary } = setup()
+  dictionary.replaceSnapshot({ schemaVersion: 1, provider: 'fixture', providerVersion: '1', entries: [
+    { kind: 'clothing', id: '101', thumbnailFallbacks: ['https://example.test/hair.webp'] },
+    { kind: 'clothing', id: '102', raw: { thumbnailFallbacks: ['https://example.test/tops.webp', 123] } }
+  ] })
+  assert.deepEqual(dictionary.lookup('clothing', '101')?.thumbnailFallbacks, ['https://example.test/hair.webp'])
+  assert.deepEqual(dictionary.lookup('clothing', '102')?.thumbnailFallbacks, ['https://example.test/tops.webp'])
+  assert.deepEqual(dictionary.getActiveManifest()?.entries[0]?.thumbnailFallbacks, ['https://example.test/hair.webp'])
+  database.close()
+})

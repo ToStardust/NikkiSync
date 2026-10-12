@@ -1,9 +1,10 @@
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { stat,open } from 'node:fs/promises'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import https from 'node:https'
 import type { Duplex } from 'node:stream'
-import { X509Certificate } from 'node:crypto'
+import { X509Certificate,createHash } from 'node:crypto'
+import {exportJpeg} from '../wechat/GalleryRuntime.mjs'
 import {
   AssetRepository,
   MetadataDictionaryRepository,
@@ -24,6 +25,8 @@ import {
   type WsEvent
 } from '@nikkisync/protocol'
 import type { MetadataThumbnailCache } from '../metadata/MetadataThumbnailCache.js'
+import type { RemoteBridgeService } from '../remote/RemoteBridgeService.js'
+import { RemoteRoutes } from '../remote/RemoteRoutes.js'
 import { AuthService } from './AuthService.js'
 import { MdnsAdvertiser } from './MdnsAdvertiser.js'
 import { PairingError, PairingService } from './PairingService.js'
@@ -42,6 +45,7 @@ export interface LocalSyncServerConfig {
   mdns?: boolean
   maxJsonBodyBytes?: number
   metadataThumbnailCache?: MetadataThumbnailCache
+  remoteBridge?: RemoteBridgeService
 }
 
 export interface LocalSyncServerAddress {
@@ -127,12 +131,13 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 }
 
 export class LocalSyncServer {
+  private exportBusy = false
   private readonly reads: SyncReadRepository
   private readonly assets: AssetRepository
   private readonly dictionary: MetadataDictionaryRepository
   private readonly auth: AuthService
   private readonly pairing: PairingService
-  private readonly sockets = new WebSocketHub()
+  private readonly sockets = new WebSocketHub(() => this.updateJournalPolling())
   private readonly mdns = new MdnsAdvertiser()
   private server: http.Server | https.Server | undefined
   private pollTimer: NodeJS.Timeout | undefined
@@ -141,7 +146,8 @@ export class LocalSyncServer {
   private suitSearchSourceCache: { libraryRevision: number; items: SuitSearchAsset[] } | undefined
   private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
   private readonly clothingSearchResponseCache = new Map<string, ClothingSearchResponse>()
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache'>
+  private readonly remoteRoutes: RemoteRoutes | undefined
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
@@ -149,6 +155,7 @@ export class LocalSyncServer {
     this.dictionary = new MetadataDictionaryRepository(database)
     this.auth = new AuthService(database)
     this.pairing = new PairingService(database)
+    this.remoteRoutes = config.remoteBridge ? new RemoteRoutes(config.remoteBridge) : undefined
     this.config = {
       name: config.name ?? 'NikkiSync PC',
       host: config.host ?? '0.0.0.0',
@@ -157,7 +164,8 @@ export class LocalSyncServer {
       mdns: config.mdns ?? true,
       maxJsonBodyBytes: config.maxJsonBodyBytes ?? 1024 * 1024,
       ...(config.tls ? { tls: config.tls } : {}),
-      ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {})
+      ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {}),
+      ...(config.remoteBridge ? { remoteBridge: config.remoteBridge } : {})
     }
   }
 
@@ -165,6 +173,7 @@ export class LocalSyncServer {
 
   async start(): Promise<LocalSyncServerAddress> {
     if (this.server) return this.address!
+    if (this.remoteRoutes && !this.config.tls) throw new Error('TLS is required for Remote Bridge routes')
     this.server = this.config.tls
       ? https.createServer(this.config.tls, (req, res) => { void this.handle(req, res) })
       : http.createServer((req, res) => { void this.handle(req, res) })
@@ -177,7 +186,6 @@ export class LocalSyncServer {
     if (!value || typeof value === 'string') throw new Error('Local sync server did not expose a TCP address')
     this.address = { host: this.config.host, port: value.port, secure: Boolean(this.config.tls) }
     this.lastBroadcastRevision = this.reads.currentRevision()
-    this.pollTimer = setInterval(() => this.broadcastJournal(), this.config.journalPollMs)
     if (this.config.mdns) this.mdns.start({ serverId: this.serverId, name: this.config.name, port: value.port })
     return this.address
   }
@@ -186,6 +194,7 @@ export class LocalSyncServer {
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
     this.mdns.stop(); this.sockets.close()
+    this.config.remoteBridge?.closeAllSessions()
     const server = this.server
     this.server = undefined; this.address = undefined
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -202,9 +211,21 @@ export class LocalSyncServer {
     })
   }
 
+  createRemoteSession(host: string, resourceIds: readonly string[]) {
+    if (!this.address || !this.config.tls || !this.config.remoteBridge) throw new Error('Remote Bridge is not running')
+    return this.config.remoteBridge.createSession(resourceIds, {
+      endpoint: `https://${host}:${this.address.port}`,
+      tlsFingerprintSha256: pemFingerprint(this.config.tls.cert)
+    })
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://nikkisync.local')
+      if (this.remoteRoutes && url.pathname.startsWith('/remote/')) {
+        await this.remoteRoutes.handle(req, res)
+        return
+      }
       if (req.method === 'GET' && url.pathname === API_ROUTES.serverInfo) return this.serverInfo(res)
       if (req.method === 'POST' && url.pathname === API_ROUTES.pair) return void await this.handlePair(req, res)
       const metadataMatch = /^\/v1\/assets\/([^/]+)\/metadata$/.exec(url.pathname)
@@ -231,6 +252,8 @@ export class LocalSyncServer {
       const assetMatch = /^\/v1\/assets\/([^/]+)$/.exec(url.pathname)
       if (req.method === 'GET' && assetMatch) return this.assetDetail(decodeURIComponent(assetMatch[1]!), res)
       const resourceMatch = /^\/v1\/assets\/([^/]+)\/resources\/([^/]+)$/.exec(url.pathname)
+      const exportMatch = /^\/v1\/assets\/([^/]+)\/resources\/([^/]+)\/export$/.exec(url.pathname)
+      if((req.method==='GET'||req.method==='HEAD')&&exportMatch)return void await this.exportStill(req,res,url,decodeURIComponent(exportMatch[1]!),decodeURIComponent(exportMatch[2]!))
       if ((req.method === 'GET' || req.method === 'HEAD') && resourceMatch) {
         return void await this.streamResource(req, res, decodeURIComponent(resourceMatch[1]!), decodeURIComponent(resourceMatch[2]!))
       }
@@ -517,6 +540,30 @@ export class LocalSyncServer {
     createReadStream(sourcePath).pipe(res)
   }
 
+  private async exportStill(req:IncomingMessage,res:ServerResponse,url:URL,assetId:string,resourceId:string):Promise<void>{
+    const exif=url.searchParams.get('exif'),rotation=Number(url.searchParams.get('rotation'))
+    if(Array.from(url.searchParams.keys()).some(x=>!['exif','rotation'].includes(x))||url.searchParams.getAll('exif').length!==1||url.searchParams.getAll('rotation').length!==1||!['true','false'].includes(exif??'')||!['0','90','180','270'].includes(url.searchParams.get('rotation')??'')||req.headers.range)return json(res,400,errorBody('bad_request','Invalid JPEG export options'))
+    const row=this.reads.getResource(assetId,resourceId),asset=this.reads.getAsset(assetId)
+    if(!row||!asset||asset.asset_type!=='photo'||asset.asset_state!=='ready'||row.stable_state!=='stable'||!['source_primary','source_high_quality'].includes(String(row.role))||row.mime_type!=='image/jpeg')return json(res,404,errorBody('resource_not_ready','Ordinary JPEG resource unavailable'))
+    if(this.exportBusy)return json(res,429,errorBody('resource_not_ready','Please retry after the current export'))
+    this.exportBusy=true;let bytes:Buffer|undefined,output:Buffer|undefined
+    try{
+      const size=Number(row.size_bytes),hash=String(row.sha256);if(!Number.isSafeInteger(size)||size<4||size>16777216||!/^[a-f0-9]{64}$/i.test(hash))throw new Error('Resource bounds')
+      const file=await open(String(row.source_path),'r')
+      try{
+        const before=await file.stat();if(!before.isFile()||before.size!==size)throw new Error('Source changed')
+        bytes=Buffer.alloc(size);let offset=0;while(offset<size){const part=await file.read(bytes,offset,size-offset,offset);if(!part.bytesRead)throw new Error('Truncated');offset+=part.bytesRead}
+        const after=await file.stat();if(after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ino!==before.ino||createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error('Source changed')
+      }finally{await file.close()}
+      let metadata:unknown;try{metadata=JSON.parse(String(asset.metadata_json??'{}'))}catch{}
+      output=exportJpeg(bytes,metadata,{exif:exif==='true',rotation});const exportedHash=createHash('sha256').update(output).digest('hex')
+      res.writeHead(200,{'Content-Type':'image/jpeg','Content-Length':output.length,'X-NikkiSync-SHA256':exportedHash,'X-NikkiSync-Exif':exif==='true'?'1':'0','X-NikkiSync-Rotation':String(rotation),'X-NikkiSync-Export':'jpeg-exif-v1','Cache-Control':'private, no-store'})
+      if(req.method==='HEAD'){res.end();return}
+      await new Promise<void>(resolve=>{res.once('close',resolve);res.end(output,resolve)})
+    }catch{if(!res.headersSent)json(res,409,errorBody('resource_not_ready','Source changed or JPEG metadata cannot be safely exported'));else res.destroy()}
+    finally{bytes?.fill(0);output?.fill(0);this.exportBusy=false}
+  }
+
   private handleUpgrade(req: IncomingMessage, socket: Duplex): void {
     const url = new URL(req.url ?? '/', 'http://nikkisync.local')
     if (url.pathname !== API_ROUTES.websocket || !this.auth.verifyRequest(req)) { socket.destroy(); return }
@@ -543,5 +590,19 @@ export class LocalSyncServer {
       this.sockets.broadcast(event)
       this.lastBroadcastRevision = Number(row.revision)
     }
+  }
+
+  private updateJournalPolling(): void {
+    if (!this.sockets.size) {
+      if (this.pollTimer) clearInterval(this.pollTimer)
+      this.pollTimer = undefined
+      return
+    }
+    if (this.pollTimer || !this.server) return
+    // The new subscriber receives server.hello with the current revision.
+    // Only changes after that point need broadcasting; older changes use /changes.
+    this.lastBroadcastRevision = this.reads.currentRevision()
+    this.pollTimer = setInterval(() => this.broadcastJournal(), this.config.journalPollMs)
+    this.pollTimer.unref()
   }
 }

@@ -46,6 +46,20 @@ public final class LivePhotoRotation {
     public record Output(File image,File video,VideoFacts videoFacts){}
     private LivePhotoRotation(){}
 
+    /** Standalone MP4 uses the same physical rotation and track validation as LIVE, without downloading a cover. */
+    public static File rotateVideoOnly(Context context,File video,int clockwise,File directory,
+                                      AtomicBoolean cleanupSafe,IntConsumer progress)throws IOException{
+        int degrees=QuarterTurn.normalize(clockwise);
+        if(degrees==0)return video;
+        if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("视频旋转不能阻塞 UI 线程");
+        VideoFacts before=VideoFacts.read(video);
+        if(before.hdr())throw new IOException("HDR/BT.2020 视频暂不执行旋转，避免降低色彩质量");
+        File output=new File(directory,"rotated.mp4");
+        rotateVideo(context,video,output,degrees,cleanupSafe,progress);
+        before.verifyRotated(VideoFacts.read(output),degrees);
+        return output;
+    }
+
     public static Output rotate(Context context,File image,File video,int clockwise,File directory,
                                 AtomicBoolean cleanupSafe,IntConsumer progress)throws IOException{
         int degrees=QuarterTurn.normalize(clockwise);VideoFacts before=VideoFacts.read(video);

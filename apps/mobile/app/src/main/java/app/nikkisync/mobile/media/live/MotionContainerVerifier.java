@@ -43,7 +43,11 @@ public final class MotionContainerVerifier {
                 byte[] xmp=JpegSegments.xmp(prefix);length=MotionXmp.videoLength(xmp);offset=r.length()-length;
                 JpegSegments.require(MotionXmp.timestamp(xmp)==o.presentationUs(),"Motion 封面时间不一致");
                 JpegSegments.require(MotionXmp.primaryPadding(xmp)==offset-jpegEnd,"Primary padding/视频起点不一致");
-                if(profile==LivePhotoProfile.OPLUS)JpegSegments.require(JpegSegments.mpfPrimarySize(prefix)==jpegEnd,"MPF 不是最终 JPEG 长度");
+                if(profile==LivePhotoProfile.OPLUS){
+                    MotionXmp.verifyOplus(xmp,length,o.presentationUs());
+                    JpegSegments.require(offset==jpegEnd,"Oplus 视频没有紧接 JPEG EOI");
+                    JpegSegments.require(JpegSegments.mpfPrimarySize(prefix)==jpegEnd,"MPF 不是最终 JPEG 长度");
+                }
             }
         }
         JpegSegments.require(offset>=jpegEnd&&length==motion.length(),"视频边界与原动态资源不一致");compare(primary,offset,length,motion);

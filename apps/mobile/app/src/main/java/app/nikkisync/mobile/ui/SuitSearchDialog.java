@@ -1,7 +1,7 @@
 package app.nikkisync.mobile.ui;
 
 import android.app.Activity;
-import android.app.Dialog;
+import app.nikkisync.mobile.ui.chrome.ChromePage;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.view.Gravity;
@@ -36,6 +36,11 @@ public final class SuitSearchDialog {
         void onPhotoClick(AssetSummary asset);
     }
 
+    @FunctionalInterface
+    public interface ContextListener {
+        void onPhotoClick(AssetSummary asset, List<AssetSummary> displayedPhotos);
+    }
+
     private SuitSearchDialog() {}
 
     public static void show(
@@ -45,6 +50,18 @@ public final class SuitSearchDialog {
             ExecutorService io,
             Handler main,
             Listener listener
+    ) {
+        showWithContext(activity, client, images, io, main,
+                (asset, displayedPhotos) -> listener.onPhotoClick(asset));
+    }
+
+    public static void showWithContext(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            ContextListener listener
     ) {
         showInternal(activity, client, images, io, main, listener, null, MODE_ALL, false);
     }
@@ -56,6 +73,19 @@ public final class SuitSearchDialog {
             ExecutorService io,
             Handler main,
             Listener listener,
+            String query
+    ) {
+        showSuitWithContext(activity, client, images, io, main,
+                (asset, displayedPhotos) -> listener.onPhotoClick(asset), query);
+    }
+
+    public static void showSuitWithContext(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            ContextListener listener,
             String query
     ) {
         showInternal(activity, client, images, io, main, listener, query, MODE_SUIT, true);
@@ -70,6 +100,19 @@ public final class SuitSearchDialog {
             Listener listener,
             String query
     ) {
+        showClothingWithContext(activity, client, images, io, main,
+                (asset, displayedPhotos) -> listener.onPhotoClick(asset), query);
+    }
+
+    public static void showClothingWithContext(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            ExecutorService io,
+            Handler main,
+            ContextListener listener,
+            String query
+    ) {
         showInternal(activity, client, images, io, main, listener, query, MODE_CLOTHING, true);
     }
 
@@ -79,13 +122,12 @@ public final class SuitSearchDialog {
             ImageLoader images,
             ExecutorService io,
             Handler main,
-            Listener listener,
+            ContextListener listener,
             String initialQuery,
             int initialMode,
             boolean autoSearch
     ) {
-        Dialog dialog = new Dialog(activity);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        ChromePage dialog = new ChromePage(activity);
 
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -243,10 +285,6 @@ public final class SuitSearchDialog {
 
         dialog.setContentView(root);
         dialog.show();
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
-        }
         if (autoSearch && initialQuery != null && !initialQuery.isBlank()) {
             search.performClick();
         } else {
@@ -263,7 +301,7 @@ public final class SuitSearchDialog {
             int mode,
             LinearLayout results,
             TextView status,
-            Listener listener
+            ContextListener listener
     ) {
         results.removeAllViews();
 
@@ -320,7 +358,7 @@ public final class SuitSearchDialog {
             NikkiSyncClient client,
             ImageLoader images,
             SuitSearchResult item,
-            Listener listener
+            ContextListener listener
     ) {
         LinearLayout card = resultCard(activity);
 
@@ -376,7 +414,7 @@ public final class SuitSearchDialog {
             card.addView(coverageTrack, coverageLp);
         }
 
-        card.addView(SuitSearchGrid.create(activity, client, images, item, listener::onPhotoClick));
+        card.addView(SuitSearchGrid.createWithContext(activity, client, images, item, listener::onPhotoClick));
         return card;
     }
 
@@ -385,7 +423,7 @@ public final class SuitSearchDialog {
             NikkiSyncClient client,
             ImageLoader images,
             ClothingSearchResult item,
-            Listener listener
+            ContextListener listener
     ) {
         LinearLayout card = resultCard(activity);
 
@@ -436,7 +474,7 @@ public final class SuitSearchDialog {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         );
         gridLp.topMargin = dp(activity, 10);
-        card.addView(ClothingSearchGrid.create(activity, client, images, item, listener::onPhotoClick), gridLp);
+        card.addView(ClothingSearchGrid.createWithContext(activity, client, images, item, listener::onPhotoClick), gridLp);
         return card;
     }
 

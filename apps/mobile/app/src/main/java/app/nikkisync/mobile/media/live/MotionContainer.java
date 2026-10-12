@@ -25,7 +25,11 @@ public final class MotionContainer {
     public record Product(File primary,List<File> companions){public Product{companions=List.copyOf(companions);}}
     private MotionContainer(){}
     public static Product write(LivePhotoProfile profile,File jpeg,File video,File outDir,Options options)throws IOException{
-        byte[] original=JpegSegments.read(jpeg);int oldEnd=JpegSegments.endOffset(original);long padding=original.length-oldEnd;
+        byte[] original=JpegSegments.read(jpeg);int oldEnd=JpegSegments.endOffset(original);
+        // Match the public Oplus reference layout: MP4 immediately after EOI. Drop only the exported copy's
+        // opaque trailer, never image scan data or the source file/parameter snapshot.
+        if(profile==LivePhotoProfile.OPLUS&&oldEnd!=original.length)original=Arrays.copyOf(original,oldEnd);
+        long padding=original.length-oldEnd;
         JpegSegments.require(video.length()>0,"视频为空");
         byte[] xmp=MotionXmp.create(profile,video.length(),options.presentationUs,padding);
         byte[] primary=JpegSegments.rewrite(original,xmp,profile==LivePhotoProfile.OPLUS?mpfSegment(0):null);

@@ -16,10 +16,12 @@ public record ShareCardPayload(
         effectItems = List.copyOf(effectItems == null ? List.of() : effectItems);
     }
 
-    public record Item(String label, String value) {
+    public record Item(String label, String value, String clothingId) {
+        public Item(String label, String value) { this(label, value, ""); }
         public Item {
             label = label == null ? "" : label.trim();
             value = value == null ? "" : value.trim();
+            clothingId = clothingId == null ? "" : clothingId.trim();
         }
     }
 }

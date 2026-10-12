@@ -31,7 +31,7 @@ export class DesktopStatusService {
       service: 'ready',
       host: input.host,
       port: input.port,
-      assets: input.assets ?? this.assets.list().length,
+      assets: input.assets ?? this.assets.count(),
       pairedDevices,
       firstRun: pairedDevices === 0
     }

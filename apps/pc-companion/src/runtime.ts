@@ -10,17 +10,24 @@ import type { MetadataResolverServiceConfig, PhotoMetadataResolver } from './met
 import { MetadataDictionaryService } from './metadata/MetadataDictionaryService.js'
 import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceConfig } from './metadata/MetadataDictionaryUpdateService.js'
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
+import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
 
 export interface PcCompanionRuntimeConfig {
   databaseFile?: string
   scanner?: ScannerConfig
   server?: LocalSyncServerConfig
+  remoteBridge?: boolean
   metadataResolver?: {
     resolver: PhotoMetadataResolver
     service?: MetadataResolverServiceConfig
   }
   metadataDictionary?: MetadataDictionaryManifest
+  metadataDictionarySupplement?: MetadataDictionaryManifest
   metadataDictionaryRemote?: {
+    provider: MetadataDictionaryProvider
+    service?: MetadataDictionaryUpdateServiceConfig
+  }
+  metadataDictionarySupplementRemote?: {
     provider: MetadataDictionaryProvider
     service?: MetadataDictionaryUpdateServiceConfig
   }
@@ -36,16 +43,18 @@ export class PcCompanionRuntime {
   readonly database: DatabaseManager
   readonly scanner: ScannerService
   readonly server: LocalSyncServer
+  readonly remoteBridge: RemoteBridgeService | undefined
   readonly metadataResolver?: MetadataResolverService
   readonly metadataDictionary?: MetadataDictionaryService
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
+  readonly metadataDictionarySupplementUpdater?: MetadataDictionaryUpdateService
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
-    if (config.metadataDictionary || config.metadataDictionaryRemote) {
-      this.metadataDictionary = new MetadataDictionaryService(this.database)
+    if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
+      this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
       if (config.metadataDictionaryRemote) {
         this.metadataDictionaryUpdater = new MetadataDictionaryUpdateService(
@@ -53,6 +62,12 @@ export class PcCompanionRuntime {
           this.metadataDictionary,
           config.metadataDictionaryRemote.provider,
           config.metadataDictionaryRemote.service
+        )
+      }
+      if (config.metadataDictionarySupplementRemote) {
+        this.metadataDictionarySupplementUpdater = new MetadataDictionaryUpdateService(
+          this.database, this.metadataDictionary, config.metadataDictionarySupplementRemote.provider,
+          { ...config.metadataDictionarySupplementRemote.service, mode: 'supplement' }
         )
       }
     }
@@ -64,7 +79,8 @@ export class PcCompanionRuntime {
         this.metadataDictionary
       )
     }
-    const serverConfig = config.server ?? {}
+    this.remoteBridge = config.remoteBridge ? new RemoteBridgeService(this.database) : config.server?.remoteBridge
+    const serverConfig = { ...config.server, ...(this.remoteBridge ? { remoteBridge: this.remoteBridge } : {}) }
     if (serverConfig.tls) {
       this.server = new LocalSyncServer(this.database, serverConfig)
     } else {
@@ -79,6 +95,7 @@ export class PcCompanionRuntime {
       const server = await this.server.start()
       this.metadataDictionary?.reenrichResolvedAssets()
       this.metadataDictionaryUpdater?.start()
+      this.metadataDictionarySupplementUpdater?.start()
       this.metadataResolver?.start()
       return { scan, server }
     } catch (error) {
@@ -90,6 +107,7 @@ export class PcCompanionRuntime {
   async stop(): Promise<void> {
     this.metadataResolver?.stop()
     this.metadataDictionaryUpdater?.stop()
+    this.metadataDictionarySupplementUpdater?.stop()
     await this.server.stop()
     await this.scanner.stop()
     this.database.close()

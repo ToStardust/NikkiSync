@@ -5,7 +5,12 @@ import static org.junit.Assert.*;
 import android.net.Uri;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
 public final class EditedMediaAccessTest {
     @Test public void grantFailureStillReturnsLinkableMediaInfo() {
         EditedMediaAccess.ResolverOps ops = new EditedMediaAccess.ResolverOps() {
