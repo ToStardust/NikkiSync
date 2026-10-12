@@ -8,8 +8,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.2.17-details-viewport"
+        versionCode = 19
+        versionName = "0.2.18-motion-video"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -58,6 +58,49 @@ public final class OriginalVideoSaverTest {
         assertTrue(completed.size()>2);assertEquals(Long.valueOf(bytes.length),completed.get(completed.size()-1));
         assertEquals("保存完成",stages.get(stages.size()-1));assertTrue(connection.disconnected);
     }
+    @Test public void zeroDegreeVideoSaveNeverInvokesTheEncoder() throws Exception {
+        MotionVideoSaver.saveDownload(context,resource,connection,0,TaskProgress.NONE,
+            (input,degrees,job,safe,progress)->{throw new AssertionError("Zero degrees must copy original bytes");});
+        assertArrayEquals(bytes,Files.readAllBytes(provider.file.toPath()));
+        assertEquals(1,provider.reads);assertEquals(1,provider.updates);
+    }
+    @Test public void clockwise90PublishesTheRotatedVideoInsteadOfTheDownloadedSource() throws Exception {assertRotated(90);}
+    @Test public void clockwise180PublishesTheRotatedVideoInsteadOfTheDownloadedSource() throws Exception {assertRotated(180);}
+    @Test public void clockwise270PublishesTheRotatedVideoInsteadOfTheDownloadedSource() throws Exception {assertRotated(270);}
+    private void assertRotated(int degrees) throws Exception {
+        byte[] exported=("synthetic rotated MP4 "+degrees).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        List<String> stages=new ArrayList<>();File[] temporary={null};
+        MotionVideoSaver.saveDownload(context,resource,connection,degrees,(stage,done,total)->stages.add(stage),
+            (input,angle,job,safe,progress)->{
+                assertArrayEquals(bytes,Files.readAllBytes(input.toPath()));assertEquals(degrees,angle);
+                temporary[0]=job;progress.accept(50);File output=new File(job,"rotated.mp4");
+                Files.write(output.toPath(),exported);return output;
+            });
+        assertArrayEquals(exported,Files.readAllBytes(provider.file.toPath()));
+        assertEquals(1,provider.inserts);assertEquals(1,provider.reads);assertEquals(1,provider.updates);assertEquals(0,provider.deletes);
+        assertEquals("Movies/NikkiSync",provider.pending.getAsString("relative_path"));
+        assertTrue(provider.pending.getAsString("_display_name").contains("rotated_"+degrees));
+        assertTrue(stages.contains("旋转视频"));assertEquals("保存完成",stages.get(stages.size()-1));
+        assertFalse(temporary[0].exists());assertTrue(connection.disconnected);
+    }
+    @Test public void corruptSourceNeverReachesRotationOrPublication() throws Exception {
+        connection.body=bytes.clone();connection.body[200]^=1;
+        assertThrows(java.io.IOException.class,()->MotionVideoSaver.saveDownload(context,resource,connection,90,TaskProgress.NONE,
+            (input,degrees,job,safe,progress)->{throw new AssertionError("Corrupt source must not be encoded");}));
+        assertEquals(0,provider.inserts);assertTrue(connection.disconnected);
+    }
+    @Test public void rotationFailureDoesNotPublishAndCleansItsPrivateDirectory() throws Exception {
+        File[] temporary={null};
+        assertThrows(java.io.IOException.class,()->MotionVideoSaver.saveDownload(context,resource,connection,90,TaskProgress.NONE,
+            (input,degrees,job,safe,progress)->{temporary[0]=job;throw new java.io.IOException("synthetic codec failure");}));
+        assertFalse(temporary[0].exists());assertEquals(0,provider.inserts);assertTrue(connection.disconnected);
+    }
+    @Test public void corruptedRotatedGalleryFileIsRemovedWithoutPublication() throws Exception {
+        provider.corruptRead=true;
+        assertThrows(java.io.IOException.class,()->MotionVideoSaver.saveDownload(context,resource,connection,270,TaskProgress.NONE,
+            (input,degrees,job,safe,progress)->{File output=new File(job,"rotated.mp4");Files.write(output.toPath(),bytes);return output;}));
+        assertEquals(1,provider.deletes);assertEquals(0,provider.updates);
+    }
     @Test public void corruptDownloadDeletesPendingVideoWithoutPublishing() throws Exception {
         connection.body=bytes.clone();connection.body[200]^=1;reject();assertEquals(1,provider.deletes);
     }

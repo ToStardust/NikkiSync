@@ -52,18 +52,49 @@ public class MainViewerEntryTest {
             assertNull(findButton(activity.navigationHost(),"保存原视频"));
         } finally {cleanup(activity);}
     }
-    @Test public void liveViewerOffersOriginalVideoForSamePhonePlaybackComparison() throws Exception {
+    @Test public void liveSaveOffersLiveOrVideoAndCancellationKeepsTheViewer() throws Exception {
         var activity=fixture();
         try {
             var asset=new AssetSummary("synthetic-live","motion_photo","ready",null,null,
                     1,3840,2160,true,false,null,null,null,null);
             invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
-            findButton(activity.navigationHost(),"详情").performClick();
-            Button video=findButton(activity.navigationHost(),"保存原视频");
-            assertNotNull("LIVE needs an unmodified MP4 playback comparison on the same phone",video);
-            assertTrue(video.isEnabled());
-            video.performClick();
+            findButton(activity.navigationHost(),"保存").performClick();
+            assertEquals(2,activity.navigationHost().overlayCount());
+            assertNotNull(findButton(activity.navigationHost(),"实况照片"));
+            assertNotNull(findButton(activity.navigationHost(),"视频"));
+            findButton(activity.navigationHost(),"取消").performClick();
+            activity.navigationHost().interrupt();
+            assertEquals(1,activity.navigationHost().overlayCount());
+            findButton(activity.navigationHost(),"保存").performClick();
+            findButton(activity.navigationHost(),"视频").performClick();
             assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+            activity.navigationHost().interrupt();
+            assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    @Test public void ordinaryPhotoSaveDoesNotOfferVideo() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic","photo","ready",null,null,1,1000,1200,false,false,null,null,null,null);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            findButton(activity.navigationHost(),"保存").performClick();
+            assertEquals(1,activity.navigationHost().overlayCount());
+            assertNull(findButton(activity.navigationHost(),"视频"));
+            assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+        } finally {cleanup(activity);}
+    }
+    @Test public void mixedBatchOffersTheSameMotionSaveChoices() throws Exception {
+        var activity=fixture();
+        try {
+            var photo=new AssetSummary("synthetic","photo","ready",null,null,1,1000,1200,false,false,null,null,null,null);
+            var live=new AssetSummary("synthetic-live","motion_photo","ready",null,null,1,3840,2160,true,false,null,null,null,null);
+            invoke(activity,"requestPhotoSave",new Class<?>[]{java.util.List.class,boolean.class},java.util.List.of(photo,live),true);
+            assertEquals(1,activity.navigationHost().overlayCount());
+            assertNotNull(findButton(activity.navigationHost(),"实况照片"));
+            assertNotNull(findButton(activity.navigationHost(),"视频"));
+            findButton(activity.navigationHost(),"实况照片").performClick();
+            assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+            activity.navigationHost().interrupt();assertEquals(0,activity.navigationHost().overlayCount());
         } finally {cleanup(activity);}
     }
     private static Button findButton(android.view.View view,String text) {

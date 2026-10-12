@@ -31,6 +31,39 @@ public final class LivePhotoRotationInstrumentedTest {
     @Test public void rotatePhysicalPixelsAtAllQuarterTurns() throws Exception { exercise(0); }
     @Test public void existingExifAndVideoOrientationAreAppliedExactlyOnce() throws Exception { exercise(90); }
 
+    @Test public void standaloneVideoUsesPreviewDirectionAtAllQuarterTurns() throws Exception { exerciseVideoOnly(0); }
+    @Test public void standaloneVideoDoesNotDoubleApplyExistingRotation() throws Exception { exerciseVideoOnly(90); }
+
+    private void exerciseVideoOnly(int originalRotation) throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File root=Files.createTempDirectory(context.getCacheDir().toPath(),"standalone-rotation-test-").toFile();
+        AtomicBoolean cleanupSafe=new AtomicBoolean(true);
+        try {
+            File video=asset(root,"corners-audio.mp4");
+            if(originalRotation!=0){File tagged=new File(root,"orientation.mp4");remuxWithRotation(video,tagged,originalRotation);video=tagged;}
+            byte[] original=Files.readAllBytes(video.toPath());VideoFacts before=VideoFacts.read(video);
+            for(int angle:new int[]{0,90,180,270}) {
+                File target=new File(root,"r"+angle);assertTrue(target.mkdir());
+                File output=LivePhotoRotation.rotateVideoOnly(context,video,angle,target,cleanupSafe,p->{});
+                assertTrue(cleanupSafe.get());
+                if(angle==0){assertEquals(video,output);assertArrayEquals(original,Files.readAllBytes(output.toPath()));}
+                else before.verifyRotated(VideoFacts.read(output),angle);
+                assertArrayEquals(original,Files.readAllBytes(video.toPath()));
+                MediaMetadataRetriever reader=new MediaMetadataRetriever();Bitmap frame=null;
+                try {
+                    reader.setDataSource(output.getAbsolutePath());frame=reader.getFrameAtTime(500_000,MediaMetadataRetriever.OPTION_CLOSEST);
+                    assertNotNull(frame);int total=(originalRotation+angle)%360;
+                    assertEquals(total%180==0?320:180,frame.getWidth());assertEquals(total%180==0?180:320,frame.getHeight());
+                    corners(frame,EXPECTED[total/90]);
+                } finally {if(frame!=null)frame.recycle();reader.release();}
+            }
+        } finally {
+            if(cleanupSafe.get())try(var paths=Files.walk(root.toPath())) {
+                for(var p:paths.sorted(Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList()))Files.deleteIfExists(p);
+            }
+        }
+    }
+
     private void exercise(int originalRotation) throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
         File root=Files.createTempDirectory(context.getCacheDir().toPath(),"live-rotation-test-").toFile();

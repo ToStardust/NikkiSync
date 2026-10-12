@@ -1660,14 +1660,41 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void saveSelected() {
-        savePhotos(adapter.selectedItems(), true);
+        requestPhotoSave(adapter.selectedItems(), true);
+    }
+
+    private void requestPhotoSave(List<AssetSummary> requested,boolean clearSelection) {
+        List<AssetSummary> selected=new ArrayList<>(requested);
+        if(selected.stream().noneMatch(AssetSummary::hasMotion)){savePhotos(selected,clearSelection);return;}
+        if(photoSaveProgress!=null&&photoSaveProgress.isShowing()){toast("正在保存，请等待完成");return;}
+        LinearLayout choices=new LinearLayout(this);choices.setOrientation(LinearLayout.VERTICAL);
+        Button live=button("实况照片"),video=button("视频"),cancel=button("取消");
+        choices.addView(live,new LinearLayout.LayoutParams(-1,-2));
+        choices.addView(video,new LinearLayout.LayoutParams(-1,-2));
+        TextView note=text("按当前旋转方向保存"+(selected.size()>1?"，普通照片仍保存为图片":""),13,false,getColor(R.color.text_secondary));
+        note.setPadding(0,dp(8),0,dp(8));choices.addView(note);
+        var sheet=new app.nikkisync.mobile.ui.chrome.ChromeSheetLayout(this,
+            text("保存为",20,true,getColor(R.color.text_primary)),choices,cancel).wrapContentForm();
+        boolean[] chosen={false};
+        java.util.function.Consumer<Boolean> choose=asVideo->{
+            if(chosen[0])return;chosen[0]=true;navigation.dismiss(sheet);
+            savePhotos(selected,clearSelection,asVideo);
+        };
+        live.setOnClickListener(v->choose.accept(false));video.setOnClickListener(v->choose.accept(true));
+        cancel.setOnClickListener(v->{if(!chosen[0]){chosen[0]=true;navigation.dismiss(sheet);}});
+        navigation.showSheet(sheet);
     }
 
     private void savePhotos(List<AssetSummary> requested, boolean clearSelection) {
+        savePhotos(requested,clearSelection,false);
+    }
+
+    private void savePhotos(List<AssetSummary> requested, boolean clearSelection,boolean motionAsVideo) {
         List<AssetSummary> selected = new ArrayList<>(requested); NikkiSyncClient current = client;
-        if (selected.isEmpty() || current == null) return;
+        if (selected.isEmpty()) return;
+        if(current==null){toast("请先连接电脑");return;}
         if(photoSaveProgress!=null&&photoSaveProgress.isShowing()){toast("正在保存，请等待完成");return;}
-        var saving=new app.nikkisync.mobile.ui.OperationProgressDialog(this,"保存照片到相册",null);
+        var saving=new app.nikkisync.mobile.ui.OperationProgressDialog(this,"保存到相册",null);
         photoSaveProgress=saving;saving.update("准备保存 · 0 / "+selected.size()+" 张",0,0);saving.show();
         // Snapshot UI-owned choices before worker access; each photo keeps its own rotation.
         Map<String, Integer> rotationsSnapshot = new LinkedHashMap<>(rotationByAssetId);
@@ -1692,7 +1719,12 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     int savedRotation = rotationsSnapshot.getOrDefault(asset.assetId(), 0);
                     LivePhotoExporter.Result liveResult = null;
 
-                    if (asset.hasMotion()) {
+                    boolean standaloneVideo=asset.hasMotion()&&motionAsVideo;
+                    if (standaloneVideo) {
+                        savedUri=app.nikkisync.mobile.media.MotionVideoSaver.save(this,current,asset,savedRotation,
+                            (stage,done,total)->main.post(()->saving.update("视频 "+index+" / "+selected.size()+" · "+stage,done,total)));
+                        savedFormat=savedRotation==0?"原视频":"视频 · 已旋转 "+savedRotation+"°";
+                    } else if (asset.hasMotion()) {
                         liveResult = LivePhotoExporter.save(this, current, asset, savedRotation, liveProfile,
                                 (stage, percent) -> main.post(() -> {
                                     if (!isFinishing() && !isDestroyed())
@@ -1710,7 +1742,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     if (liveResult != null) {
                         savedPhotoStore.recordMotion(asset, savedUri, liveResult.companionUris(), savedRotation,
                                 savedFormat, liveResult.profileId(), liveResult.presentationUs(), liveResult.timestampSource());
-                    } else {
+                    } else if (!standaloneVideo) {
                         savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
                     }
                     try {
@@ -1737,31 +1769,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 applyCompletedSaves(completed, rotationsSnapshot, clearSelection);
                 updateSelection();
                 refreshSavedPhotos();
-                String result = "已保存 " + saved + " 张原图" + (failed > 0 ? "，失败 " + failed + " 张" : "");
+                String result = "已保存 " + saved + (motionAsVideo?" 项（动态照片保存为视频）":" 张照片") + (failed > 0 ? "，失败 " + failed + " 项" : "");
                 if (motion && saved > 0) result += "。LIVE 封装已写出，原生相册播放需确认";
                 if (failureDetail != null) result += "。首个失败：" + failureDetail;
                 toast(result); renderConnectionStatus();
-            });
-        });
-    }
-
-    private void saveOriginalVideo(AssetSummary asset,Button source) {
-        NikkiSyncClient current=client;
-        if(current==null){toast("请先连接电脑");return;}
-        if(photoSaveProgress!=null&&photoSaveProgress.isShowing()){toast("正在保存，请等待完成");return;}
-        var saving=new app.nikkisync.mobile.ui.OperationProgressDialog(this,"保存原视频",null);
-        photoSaveProgress=saving;source.setEnabled(false);saving.update("准备下载原视频",0,0);saving.show();
-        io.execute(()->{
-            String failure=null;
-            try {
-                app.nikkisync.mobile.media.OriginalVideoSaver.save(this,current,asset,
-                    (stage,done,total)->main.post(()->{if(!isFinishing()&&!isDestroyed())saving.update(stage,done,total);}));
-            } catch(Exception error){failure=message(error);}
-            String result=failure;
-            main.post(()->{
-                if(isFinishing()||isDestroyed())return;
-                saving.dismiss();if(photoSaveProgress==saving)photoSaveProgress=null;source.setEnabled(true);
-                toast(result==null?"原视频已保存到相册 · 保留电脑原始画质、帧率和方向": "原视频保存失败："+result);
             });
         });
     }
@@ -1885,15 +1896,6 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         shareLp.topMargin = dp(8);
         infoSheet.addView(shareCard, shareLp);
 
-        if(asset.hasMotion()) {
-            Button originalVideo=button("保存原视频");
-            LinearLayout.LayoutParams videoLp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
-            videoLp.topMargin=dp(8);infoSheet.addView(originalVideo,videoLp);
-            originalVideo.setOnClickListener(v->saveOriginalVideo(asset,originalVideo));
-            TextView videoNote=text("保留电脑原视频的画质、帧率和方向，可与 LIVE 在同一手机上对比播放。",12,false,getColor(R.color.text_secondary));
-            videoNote.setPadding(dp(2),dp(6),dp(2),0);infoSheet.addView(videoNote);
-        }
-
         AssetDetail[] detailHolder = new AssetDetail[1];
         io.execute(() -> {
             try {
@@ -1932,7 +1934,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         selection.setOnClickListener(v->{adapter.toggle(asset);updateSelection();boolean selected=adapter.isSelected(asset);
             selection.setText(selected?"✓":"○");selection.setContentDescription(selected?"取消选择照片":"选择照片");select.setText(selected?"✓ 已选择":"○ 选择照片");});
         viewerHeader.addView(selection,0,new LinearLayout.LayoutParams(dp(48),dp(48)));
-        dialog.addAction("保存", () -> savePhotos(List.of(asset), false));
+        dialog.addAction("保存", () -> requestPhotoSave(List.of(asset), false));
         dialog.addAction("分享", () -> { if (shareCard.isEnabled()) shareCard.performClick(); else toast("正在读取照片信息，请稍后"); });
 
         dialog.setOnDismissListener(() -> cancelShareCardFrom(shareCard));
