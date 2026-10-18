@@ -74,8 +74,8 @@ npm ci --offline --ignore-scripts
 npm test -- --runInBand
 dotnet test apps/windows-shell.Tests/NikkiSync.WindowsShell.Tests.csproj -c Release
 npm run pc:exe
-node tools/remote-bridge-smoke.mjs --database 'C:\Users\Stardust\AppData\Local\NikkiSync\nikkisync.sqlite'
-bun tools/remote-bridge-smoke.mjs --database 'C:\Users\Stardust\AppData\Local\NikkiSync\nikkisync.sqlite'
+node tools/remote-bridge-smoke.mjs --database "$env:LOCALAPPDATA\NikkiSync\nikkisync.sqlite"
+bun tools/remote-bridge-smoke.mjs --database "$env:LOCALAPPDATA\NikkiSync\nikkisync.sqlite"
 ```
 
 `--serve` 只用于 PC 浏览器验收，输出随机本机 HTTP 地址；用 Ctrl+C 结束。

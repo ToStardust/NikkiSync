@@ -7,7 +7,7 @@
 ## 实际运行与样本范围
 
 - 正在运行 release/NikkiSync-Reconnect/NikkiSync-PC.exe 及 runtime/NikkiSync-PC-service.exe。
-- 只读打开实际数据库 C:/Users/Stardust/AppData/Local/NikkiSync/nikkisync.sqlite，使用 SQLite URI mode=ro，未更新数据库或启动解析任务。
+- 只读打开本机数据库 %LOCALAPPDATA%/NikkiSync/nikkisync.sqlite，使用 SQLite URI mode=ro，未更新数据库或启动解析任务。
 - 当前应用版本日历将 2026-08-28T03:00:00Z 起的照片推定为 2.9。按此应用日历统计，50 张照片中 43 张有穿搭，42 张缺相同的 8 个部件名。这个统计是应用日历推定，不声称每张照片都携带显式 gameVersion。
 - 42 张照片中这 8 个部件均有 ID；照片元数据与字典都没有 name。没有“字典已有名称、照片没更新”的条目。
 - 部件所属套装 ID 为 10419。最近样本有 16 个部件：8 个已有名称，8 个缺名。已有名称对照包括“浮金星点”“浅浅蜜糖”等。

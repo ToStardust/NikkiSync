@@ -2,9 +2,9 @@
 
 ## 原因与来源
 
-用户在 codex://threads/01a05e03-e4f5-77f2-8e60-af07f77761d2 指出玻璃低刷新率、预测性返回、缩放及下拉返回消失。已读取该对话并找到此前真实开发工作区：
+用户反馈玻璃低刷新率、预测性返回、缩放及下拉返回消失。已根据反馈找到此前的开发工作区：
 
-- 源工作区：C:/Users/Stardust/Documents/NikkiSync_2026-09-22。
+- 源工作区：%USERPROFILE%/Documents/NikkiSync_2026-09-22。
 - 源提交：7e63720a56b9cbd4faf59e43d7b9724ea254952a。
 - 0ae31dc：Photo-first full-screen viewer transitions；7e63720：gallery gestures and confirmed share previews。
 - 前序 ee6e573 / 70037b4 / 1a73d20 / c43c813 等已实现 GPU 模糊、导航、底栏、顶部缩短及返回闪糊修复。
