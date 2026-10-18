@@ -50,7 +50,7 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
     }
     next.push({ id, date: Number.isFinite(date) ? new Date(date).toISOString() : '',...(motion?{motion}:{}),
       canonical, source: resource.sourcePath, hash: resource.sha256, size: resource.sizeBytes,
-      mime: resource.mimeType || 'image/jpeg', player: playerMetadata(resource.metadata), metadata: safeMetadata(resource.metadata),outfit:outfitDescriptors(resource.metadata,identityKey) });
+      mime: resource.mimeType || 'image/jpeg', player: playerMetadata(resource.metadata), metadata: safeMetadata({...resource.metadata,capture:{...resource.metadata?.capture,capturedAt:resource.metadata?.capture?.capturedAt??resource.capturedAt}}),outfit:outfitDescriptors(resource.metadata,identityKey) });
    }
    return next;
   }
@@ -139,7 +139,7 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
 function safeMetadata(metadata){
  const safe=exportMetadata(metadata);
  return {identity:{...(safe.version?{gameVersion:safe.version}:{})},capture:{...(safe.capturedAt?{capturedAt:safe.capturedAt}:{})},camera:safe.camera,
-  dressing:{clothes:safe.clothes.map(name=>({name}))},...(safe.filter?{filter:{name:safe.filter}}:{}),...(safe.lighting?{lighting:{name:safe.lighting}}:{}),...(safe.location?{location:{name:safe.location}}:{})};
+  dressing:safe.dressing,...(safe.poseParameters?{pose:safe.poseParameters}:{}),...(safe.actionParameters?{action:safe.actionParameters}:{}),...(safe.filter?{filter:{...safe.filterParameters,name:safe.filter}}:{}),...(safe.lighting?{lighting:{...safe.lightingParameters,name:safe.lighting}}:{}),...(safe.location?{location:{name:safe.location}}:{})};
 }
 export async function openLocalPreviewSource(databasePath, {discover=discoverInfinityNikkiInstallation} = {}) {
   // Existing discovery and repositories, no new index/schema or game-process inspection.

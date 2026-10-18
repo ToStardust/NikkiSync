@@ -20,7 +20,7 @@ export const desktopPageScript = `
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
   });
 
-  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。']};
+  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。'],about:['关于','版本、更新与项目仓库。']};
   const navigation=[...document.querySelectorAll('[data-view]')];
   for(const button of navigation)button.onclick=()=>{
     const view=button.dataset.view;
@@ -32,12 +32,26 @@ export const desktopPageScript = `
 
   const bridge=window.chrome?.webview,autostart=document.querySelector('#autostart');
   const installer=document.querySelector('#android-installer'),installerNote=document.querySelector('#android-installer-note');
+  const updates=document.querySelector('#check-updates'),updateDot=document.querySelector('#about-update-dot');
+  updates.disabled=!bridge;
+  if(!bridge)document.querySelector('#desktop-update-note').textContent='请在 Windows 应用内检查更新，或前往发布页面下载。';
+  updates.onclick=()=>bridge?.postMessage({type:'checkUpdates'});
+  for(const link of document.querySelectorAll('[data-project]'))link.onclick=event=>{
+    if(bridge){event.preventDefault();bridge.postMessage({type:'openProjectLink',project:link.dataset.project});}
+  };
   installer.hidden=true;installerNote.hidden=true;
   installer.onclick=()=>bridge?.postMessage({type:'saveAndroidInstaller'});
   autostart.disabled=true;
   bridge?.addEventListener('message',event=>{
     if(event.data?.type==='autostart'){autostart.checked=!!event.data.enabled;autostart.disabled=false;}
-    if(event.data?.type==='packageInfo'){installer.hidden=installerNote.hidden=!event.data.hasAndroidInstaller;}
+    if(event.data?.type==='packageInfo'){
+      installer.hidden=installerNote.hidden=!event.data.hasAndroidInstaller;
+      if(typeof event.data.version==='string')document.querySelector('#desktop-version').textContent='版本 '+event.data.version+(event.data.build?' · 构建号 '+event.data.build:'');
+      const available=typeof event.data.availableUpdateVersion==='string'&&event.data.availableUpdateVersion.length>0;
+      updateDot.hidden=!available;updates.textContent=available?'更新至 '+event.data.availableUpdateVersion:'检查更新';
+      if(available)document.querySelector('#desktop-update-note').textContent='发现新版本，点击查看更新内容。';
+      else if(bridge)document.querySelector('#desktop-update-note').textContent='检查新版本，更新时保留已有数据。';
+    }
   });
   bridge?.postMessage({type:'getAutostart'});
   if(!bridge)document.querySelector('#autostart-note').textContent='请在 Windows 应用内设置。';

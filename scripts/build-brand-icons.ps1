@@ -5,7 +5,7 @@ $canonical = Join-Path $root 'assets\branding\momo-camera.png'
 if (-not $Source) {
     $Source = if (Test-Path -LiteralPath $canonical) { $canonical } else { Join-Path $root 'out\avatar-momo\momo-camera-512.png' }
 }
-if ((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -ne '9BC0A0D0BCD670F3DA05791E5F851AEC1C4CBBA142D0F8A5097F657DA95F47E0') { throw 'Expected the existing MiniProgram no-text avatar.' }
+if ((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -ne 'C96328ABF0BD9E62ECA04B5A602C096CCE74FD3BBCF8E3F84E889D5A697DBD19') { throw 'Expected the user-approved Momo Camera artwork.' }
 New-Item -ItemType Directory -Force (Split-Path -Parent $canonical) | Out-Null
 if ((Resolve-Path -LiteralPath $Source).Path -ne $canonical) { Copy-Item -LiteralPath $Source -Destination $canonical }
 Add-Type -AssemblyName System.Drawing
@@ -48,5 +48,6 @@ try {
         [IO.File]::WriteAllBytes((Join-Path $folder 'ic_launcher.png'), (Render-Png $densities[$density]))
         [IO.File]::WriteAllBytes((Join-Path $folder 'ic_launcher_foreground.png'), (Render-Png ([int]($densities[$density]*2.25)) ([int]($densities[$density]*0.375))))
     }
+    [IO.File]::WriteAllBytes((Join-Path $root 'assets\branding\momo-camera-store-512.png'), (Render-Png 512))
 } finally { $image.Dispose() }
-Write-Output 'Existing MiniProgram avatar reused for Windows ICO and Android density/adaptive assets; no AI generation.'
+Write-Output 'Approved Momo Camera artwork converted to Windows ICO, Android density/adaptive assets and 512px store PNG.'

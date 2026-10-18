@@ -111,6 +111,8 @@ public final class PlayerFacingMyPageTest {
         assertEquals(View.VISIBLE, settings.getVisibility()); settings.performClick();
         assertEquals(1, activity.navigationHost().overlayCount());
         String options=allText((LinearLayout)field(activity,"settingsContent"));
+        if(!BuildConfig.STORE_SUBMISSION)for(String removed:List.of("隐私政策","用户协议","权限与数据说明","第三方服务与组件","APP核准（备案）信息"))
+            assertFalse("Public beta settings must omit "+removed,options.contains(removed));
         assertTrue(options.contains("本地缓存"));assertTrue(options.contains("同步与设备"));
         assertTrue(options.contains("保存时附带拍摄参数"));
         findText((View)field(activity,"settingsContent"),"已开启 · 点击关闭").performClick();
@@ -136,16 +138,24 @@ public final class PlayerFacingMyPageTest {
         @SuppressWarnings("unchecked") List<AssetSummary> assets=(List<AssetSummary>)field(activity,"assets");
         assets.add(new AssetSummary("a","photo","ready",null,"12345",1,100,100,false,false,null,null,null,null));
         invoke(activity,"refreshMyPage");
+        for(String label:List.of("填写昵称","复制 UID")){
+            android.widget.Button control=(android.widget.Button)findText((View)field(activity,"myContent"),label);
+            assertEquals("custom buttons must retain centered text",android.view.Gravity.CENTER,control.getGravity());
+        }
         findText((View)field(activity,"myContent"),"填写昵称").performClick();
-        android.app.AlertDialog dialog=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
-        android.widget.EditText input=findInput(dialog.getWindow().getDecorView());assertNotNull(input);
-        input.setText("暖暖摄影师");dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+        assertEquals(1,activity.navigationHost().overlayCount());
+        android.widget.EditText input=findInput(activity.navigationHost());assertNotNull(input);
+        input.setText("暖暖摄影师");findText(activity.navigationHost(),"保存并设置为默认").performClick();
+        activity.navigationHost().interrupt();
+        assertEquals("12345",new app.nikkisync.mobile.storage.StylistProfileStore(activity).defaultUid());
+        assertEquals("暖暖摄影师的大喵相机",new app.nikkisync.mobile.storage.ExportWatermarkStore(activity).shareBranding(null).title());
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         assertTrue(allText((View)field(activity,"myContent")).contains("暖暖摄影师"));
         Field store=MainActivity.class.getDeclaredField("stylistProfiles");store.setAccessible(true);store.set(activity,null);
         invoke(activity,"refreshMyPage");assertTrue(allText((View)field(activity,"myContent")).contains("暖暖摄影师"));
         assets.clear();assets.add(new AssetSummary("b","photo","ready",null,"67890",1,100,100,false,false,null,null,null,null));
         invoke(activity,"refreshMyPage");assertFalse(allText((View)field(activity,"myContent")).contains("暖暖摄影师"));
+        activity.navigationHost().close();((java.util.concurrent.ExecutorService)field(activity,"io")).shutdownNow();
     }
 
     private static android.widget.EditText findInput(View view) {

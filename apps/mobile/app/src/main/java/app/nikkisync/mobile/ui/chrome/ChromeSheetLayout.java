@@ -18,6 +18,12 @@ public final class ChromeSheetLayout extends ViewGroup {
     private int draggedFormHeight=-1;
     private Runnable dismissPhotoDetails;
     private Runnable geometryChanged=()->{};
+    private boolean userDismissible=true;
+    private Runnable userDismissRequested=()->{};
+    public ChromeSheetLayout setUserDismissible(boolean value){userDismissible=value;return this;}
+    public boolean isUserDismissible(){return userDismissible;}
+    public ChromeSheetLayout onUserDismiss(Runnable action){userDismissRequested=action;return this;}
+    void notifyUserDismiss(){userDismissRequested.run();}
     private float gestureStartY;
     private int gestureStartFormHeight;
     private boolean gestureStartedExpanded;

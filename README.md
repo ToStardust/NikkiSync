@@ -1,4 +1,4 @@
-# NikkiSync
+# 大喵相机助手 · NikkiSync
 
 《无限暖暖》的非官方摄影同步工具，包含 Windows 桥接与托盘程序、Android 相册和微信小程序。支持浏览游戏照片、读取穿搭和拍摄参数、生成分享图、下载原图/视频；Android 提供旋转、预览手势、持久缓存及能力范围内的 LIVE 保存。
 
@@ -6,9 +6,11 @@
 
 当前 Windows 优先自动查找安装位置，无需先开游戏；手动选择仅为备选。Android 保留液态玻璃 UI、旋转与预测性返回、穿搭/参数分享图。小程序支持普通照片/视频和分享图；iPhone 小程序原生 LIVE 保存仍搁置。
 
-照片同步在本机/局域网完成；默认的服装字典和拍摄参数查询可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 关闭。源码不含个人照片、数据库、配对密钥、签名文件和编译包。
+照片同步在本机/局域网完成。在线参数解析默认关闭，需单独选择开启；公共字典与游戏版本检查可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 配置。源码不含个人照片、数据库、配对密钥、私有签名密钥和编译包。
 
-**下载 [0.2.14 测试版](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14)**：Windows 用户只需 `NikkiSync-PC.exe`，内含同版 Android APK；另提供独立 APK 与校验值。已收到一加 Ace 2V 测试者更新后 LIVE 不卡顿的反馈，其他机型仍分别测试。[本版说明](docs/releases/v0.2.14.md)
+**下载 [1.0.5 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.5-public-beta.1)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份正式签名 APK。新增 LIVE 自动静音动态预览、电脑一键更新、侧栏关于、离线已保存预览，以及原图/组件/EXIF与关联修图改进。[本版说明](docs/releases/v1.0.5-public-beta.1.md)
+
+本次公测 APK 改用匿名签名证书，无法直接覆盖此前使用旧签名的安装版本。请保留旧 App 和数据，不要为解决签名冲突直接卸载或清除数据；需要迁移的用户请先通过项目仓库反馈。此后公测版将沿用这份新签名。Windows 更新方式不变，保留已有数据。动态播放与系统相册 LIVE 识别仍需按机型测试。历史 [0.2.14](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14) 发布保留。
 
 下面保留早期里程碑记录；当前功能与构建入口以 [INTEGRATION.md](docs/INTEGRATION.md) 和 `docs/remote-bridge` 最新验收记录为准。
 

@@ -32,6 +32,7 @@ public class AboutUpdatesPageTest {
             assertTrue(allText(content).contains("构建号 " + BuildConfig.VERSION_CODE));
             assertTrue(allText(content).contains("星尘（支持粉毛拯救世界版）"));
             assertTrue(allText(content).contains("https://github.com/ToStardust/NikkiSync/releases"));
+            assertTrue(allText(content).contains("https://github.com/QianQianLuLu1/NikkiGallery"));
             ImageView avatar = avatar(content);
             assertNotNull(avatar);
             assertNotNull(avatar.getDrawable());
@@ -52,6 +53,8 @@ public class AboutUpdatesPageTest {
             assertEquals("https://github.com/ToStardust/NikkiSync/releases", intent.getDataString());
             button((View) field(activity, "aboutContent"), "GitHub 项目").performClick();
             assertEquals("https://github.com/ToStardust/NikkiSync", Shadows.shadowOf(activity).getNextStartedActivity().getDataString());
+            button((View) field(activity, "aboutContent"), "NikkiGallery 仓库").performClick();
+            assertEquals("https://github.com/QianQianLuLu1/NikkiGallery", Shadows.shadowOf(activity).getNextStartedActivity().getDataString());
         } finally { close(activity); }
     }
 

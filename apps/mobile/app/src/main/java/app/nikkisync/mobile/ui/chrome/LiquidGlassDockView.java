@@ -12,19 +12,32 @@ public final class LiquidGlassDockView extends View {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final boolean panel;
     private final int[] origin=new int[2], position=new int[2];
+    private final Rect visible=new Rect(),lastVisible=new Rect();
+    private int lastX=Integer.MIN_VALUE,lastY=Integer.MIN_VALUE,lastWidth,lastHeight;
+    private boolean lastShown;
+    private final android.view.ViewTreeObserver.OnPreDrawListener followAnchor=this::updateAnchor;
+    private boolean updateAnchor(){
+        boolean shown=anchor.isShown()&&anchor.getLocalVisibleRect(visible);
+        anchor.getLocationInWindow(position);
+        if(shown!=lastShown||position[0]!=lastX||position[1]!=lastY||anchor.getWidth()!=lastWidth||anchor.getHeight()!=lastHeight||!visible.equals(lastVisible)){
+            lastShown=shown;lastX=position[0];lastY=position[1];lastWidth=anchor.getWidth();lastHeight=anchor.getHeight();lastVisible.set(visible);invalidate();
+        }
+        return true;
+    }
     public LiquidGlassDockView(Context context,ContentBackdrop backdrop,View anchor){this(context,backdrop,anchor,false);}
     public LiquidGlassDockView(Context context,ContentBackdrop backdrop,View anchor,boolean panel){
         super(context);this.backdrop=backdrop;this.anchor=anchor;this.panel=panel;
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
     @Override protected void onDraw(Canvas canvas){
-        if(anchor.getVisibility()!=VISIBLE || anchor.getWidth()<=0 || anchor.getHeight()<=0) return;
+        if(!anchor.isShown() || anchor.getWidth()<=0 || anchor.getHeight()<=0 || !anchor.getLocalVisibleRect(visible)) return;
         getLocationInWindow(origin);anchor.getLocationInWindow(position);
         float x=position[0]-origin[0],y=position[1]-origin[1];
         float d=getResources().getDisplayMetrics().density, r=(panel?32:28)*d;
         int w=anchor.getWidth(),h=anchor.getHeight();
         RectF rect=new RectF(x,y,x+w,y+h);
         int saved=canvas.save();
+        canvas.clipRect(x+visible.left,y+visible.top,x+visible.right,y+visible.bottom);
         Path clip=new Path();clip.addRoundRect(rect,r,r,Path.Direction.CW);canvas.clipPath(clip);
         if(canvas.isHardwareAccelerated()){
             frost.setPosition((int)x,(int)y,(int)x+w,(int)y+h);
@@ -43,5 +56,6 @@ public final class LiquidGlassDockView extends View {
         canvas.drawRoundRect(new RectF(x+inset,y+inset,x+w-inset,y+h-inset),r-inset,r-inset,paint);
         paint.setStyle(Paint.Style.FILL);canvas.restoreToCount(saved);
     }
-    @Override protected void onDetachedFromWindow(){frost.discardDisplayList();super.onDetachedFromWindow();}
+    @Override protected void onAttachedToWindow(){super.onAttachedToWindow();getViewTreeObserver().addOnPreDrawListener(followAnchor);}
+    @Override protected void onDetachedFromWindow(){if(getViewTreeObserver().isAlive())getViewTreeObserver().removeOnPreDrawListener(followAnchor);frost.discardDisplayList();super.onDetachedFromWindow();}
 }

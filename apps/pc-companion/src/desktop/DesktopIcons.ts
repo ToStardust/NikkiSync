@@ -1,5 +1,6 @@
 /** Local, consistent 24px icons; the desktop UI never loads an external icon/font service. */
 const paths: Record<string, string> = {
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
   phone: '<rect x="7" y="3" width="10" height="18" rx="3"/><path d="M10 6h4M11 18h2"/>',
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/>',
   camera: '<path d="M8 6l2-3h4l2 3h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><circle cx="12" cy="13" r="4"/>',

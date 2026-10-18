@@ -67,6 +67,10 @@ export class MdnsAdvertiser {
     this.socket.on('error', () => undefined)
     const send = () => this.socket?.send(packet, PORT, MULTICAST, () => undefined)
     this.socket.on('message', (message) => {
+      // Multicast loopback delivers our own announcements here. Responding to a
+      // response creates an unbounded packet loop and can starve service startup.
+      if (message.length < 12 || (message.readUInt16BE(2) & 0xf800) !== 0
+        || message.readUInt16BE(4) === 0) return
       if (message.includes(Buffer.from('_nikkisync')) && message.includes(Buffer.from('_tcp'))) send()
     })
     this.socket.bind(PORT, () => {

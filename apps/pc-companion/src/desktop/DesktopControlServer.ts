@@ -7,8 +7,14 @@ import type { LocalRemotePhotoResource, RemoteSelectionPage } from '../remote/Re
 import type { CreatedRemoteSession, RemoteSessionStatus } from '../remote/RemoteSessionStore.js'
 import { renderDesktopPage } from './DesktopPage.js'
 import type { WeChatGalleryStatus } from '../wechat/WeChatGalleryService.js'
+import type { MetadataRecipient } from '../metadata/MetadataOnlineConsent.js'
 
 export interface DesktopControlServerConfig {
+  metadataPrivacy?: {
+    getState(): {enabled:boolean;policyVersion:string;recipients:MetadataRecipient[]}
+    setEnabled(enabled:boolean,policyVersion?:string):void
+  }
+  legalDocuments?: Record<string,string>
   getStatus(): DesktopStatus
   createPairingUri(): string
   qrSvg(uri: string): Promise<string>
@@ -37,12 +43,13 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
     const remote = config.remoteBridge
-    if (remote || config.wechatGallery) {
+    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments) {
       const host = request.headers.host
       const localHosts = [`127.0.0.1:${request.socket.localPort}`, `localhost:${request.socket.localPort}`]
       if (!host || !localHosts.includes(host)) { json(response, 403, { error: 'forbidden' }); return }
     }
-    if ((remote && requestUrl.pathname.startsWith('/api/remote/')) || (config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/'))) {
+    if ((remote && requestUrl.pathname.startsWith('/api/remote/')) || (config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/'))
+        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))) {
       const token = request.headers['x-nikkisync-desktop-token']
       const origin = request.headers.origin
       if (typeof token !== 'string' || Buffer.byteLength(token) !== Buffer.byteLength(desktopToken)
@@ -52,6 +59,22 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
         json(response, 403, { error: 'forbidden' }); return
       }
       try {
+        if(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/')){
+          if(requestUrl.pathname!=='/api/privacy/metadata'){json(response,404,{error:'not_found'});return}
+          if(request.method==='GET'){json(response,200,config.metadataPrivacy.getState());return}
+          if(request.method==='POST'){
+            if(!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+            const chunks:Buffer[]=[];let size=0
+            for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>4096){json(response,413,{error:'too_large'});return}chunks.push(bytes)}
+            try{
+              const data=JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string,unknown>
+              if(typeof data.enabled!=='boolean'||(data.policyVersion!==undefined&&typeof data.policyVersion!=='string'))throw new Error()
+              config.metadataPrivacy.setEnabled(data.enabled,data.policyVersion as string|undefined)
+            }catch{json(response,400,{error:'choice_not_saved'});return}
+            json(response,200,config.metadataPrivacy.getState());return
+          }
+          json(response,405,{error:'method_not_allowed'});return
+        }
         if(config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/')) {
           const wechat=config.wechatGallery
           if(request.method==='GET' && requestUrl.pathname==='/api/wechat/status'){json(response,200,wechat.status());return}
@@ -114,6 +137,13 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
       } catch { if (!response.headersSent) json(response, 500, { error: 'unavailable' }); else response.destroy(); return }
     }
     const status = config.getStatus()
+    if(request.method==='GET'&&requestUrl.pathname.startsWith('/legal/')){
+      const text=config.legalDocuments?.[requestUrl.pathname.slice(7)]
+      if(!text){json(response,404,{error:'not_found'});return}
+      const safe=text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+      response.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"})
+      response.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>大喵相机助手 · 政策说明</title><style>body{background:#fff4f8;color:#59475e;font:16px/1.8 sans-serif;margin:32px auto;padding:24px;max-width:900px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}</style><pre>'+safe+'</pre></html>');return
+    }
     if(requestUrl.pathname==='/brand.png' && request.method==='GET' && config.brandImage){
       response.writeHead(200,{'content-type':'image/png','cache-control':'no-store','x-content-type-options':'nosniff'});response.end(config.brandImage);return
     }
@@ -126,7 +156,7 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
     }
     if (requestUrl.pathname === '/' && request.method === 'GET') {
       const qrSvg = status.firstRun ? await config.qrSvg(config.createPairingUri()) : undefined
-      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
+      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...(config.metadataPrivacy?{desktopToken,metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' }); response.end(page); return
     }
     response.writeHead(404); response.end()

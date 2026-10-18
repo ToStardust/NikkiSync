@@ -2,11 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fixtureJpeg,tagsOf} from './jpeg-fixture.mjs';
 const load=()=>import('./photo-export.mjs');
+test('legacy camera nickname requests migrate to stable ASCII without changing compressed pixels',async()=>{
+ const {exportJpeg}=await load(),source=fixtureJpeg(),name='晚星的大喵相机';
+ const output=exportJpeg(source,{camera:{focalLength:35}}, {cameraName:name});
+ assert.ok(!output.includes(Buffer.from(name,'utf8')));
+ const tags=tagsOf(output);assert.equal(tags[0x110],'MomoCamera,Infinity Nikki');
+ assert.equal(tags[0x9c9c],undefined);assert.equal(tags[0x9286],undefined);
+ assert.deepEqual(output.subarray(output.indexOf(Buffer.from([255,218]))),source.subarray(source.indexOf(Buffer.from([255,218]))));
+ for(const cameraName of ['', ' x', 'x\0y','x\u0085y','暖'.repeat(100),3])assert.throws(()=>exportJpeg(source,{}, {cameraName}));
+ assert.throws(()=>exportJpeg(source,{}, {cameraName:name,exif:false}));
+ assert.equal(tagsOf(exportJpeg(source,{}))[0x110],'MomoCamera,Infinity Nikki');
+});
 test('JPEG export embeds native camera tags without recompressing or modifying the input',async()=>{
  const {exportJpeg}=await load(),source=fixtureJpeg(),before=Buffer.from(source);
  const output=exportJpeg(source,{camera:{focalLength:35.1,apertureSection:1.2,exposure:0.16},identity:{uid:'SECRET'},raw:{nativeParamToken:'SECRET'}},{exif:true,rotation:0});
  assert.deepEqual(source,before);assert.notDeepEqual(output,source);assert.ok(output.subarray(output.indexOf(Buffer.from([255,218]))).equals(source.subarray(source.indexOf(Buffer.from([255,218])))));
- const tags=tagsOf(output);assert.equal(tags[0x10f],'Momo Camera');assert.equal(tags[0x110],'Infinity Nikki');assert.equal(tags[0x829d],1.2);assert.equal(tags[0x920a],35.1);
+ const tags=tagsOf(output);assert.equal(tags[0x10f],'MomoCamera');assert.equal(tags[0x110],'MomoCamera,Infinity Nikki');assert.equal(tags[0x829d],1.2);assert.equal(tags[0x920a],35.1);
  assert.equal(tags[0x829a],undefined);assert.equal(tags[0x8827],undefined);assert.equal(tags[0x9204],undefined,'unverified game exposure is not EV');
  assert.doesNotMatch(output.subarray(0,output.indexOf(Buffer.from([255,218]))).toString(),/SECRET/);
 });
@@ -32,8 +43,12 @@ test('existing big-endian EXIF, ICC and opaque metadata are preserved when known
  const input=fixtureJpeg(Buffer.concat([Buffer.from('Exif\0\0'),tiff]));const out=exportJpeg(input,{}, {exif:true,rotation:90});
  assert.equal(tagsOf(out)[0x112],7);assert.equal(tagsOf(out)[0xc001],123456);assert.ok(out.includes(Buffer.from('ICC_PROFILE\0original')));
  assert.equal(out.toString().split('Exif\0\0').length,2,'one Exif APP1 only');
+ const named=tagsOf(exportJpeg(input,{}, {cameraName:'晚星的大喵相机'}));
+ assert.equal(named[0x110],'MomoCamera,Infinity Nikki');
+ assert.equal(named[0x9c9c],undefined);assert.equal(named[0x9286],undefined);
 });
-test('privacy-safe metadata normalizer keeps original game values but excludes raw/UID/clothing IDs',async()=>{
- const {exportMetadata}=await load();const m=exportMetadata({identity:{uid:'SECRET',gameVersion:'2.9'},capture:{capturedAt:'2026-09-05T03:02:01.000Z'},camera:{focalLength:50,apertureSection:16},dressing:{clothes:[{id:'SECRET',name:'星光裙'}]},raw:{secret:'SECRET'}});
+test('privacy-safe metadata normalizer keeps game outfit IDs but excludes raw payload and player UID',async()=>{
+ const {exportMetadata}=await load();const m=exportMetadata({identity:{uid:'SECRET',gameVersion:'2.9'},capture:{capturedAt:'2026-09-05T03:02:01.000Z'},camera:{focalLength:50,apertureSection:16},dressing:{clothes:[{id:'item-123',name:'星光裙'}]},raw:{secret:'SECRET'}});
+ assert.equal(m.dressing.clothes[0].id,'item-123');
  assert.equal(m.camera.focalLength,50);assert.equal(m.camera.apertureSection,16);assert.doesNotMatch(JSON.stringify(m),/SECRET|raw|uid/);
 });

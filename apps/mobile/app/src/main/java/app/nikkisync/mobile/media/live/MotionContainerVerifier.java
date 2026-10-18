@@ -19,9 +19,18 @@ public final class MotionContainerVerifier {
         if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR){
             JpegSegments.require(product.companions().size()==1,"vivo 动态组件缺失");File video=product.companions().get(0);
             JpegSegments.require(o.pairId().equals(VivoLegacyMetadata.readId(primary))&&o.pairId().equals(VivoLegacyMetadata.readId(video)),"vivo 关联 ID 不一致");
-            compare(video,0,motion.length(),motion);
-            try(RandomAccessFile r=new RandomAccessFile(video,"r")){r.seek(motion.length());long box=Integer.toUnsignedLong(r.readInt());byte[] kind=new byte[4],uuid=new byte[16];r.readFully(kind);r.readFully(uuid);
-                JpegSegments.require(box==r.length()-motion.length()&&ascii(kind).equals("uuid")&&Arrays.equals(uuid,VivoLegacyMetadata.USER_TYPE),"vivo uuid box 无效");}
+            var source=MotionContainer.vivoSource(motion);long uuidOffset=source.packagedBytes();
+            compareRange(video,0,motion,0,source.mediaBytes());
+            try(RandomAccessFile r=new RandomAccessFile(video,"r")){
+                JpegSegments.require(r.length()>=uuidOffset+24,"vivo uuid box 截断");
+                if(source.trailerBytes()>0){
+                    r.seek(source.mediaBytes());long size=Integer.toUnsignedLong(r.readInt());byte[] type=new byte[4];r.readFully(type);
+                    JpegSegments.require(size==source.trailerBytes()+8L&&ascii(type).equals("free"),"vivo 游戏尾部 free box 无效");
+                    compareRange(video,source.mediaBytes()+8,motion,source.mediaBytes(),source.trailerBytes());
+                }
+                r.seek(uuidOffset);long box=Integer.toUnsignedLong(r.readInt());byte[] kind=new byte[4],uuid=new byte[16];r.readFully(kind);r.readFully(uuid);
+                JpegSegments.require(box==r.length()-uuidOffset&&ascii(kind).equals("uuid")&&Arrays.equals(uuid,VivoLegacyMetadata.USER_TYPE),"vivo uuid box 无效");
+            }
             return;
         }
         JpegSegments.require(product.companions().isEmpty(),"单文件配置出现额外媒体");long offset,length;
@@ -53,9 +62,17 @@ public final class MotionContainerVerifier {
         JpegSegments.require(offset>=jpegEnd&&length==motion.length(),"视频边界与原动态资源不一致");compare(primary,offset,length,motion);
     }
     private static void compare(File container,long offset,long length,File source)throws IOException{
+        JpegSegments.require(length==source.length(),"动态资源长度不一致");
+        try(RandomAccessFile a=new RandomAccessFile(container,"r")){
+            JpegSegments.require(offset>=0&&length>=12&&offset<=a.length()-length,"动态数据范围越界");
+            a.seek(offset+4);byte[] ftyp=new byte[4];a.readFully(ftyp);JpegSegments.require(ascii(ftyp).equals("ftyp"),"视频起点不是 MP4 ftyp");
+        }
+        compareRange(container,offset,source,0,length);
+    }
+    private static void compareRange(File container,long offset,File source,long sourceOffset,long length)throws IOException{
         try(RandomAccessFile a=new RandomAccessFile(container,"r");FileInputStream b=new FileInputStream(source)){
-            JpegSegments.require(offset>=0&&length>=12&&offset<=a.length()-length&&length==source.length(),"动态数据范围越界");
-            a.seek(offset+4);byte[] ftyp=new byte[4];a.readFully(ftyp);JpegSegments.require(ascii(ftyp).equals("ftyp"),"视频起点不是 MP4 ftyp");a.seek(offset);
+            JpegSegments.require(offset>=0&&sourceOffset>=0&&length>=0&&offset<=a.length()-length&&sourceOffset<=source.length()-length,"动态数据范围越界");
+            a.seek(offset);b.skipNBytes(sourceOffset);
             byte[] left=new byte[128*1024],right=new byte[128*1024];long remaining=length;
             while(remaining>0){if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Live 校验已取消");int n=(int)Math.min(left.length,remaining);a.readFully(left,0,n);int read=b.readNBytes(right,0,n);JpegSegments.require(read==n,"源视频截断");
                 for(int i=0;i<n;i++)if(left[i]!=right[i])throw new IOException("封装后动态资源不完整/被改写");remaining-=n;}

@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidApk = 'release\NikkiSync\NikkiSync-Android.apk', [string]$BunExecutable = 'bun')
+param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidApk = 'release\NikkiSync\NikkiSync-Android.apk', [string]$BunExecutable = 'bun', [string]$DesktopVersion = '1.0.1', [long]$DesktopBuild = 2026101801)
 
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -24,7 +24,9 @@ try {
   & (Join-Path $workspace 'scripts\build-service-icon.ps1')
   Push-Location (Join-Path $workspace 'apps\pc-companion')
   try {
-    & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline --windows-hide-console --windows-icon (Join-Path $PSScriptRoot 'Assets\service.ico') --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') src/windows-app.ts
+    $compilerRuntime = @()
+    if ($BunExecutable -ne 'bun') { $compilerRuntime = @("--compile-executable-path=$BunExecutable") }
+    & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline @compilerRuntime --windows-hide-console --windows-icon (Join-Path $PSScriptRoot 'Assets\service.ico') --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') src/windows-app.ts
     if ($LASTEXITCODE -ne 0) { throw 'Service compilation failed.' }
   } finally { Pop-Location }
   $sources = [ordered]@{
@@ -35,6 +37,10 @@ try {
     'runtime/wechat/THIRD_PARTY_LICENSES.txt' = 'apps\wechat-mini-program\miniprogram\lib\THIRD_PARTY_LICENSES.txt'
     'runtime/wechat/THIRD_PARTY.md' = 'apps\wechat-mini-program\miniprogram\lib\THIRD_PARTY.md'
     'runtime/branding/momo-camera.png' = 'assets\branding\momo-camera.png'
+    'runtime/legal/PRIVACY_POLICY.md' = 'docs\store-submission\PRIVACY_POLICY.md'
+    'runtime/legal/USER_AGREEMENT.md' = 'docs\store-submission\USER_AGREEMENT.md'
+    'runtime/legal/PERMISSIONS_DATA.md' = 'docs\store-submission\PERMISSIONS_DATA.md'
+    'runtime/legal/SDK_SERVICES.md' = 'docs\store-submission\SDK_SERVICES.md'
     'runtime/PORTABLE_NOTICES.md' = 'apps\windows-shell\PORTABLE_NOTICES.md'
     'runtime/licenses/BUN-LICENSE.md' = 'assets\licenses\BUN-LICENSE.md'
     'runtime/licenses/qrcode-LICENSE' = 'node_modules\qrcode\license'
@@ -83,7 +89,7 @@ try {
   } finally { $zip.Dispose(); $zipStream.Dispose() }
   $manifest = @{ ArchiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash; Files = $manifestFiles }
   [IO.File]::WriteAllText((Join-Path $payload 'runtime.json'), ($manifest | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
-  dotnet publish (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') --no-restore -c Release -r win-x64 --self-contained true -o $published -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false "-p:PortablePayloadDirectory=$payload"
+  dotnet publish (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') --no-restore -c Release -r win-x64 --self-contained true -o $published -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false "-p:Version=$DesktopVersion" "-p:DesktopBuild=$DesktopBuild" "-p:PortablePayloadDirectory=$payload"
   if ($LASTEXITCODE -ne 0) { throw 'Self-contained host publish failed.' }
   $hostExe = Join-Path $published 'NikkiSync.WindowsShell.exe'
   if (-not (Test-Path -LiteralPath $hostExe -PathType Leaf)) { throw 'Missing published host.' }

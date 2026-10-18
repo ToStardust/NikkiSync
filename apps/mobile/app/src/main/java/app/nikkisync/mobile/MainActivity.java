@@ -98,6 +98,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private ChromeNavigationHost navigation;
     @Override public ChromeNavigationHost navigationHost(){return navigation;}
     @Override protected void onStop(){if(navigation!=null)navigation.interrupt();if(homeTabs!=null)homeTabs.interrupt();super.onStop();}
+    @Override protected void onResume(){super.onResume();if(identity!=null&&!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()){connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();finish();}}
     private static final int NEARBY_PERMISSION = 401;
     private static final int PAIR_QR_SCAN = 402;
     private static final int TAB_GALLERY = 0;
@@ -105,6 +106,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private static final int TAB_MY = 2;
     private static final String PROJECT_URL = "https://github.com/ToStardust/NikkiSync";
     private static final String UPDATES_URL = PROJECT_URL + "/releases";
+    private static final String NIKKI_GALLERY_URL = "https://github.com/QianQianLuLu1/NikkiGallery";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -178,6 +180,18 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if(!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()) {
+            navigation=new ChromeNavigationHost(this);navigation.bind(this);
+            app.nikkisync.mobile.privacy.PrivacyUi.showConsent(this,navigation,()->{
+                navigation.close();navigation=null;initializeAfterConsent();
+            });
+            return;
+        }
+        initializeAfterConsent();
+    }
+
+    private void initializeAfterConsent() {
+        if(isFinishing()||isDestroyed()||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted())return;
         imageLoader = new ImageLoader(this);
         shareCardExportCoordinator = new ShareCardExportCoordinator(
                 this,
@@ -207,7 +221,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     @Override protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent); setIntent(intent); handleIntent(intent);
+        super.onNewIntent(intent);setIntent(intent);
+        if(new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()&&identity!=null)handleIntent(intent);
     }
 
     @Override protected void onDestroy() {
@@ -526,14 +541,16 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         List<String> identities=uids.isEmpty()?List.of(""):new ArrayList<>(uids.keySet());
         for(String uid:identities) {
             String nickname=stylistProfiles().nickname(uid);
-            TextView name=text(nickname.isEmpty()?"昵称未填写":nickname,21,true,getColor(R.color.text_primary));
+            TextView name=text((nickname.isEmpty()?"昵称未填写":nickname)+(uid.equals(stylistProfiles().defaultUid())&&!uid.isEmpty()?" · 默认":""),21,true,getColor(R.color.text_primary));
             name.setPadding(0,dp(14),0,dp(6));card.addView(name);
             card.addView(text(uid.isEmpty()?"同步照片后自动读取 UID":"UID  "+uid,14,false,getColor(R.color.text_secondary)));
             LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);
+            actions.setClipChildren(false);actions.setClipToPadding(false);actions.setPadding(0,0,0,dp(10));
             Button copy=button("复制 UID");copy.setEnabled(!uid.isEmpty());copy.setOnClickListener(v->copyText("Nikki UID",uid));
             Button edit=button(nickname.isEmpty()?"填写昵称":"修改昵称");edit.setOnClickListener(v->editStylistNickname(uid));
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(40),1);lp.topMargin=dp(10);lp.rightMargin=dp(8);
-            actions.addView(copy,lp);LinearLayout.LayoutParams editLp=new LinearLayout.LayoutParams(0,dp(40),1);editLp.topMargin=dp(10);
+            copy.setMinHeight(dp(48));edit.setMinHeight(dp(48));
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.topMargin=dp(10);lp.rightMargin=dp(8);
+            actions.addView(copy,lp);LinearLayout.LayoutParams editLp=new LinearLayout.LayoutParams(0,-2,1);editLp.topMargin=dp(10);
             actions.addView(edit,editLp);card.addView(actions);
         }
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(10);myContent.addView(card,lp);
@@ -544,11 +561,39 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         input.setSingleLine(true);input.setHint("填写你的搭配师昵称");input.setText(stylistProfiles().nickname(uid));
         input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(64)});
         input.setPadding(dp(20),dp(14),dp(20),dp(14));
-        new AlertDialog.Builder(this).setTitle("搭配师昵称").setView(input)
-                .setMessage("昵称保存在这台手机上；留空可恢复自动读取。")
-                .setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{
-                    stylistProfiles().setManualNickname(uid,input.getText().toString());refreshMyPage();
-                }).show();
+        LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+        form.addView(text("昵称保存在这台手机上；留空可恢复自动读取。默认昵称用于分享图和相机水印。",14,false,getColor(R.color.text_secondary)));
+        form.addView(input,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.VERTICAL);
+        var sheet=new app.nikkisync.mobile.ui.chrome.ChromeSheetLayout(this,text("搭配师昵称",21,true,getColor(R.color.text_primary)),form,actions).wrapContentForm();
+        addSheetAction(actions,"取消",()->navigation.dismiss(sheet));
+        addSheetAction(actions,"保存",()->{stylistProfiles().setManualNickname(uid,input.getText().toString());navigation.dismiss(sheet);refreshMyPage();refreshSettingsPage();});
+        addSheetAction(actions,"保存并设置为默认",()->{
+            if(uid.isEmpty()||input.getText().toString().isBlank()){toast("请先同步 UID 并填写昵称");return;}
+            stylistProfiles().setManualNickname(uid,input.getText().toString());stylistProfiles().setDefaultUid(uid);navigation.dismiss(sheet);refreshMyPage();refreshSettingsPage();
+        });
+        navigation.showSheet(sheet);
+    }
+
+    private void addSheetAction(LinearLayout actions,String label,Runnable action){
+        Button control=button(label);control.setMinHeight(dp(48));control.setOnClickListener(v->action.run());
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);actions.addView(control,lp);
+    }
+    private app.nikkisync.mobile.storage.ExportWatermarkStore watermarks(){return new app.nikkisync.mobile.storage.ExportWatermarkStore(this);}
+    private void editWatermark(){
+        var settings=watermarks();LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+        form.addView(text("留空使用默认昵称与 UID；清空后保存即可恢复默认。",14,false,getColor(R.color.text_secondary)));
+        android.widget.EditText first=new android.widget.EditText(this);first.setSingleLine(true);first.setText(settings.shareTitle());
+        first.setHint("顶部文字，留空使用默认昵称");
+        first.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(96)});form.addView(first,new LinearLayout.LayoutParams(-1,-2));
+        android.widget.EditText second=new android.widget.EditText(this);second.setSingleLine(true);second.setText(settings.shareFooter());second.setHint("底部文字（默认：UID 与 MomoCamera）");
+        second.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(128)});form.addView(second,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.VERTICAL);
+        var sheet=new app.nikkisync.mobile.ui.chrome.ChromeSheetLayout(this,text("分享图水印",21,true,getColor(R.color.text_primary)),form,actions).wrapContentForm();
+        addSheetAction(actions,"取消",()->navigation.dismiss(sheet));
+        addSheetAction(actions,"保存",()->{try{settings.setShareText(first.getText().toString(),second.getText().toString());navigation.dismiss(sheet);refreshSettingsPage();}catch(IllegalArgumentException error){toast(error.getMessage());}});
+        addSheetAction(actions,"恢复默认",()->{settings.setShareText("","");navigation.dismiss(sheet);refreshSettingsPage();});
+        navigation.showSheet(sheet);
     }
 
     private app.nikkisync.mobile.ui.chrome.ChromeHost createMySubpage(String title,LinearLayout body) {
@@ -581,7 +626,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 : (connectionState.isReachable() ? "已连接：" : "已配对，当前未连接：") + pairedServer.serverName();
         addMyActionCard(settingsContent,"同步与设备",device,pairedServer==null?"配对电脑":"重新配对电脑",this::startPairScanner);
 
-        addMyActionCard(settingsContent,"本地缓存", "已读取的穿搭与参数会保留，重启后优先从手机读取。电脑更新信息时自动刷新。\n照片缩略图磁盘缓存上限 512 MiB；穿搭与参数详情缓存上限 32 MiB。按需使用，超出后清理较早使用的缓存。",
+        addMyActionCard(settingsContent,"本地缓存", "已读取的穿搭与参数会保留，重启后优先从手机读取。电脑更新信息时自动刷新。\n照片缩略图磁盘缓存上限 512 MiB；穿搭与参数详情缓存上限 32 MiB；动态预览缓存上限 256 MiB。按需使用，超出后清理较早使用的缓存。",
                 "清理照片详情缓存", () -> {
                     NikkiSyncClient current=client;
                     if(current==null) {toast("请先选择已配对电脑");return;}
@@ -591,6 +636,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     });
                 });
 
+        addMyActionCard(settingsContent,"动态预览缓存","预览 LIVE 时在应用内暂存视频，清理后可重新读取；已保存到相册的照片和视频会保留。","清理动态预览缓存",()->io.execute(()->{
+            app.nikkisync.mobile.media.live.MotionPreviewLoader.cache(this).clear();main.post(()->toast("动态预览缓存已清理"));
+        }));
+
         boolean writeExif=getSharedPreferences("nikkisync.export",MODE_PRIVATE).getBoolean("writeExif",true);
         addMyActionCard(settingsContent,"保存时附带拍摄参数","普通 JPEG 保存时写入拍摄参数；不修改电脑原照片，LIVE 封装不受此设置影响。",
                 writeExif?"已开启 · 点击关闭":"已关闭 · 点击开启",()->{
@@ -598,8 +647,29 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     getSharedPreferences("nikkisync.export",MODE_PRIVATE).edit().putBoolean("writeExif",!writeExif).apply();
                     refreshSettingsPage();
                 });
+        var marks=watermarks();
+        addMyActionCard(settingsContent,"分享图昵称水印",marks.shareEnabled()?marks.shareBranding(null).title()+"\n"+marks.shareBranding(null).footer():"已关闭，分享图不包含昵称和 UID。",
+                marks.shareEnabled()?"已开启 · 点击关闭":"已关闭 · 点击开启",()->{marks.setShareEnabled(!marks.shareEnabled());refreshSettingsPage();});
+        addMyActionCard(settingsContent,"分享图水印文字","顶部与底部文字可独立自定义；未填写时跟随默认搭配师。","自定义分享图水印",this::editWatermark);
         addMyActionCard(settingsContent,"应用信息","当前版本 " + BuildConfig.VERSION_NAME,
                 "关于&更新",this::showAboutUpdates);
+        if(BuildConfig.STORE_SUBMISSION){
+        for(String[] doc:new String[][]{{"隐私政策","privacy"},{"用户协议","terms"},{"权限与数据说明","permissions"},{"第三方服务与组件","services"}})
+            addMyActionCard(settingsContent,doc[0],"离线可阅读，反馈渠道见项目仓库","查看"+doc[0],()->app.nikkisync.mobile.privacy.PrivacyUi.openDocument(this,navigation,doc[0],doc[1]));
+        addMyActionCard(settingsContent,"隐私选择","撤回后退出应用；重新打开需再次选择。保留现有本地资料。","撤回同意",()->
+            app.nikkisync.mobile.privacy.PrivacyUi.confirm(this,navigation,"撤回隐私同意","停止连接并退出，重新打开时再次阅读政策。","撤回并退出",()->{
+                new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).withdraw();connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();finish();
+            }));
+        }
+        addMyActionCard(settingsContent,"清除全部本地应用数据","删除本应用的配对、昵称、水印设置、收藏、灵感、关联和缓存；已导出到系统相册的照片不删除。此操作会退出应用。","清除全部应用数据",()->{
+            if(progress!=null&&progress.getVisibility()==View.VISIBLE){toast("请等待当前操作完成");return;}
+            app.nikkisync.mobile.privacy.PrivacyUi.confirm(this,navigation,"清除全部应用数据","配对、昵称、收藏、灵感和修图关联等本地记录将删除且无法撤销。系统相册及电脑原照片保留。","确认清除全部数据",()->{
+                connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();
+                ((android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE)).clearApplicationUserData();
+            });
+        });
+        if(BuildConfig.STORE_SUBMISSION)addMyActionCard(settingsContent,"APP核准（备案）信息",BuildConfig.APP_FILING_NUMBER.isEmpty()?"尚未取得备案号；此包为正式签名的提交准备版本。":"备案号："+BuildConfig.APP_FILING_NUMBER,
+                "备案查询",()->openProjectLink("https://beian.miit.gov.cn/"));
     }
 
     private void showAboutUpdates() {
@@ -616,7 +686,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
         avatar.setContentDescription("星尘的头像");
         author.addView(avatar,new LinearLayout.LayoutParams(dp(132),dp(132)));
-        TextView appName=text("NikkiSync",25,true,getColor(R.color.text_primary));
+        TextView appName=text("大喵相机助手",25,true,getColor(R.color.text_primary));
         appName.setPadding(0,dp(12),0,dp(6));author.addView(appName);
         TextView version=text("版本 " + BuildConfig.VERSION_NAME + "\n构建号 " + BuildConfig.VERSION_CODE,
                 13,false,getColor(R.color.text_secondary));
@@ -629,6 +699,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         authorLayout.bottomMargin=dp(10);aboutContent.addView(author,authorLayout);
         addMyActionCard(aboutContent,"版本更新",UPDATES_URL,"查看更新",()->openProjectLink(UPDATES_URL));
         addMyActionCard(aboutContent,"开源项目",PROJECT_URL,"GitHub 项目",()->openProjectLink(PROJECT_URL));
+        addMyActionCard(aboutContent,"NikkiGallery · 暖暖照相馆",NIKKI_GALLERY_URL,"NikkiGallery 仓库",()->openProjectLink(NIKKI_GALLERY_URL));
         var page=aboutPage;
         navigation.push(page,()->{page.backdrop().close();aboutPage=null;aboutContent=null;});
     }
@@ -981,10 +1052,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         io.execute(() -> {
             try {
-                android.graphics.Bitmap bitmap = getContentResolver().loadThumbnail(record.mediaUri(), new Size(1200, 1200), null);
+                android.graphics.Bitmap bitmap = app.nikkisync.mobile.media.SavedPhotoDecoder.decode(this, record.mediaUri(), 4096);
                 main.post(() -> preview.setImageBitmap(bitmap));
             } catch (Exception ignored) {
-                main.post(() -> preview.setImageDrawable(null));
+                // Keep the existing image while an unavailable original is reported in details.
             }
         });
 
@@ -1099,6 +1170,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         dialog.setOnDismissListener(() -> cancelShareCardFrom(shareSaved));
         dialog.setContentView(scroll);
+        if(record.hasMotion())dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.saved(this,record));
         preloadSavedNeighbors(dialog,record.uri(),context);
         dialog.show();
     }
@@ -1143,11 +1215,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         io.execute(() -> {
             try {
-                android.graphics.Bitmap bitmap = getContentResolver().loadThumbnail(
-                        Uri.parse(variant.uri()), new Size(1200, 1200), null);
+                android.graphics.Bitmap bitmap = app.nikkisync.mobile.media.SavedPhotoDecoder.decode(this,
+                        Uri.parse(variant.uri()), 4096);
                 main.post(() -> preview.setImageBitmap(bitmap));
             } catch (Exception ignored) {
-                main.post(() -> preview.setImageDrawable(null));
+                // Keep any already displayed image when the edited original is unavailable.
             }
         });
 
@@ -1318,12 +1390,23 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             String metadataJson
     ) {
         startShareCardWork(button);
+        int savedRotation=rotationByAssetId.getOrDefault(asset.assetId(),0);
+        LivePhotoProfile profile=LivePhotoControls.selectedProfile(this);
+        ShareCardExportCoordinator.OriginalSave original=progress->{
+            Uri uri;
+            if(asset.hasMotion()){
+                var result=LivePhotoExporter.save(this,current,asset,savedRotation,profile,(stage,percent)->progress.update(stage,percent,percent>0?100:0));
+                uri=result.primaryUri();savedPhotoStore.recordMotion(asset,uri,result.companionUris(),savedRotation,result.savedFormat(),result.profileId(),result.presentationUs(),result.timestampSource());
+            }else{uri=originalSaver.save(this,current,asset,savedRotation,progress);savedPhotoStore.record(asset,uri,savedRotation,"原始照片");}
+            try{cacheMetadataSnapshot(asset.assetId(),asset.capturedAt(),asset.gameVersion(),current.asset(asset.assetId()));}catch(Exception ignored){}
+            main.post(()->{if(!isFinishing()&&!isDestroyed())refreshSavedPhotos();});return uri;
+        };
         shareCardExportCoordinator.exportRemote(
                 current,
                 asset,
                 metadataJson,
                 rotationByAssetId.getOrDefault(asset.assetId(), 0),
-                shareCardListener(button, false)
+                shareCardListener(button, false,original)
         );
     }
 
@@ -1344,11 +1427,15 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 capturedAt,
                 gameVersion,
                 metadataJson,
-                shareCardListener(button, metadataMissing)
+                shareCardListener(button, metadataMissing,progress->{
+                    progress.update("确认原图已在相册",0,0);
+                    try(var input=getContentResolver().openInputStream(backgroundUri)){if(input==null)throw new IllegalStateException("原图已不可读取");}
+                    return backgroundUri;
+                })
         );
     }
 
-    private ShareCardExportCoordinator.Listener shareCardListener(Button button, boolean metadataMissing) {
+    private ShareCardExportCoordinator.Listener shareCardListener(Button button, boolean metadataMissing,ShareCardExportCoordinator.OriginalSave original) {
         return new ShareCardExportCoordinator.Listener() {
             @Override public void onProgress(String stage,long done,long total) {
                 if(isFinishing()||isDestroyed()||pendingShareCardButton!=button)return;
@@ -1360,7 +1447,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 setShareCardBusy(button, false);
                 if (shareCardPreview != null) shareCardPreview.dismiss();
                 shareCardPreview = new ShareCardPreviewDialog(MainActivity.this, prepared,
-                        shareCardExportCoordinator, shareWorker, metadataMissing);
+                        shareCardExportCoordinator, shareWorker, metadataMissing,original);
                 shareCardPreview.show();
             }
 
@@ -1440,6 +1527,14 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void handleIntent(Intent intent) {
+        if (intent != null && app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.OPEN_PHOTO.equals(intent.getAction())) {
+            switchTab(TAB_SAVED);
+            String uri = intent.getStringExtra(app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.PHOTO_URI);
+            for (SavedPhotoStore.Record record : savedPhotoStore.load()) {
+                if (record.uri().equals(uri)) { main.post(() -> { if (!isFinishing() && !isDestroyed()) showSavedPhotoDetails(record); }); break; }
+            }
+            return;
+        }
         if (intent == null || intent.getData() == null) return;
         String raw = intent.getDataString();
         if (raw != null && raw.startsWith("nikki-sync://pair?")) beginPair(raw);
@@ -1463,46 +1558,66 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             int duplicates = 0;
             int conflicts = 0;
             int limitedAccess = 0;
+            int failed = 0, written = 0, withoutExif = 0, updated = 0;
             long baseTime = System.currentTimeMillis();
+            // Refresh the canonical source before exporting, retaining the offline snapshot on failure.
+            NikkiSyncClient current = client;
+            if(current!=null)try{
+                cacheMetadataSnapshot(source.assetId(),source.capturedAt(),source.gameVersion(),current.asset(source.assetId()));
+            }catch(Exception ignored){}
+            SavedMetadataSnapshotStore.Snapshot snapshot=savedMetadataSnapshotStore.get(source.assetId());
 
             for (int index = 0; index < selected.size(); index++) {
                 Uri uri = selected.get(index);
                 if (uri == null) continue;
+                app.nikkisync.mobile.media.EditedPhotoExif.Result prepared=null;
                 try {
+                    var existing=editedVariantStore.findByUri(uri.toString());
+                    if(existing!=null&&!existing.assetId().equals(source.assetId())){conflicts++;continue;}
                     EditedMediaAccess.Info media = EditedMediaAccess.describeAndPersist(this, uri);
-                    if (!media.persistGranted()) limitedAccess++;
-                    EditedVariantStore.LinkResult result = editedVariantStore.link(
+                    prepared=app.nikkisync.mobile.media.EditedPhotoExif.prepare(this,uri,media.mimeType(),snapshot,source.capturedAt(),source.gameVersion());
+                    if(existing!=null){
+                        if(prepared.written()){
+                            if(!editedVariantStore.replaceMedia(existing.variantId(),prepared.uri().toString()))throw new java.io.IOException("关联已移除");
+                            updated++;
+                        }else duplicates++;
+                        continue;
+                    }
+                    if (!prepared.copied() && !media.persistGranted()) limitedAccess++;
+                    EditedVariantStore.LinkResult result = editedVariantStore.linkSelected(
                             source.assetId(),
                             source.uri(),
+                            prepared.uri().toString(),
                             media.uri(),
                             baseTime + index,
                             media.displayName(),
                             media.mimeType()
                     );
-                    if (result.status() == EditedVariantStore.LinkStatus.ADDED) added++;
-                    else if (result.status() == EditedVariantStore.LinkStatus.DUPLICATE) duplicates++;
-                    else conflicts++;
+                    if (result.status() == EditedVariantStore.LinkStatus.ADDED) {added++;if(prepared.written())written++;else withoutExif++;}
+                    else {
+                        app.nikkisync.mobile.media.EditedPhotoExif.discard(this,prepared);
+                        if (result.status() == EditedVariantStore.LinkStatus.DUPLICATE) duplicates++;else conflicts++;
+                    }
                 } catch (Exception ignored) {
-                    conflicts++;
+                    app.nikkisync.mobile.media.EditedPhotoExif.discard(this,prepared);
+                    failed++;
                 }
-            }
-
-            NikkiSyncClient current = client;
-            if (current != null) {
-                try {
-                    AssetDetail detail = current.asset(source.assetId());
-                    cacheMetadataSnapshot(source.assetId(), source.capturedAt(), source.gameVersion(), detail);
-                } catch (Exception ignored) {}
             }
 
             int finalAdded = added;
             int finalDuplicates = duplicates;
             int finalConflicts = conflicts;
             int finalLimitedAccess = limitedAccess;
+            int finalFailed=failed, finalWritten=written, finalWithoutExif=withoutExif, finalUpdated=updated;
             main.post(() -> {
                 refreshSavedPhotos();
                 StringBuilder result = new StringBuilder();
                 if (finalAdded > 0) result.append("已关联 ").append(finalAdded).append(" 张修图");
+                if(finalWritten>0)result.append("，已生成 ").append(finalWritten).append(" 张带 EXIF 的无损副本");
+                if(finalUpdated>0)result.append("，已补写 ").append(finalUpdated).append(" 张既有关联的 EXIF 副本");
+                if(finalWithoutExif>0)result.append("。").append(finalWithoutExif).append(" 张仅关联：EXIF 已关闭或格式不支持写入");
+                if(finalFailed>0)result.append("。").append(finalFailed).append(" 张写入或保存失败，未新增关联，请重试");
+                if((finalAdded>0||finalUpdated>0)&&snapshot==null)result.append("。源照片参数尚未缓存，未补入拍摄与搭配参数，请连接电脑后重试关联");
                 if (finalDuplicates > 0) {
                     if (result.length() > 0) result.append("，");
                     result.append("跳过 ").append(finalDuplicates).append(" 张重复图片");
@@ -1669,8 +1784,9 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if(photoSaveProgress!=null&&photoSaveProgress.isShowing()){toast("正在保存，请等待完成");return;}
         LinearLayout choices=new LinearLayout(this);choices.setOrientation(LinearLayout.VERTICAL);
         Button live=button("实况照片"),video=button("视频"),cancel=button("取消");
-        choices.addView(live,new LinearLayout.LayoutParams(-1,-2));
-        choices.addView(video,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout.LayoutParams liveLp=new LinearLayout.LayoutParams(-1,dp(52));liveLp.topMargin=dp(8);liveLp.bottomMargin=dp(12);
+        LinearLayout.LayoutParams videoLp=new LinearLayout.LayoutParams(-1,dp(52));videoLp.bottomMargin=dp(8);
+        choices.addView(live,liveLp);choices.addView(video,videoLp);
         TextView note=text("按当前旋转方向保存"+(selected.size()>1?"，普通照片仍保存为图片":""),13,false,getColor(R.color.text_secondary));
         note.setPadding(0,dp(8),0,dp(8));choices.addView(note);
         var sheet=new app.nikkisync.mobile.ui.chrome.ChromeSheetLayout(this,
@@ -1939,6 +2055,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         dialog.setOnDismissListener(() -> cancelShareCardFrom(shareCard));
         dialog.setContentView(scroll);
+        if(asset.hasMotion())dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.remote(this,client,asset.assetId()));
         dialog.setAdjacentPhotos(position>0?preloadRemotePhoto(context.get(position-1)):null,
                 position+1<context.size()?preloadRemotePhoto(context.get(position+1)):null);
         dialog.show();
@@ -1954,7 +2071,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
     private ImageView preloadSavedPhoto(String uri){
         ImageView photo=new ImageView(this);io.execute(()->{try{
-            android.graphics.Bitmap bitmap=getContentResolver().loadThumbnail(Uri.parse(uri),new Size(1200,1200),null);
+            android.graphics.Bitmap bitmap=app.nikkisync.mobile.media.SavedPhotoDecoder.decode(this,Uri.parse(uri),2048);
             main.post(()->photo.setImageBitmap(bitmap));
         }catch(Exception ignored){}});return photo;
     }
@@ -2093,17 +2210,20 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void requestNearbyAndDiscover() {
+        if(!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()||discovery==null)return;
         if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED) discovery.start();
         else requestPermissions(new String[]{Manifest.permission.NEARBY_WIFI_DEVICES}, NEARBY_PERMISSION);
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == NEARBY_PERMISSION && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) discovery.start();
+        if (requestCode == NEARBY_PERMISSION && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                &&discovery!=null&&new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()) discovery.start();
     }
 
     @Override public void onEndpoint(String serverId, String host, int port) {
         main.post(() -> {
+            if(isFinishing()||serverStore==null||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted())return;
             PairedServer current = serverStore.load();
             if (current == null || !current.serverId().equals(serverId)) return;
             if (!current.host().equals(host) || current.port() != port) {
@@ -2128,9 +2248,9 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private Button button(String value) {
-        Button button = new Button(this); button.setText(value); button.setTextSize(12); button.setAllCaps(false);
+        Button button = new Button(this,null,0); button.setStateListAnimator(null);button.setGravity(Gravity.CENTER);button.setText(value); button.setTextSize(12); button.setAllCaps(false);
         button.setTextColor(getColor(R.color.text_primary)); button.setBackground(roundRect(0xE8FFFFFF, 16));
-        button.setPadding(dp(12), 0, dp(12), 0); button.setMinHeight(dp(38)); button.setMinimumHeight(dp(38));
+        button.setPadding(dp(12), 0, dp(12), 0);button.setMinWidth(dp(88));button.setMinimumWidth(dp(88)); button.setMinHeight(dp(38)); button.setMinimumHeight(dp(38));
         return button;
     }
 

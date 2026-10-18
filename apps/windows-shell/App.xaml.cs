@@ -14,6 +14,17 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length == 2 && e.Args[0] == "--release-info")
+        {
+            File.WriteAllText(Path.GetFullPath(e.Args[1]), JsonSerializer.Serialize(new { version = DesktopRelease.Version, build = DesktopRelease.Build }));
+            Shutdown(0); return;
+        }
+        if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
+        {
+            try { await UpdateInstaller.ApplyAsync(e.Args[1]); Shutdown(0); }
+            catch { System.Windows.MessageBox.Show("自动更新未完成。原程序和用户数据已保留；请重新打开原 EXE，必要时手动下载完整包。", "大喵相机助手"); Shutdown(1); }
+            return;
+        }
         // Full boot acceptance bypasses the normal single-instance activation only
         // with explicitly isolated data and loopback ports; never scan into the real DB.
         if (e.Args.Length == 3 && e.Args[0] == "--verify-startup")
@@ -31,6 +42,7 @@ public partial class App : System.Windows.Application
             MainWindow = verificationWindow;
             verificationWindow.Show();
             var ok = await verificationWindow.StartupCompleted;
+            if (ok) ok = await verificationWindow.VerifyAboutAsync();
             File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
             {
                 ok,
@@ -93,6 +105,12 @@ public partial class App : System.Windows.Application
         MainWindow = _mainWindow;
         _mainWindow.Show();
         if (_activationPending) ActivateMainWindow();
+        if (e.Args.Length == 2 && e.Args[0] == "--update-health")
+        {
+            var ready = await _mainWindow.StartupCompleted;
+            try { UpdateInstaller.ReportHealth(e.Args[1], ready); }
+            catch { await _mainWindow.ExitAsync(); }
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

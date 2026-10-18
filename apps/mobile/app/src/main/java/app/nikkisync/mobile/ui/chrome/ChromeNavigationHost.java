@@ -19,6 +19,7 @@ public final class ChromeNavigationHost extends FrameLayout {
         void setReveal(float value);
         float getReveal();
         void settle();
+        default void setCovered(boolean covered){}
     }
     private record Entry(View layer,View moving,View effect,BackPreviewState.Kind kind,Runnable closed) {}
     private final ArrayList<Entry> stack=new ArrayList<>();
@@ -98,14 +99,17 @@ public final class ChromeNavigationHost extends FrameLayout {
         layer.addView(recording,new LayoutParams(-1,-1));
         LiquidGlassDockView glass=new LiquidGlassDockView(getContext(),source,sheet,true);
         recording.addView(glass,new LayoutParams(-1,-1));
+        ArrayList<LiquidGlassDockView> controlGlass=new ArrayList<>();
+        addSheetControlGlass(sheet,source,recording,controlGlass);
         Runnable updateGeometry=()->{
             glass.invalidate();
+            for(View control:controlGlass)control.invalidate();
             if(dismissOutside&&sheet.getHeight()>0)visibleTop.accept(layer.getTop()+sheet.getY());
         };
-        if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(updateGeometry);
+        if(sheet instanceof ChromeSheetLayout chromeSheet)chromeSheet.setPhotoDetailGeometryListener(updateGeometry);
         View.OnLayoutChangeListener geometry=(v,l,t,r,b,ol,ot,or,ob)->updateGeometry.run();
         sheet.addOnLayoutChangeListener(geometry);
-        if(dismissOutside)sheet.setTranslationY(getHeight());
+        sheet.setTranslationY(Math.max(getHeight(),getResources().getDisplayMetrics().heightPixels));
         layer.addView(sheet,new LayoutParams(-1,-2,Gravity.BOTTOM));sheet.setClickable(true);
         layer.setOnApplyWindowInsetsListener((v,insets)->{
             var safe=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
@@ -113,11 +117,11 @@ public final class ChromeNavigationHost extends FrameLayout {
         });
         addView(layer,new LayoutParams(-1,-1));
         View.OnLayoutChangeListener[] pendingEntry={null};
-        Entry e=new Entry(layer,sheet,glass,BackPreviewState.Kind.SHEET,()->{sheet.removeOnLayoutChangeListener(geometry);if(pendingEntry[0]!=null)sheet.removeOnLayoutChangeListener(pendingEntry[0]);if(dismissOutside)((ChromeSheetLayout)sheet).setPhotoDetailGeometryListener(()->{});source.close();closed.run();});stack.add(e);sync();
+        Entry e=new Entry(layer,sheet,recording,BackPreviewState.Kind.SHEET,()->{sheet.removeOnLayoutChangeListener(geometry);if(pendingEntry[0]!=null)sheet.removeOnLayoutChangeListener(pendingEntry[0]);if(sheet instanceof ChromeSheetLayout chromeSheet)chromeSheet.setPhotoDetailGeometryListener(()->{});source.close();closed.run();});stack.add(e);sync();
         if(lastInsets!=null)layer.dispatchApplyWindowInsets(lastInsets);
         long ticket=navigationGeneration;
         Runnable enter=()->{if(top()!=e||committing||ticket!=navigationGeneration)return;animate(300,t->sheet.setTranslationY(sheet.getHeight()*(1-t)),()->reset(e));};
-        if(dismissOutside){
+        {
             // Start only after the first measured layout, never with a zero-height sheet.
             pendingEntry[0]=new View.OnLayoutChangeListener(){
                 @Override public void onLayoutChange(View v,int l,int t,int r,int b,int ol,int ot,int or,int ob){
@@ -125,17 +129,27 @@ public final class ChromeNavigationHost extends FrameLayout {
                 }
             };
             sheet.addOnLayoutChangeListener(pendingEntry[0]);
-        }else layer.post(enter);
+        }
         layer.requestApplyInsets();
     }
     public void dismiss(View page){
         Entry found=null;for(Entry e:stack)if(e.moving()==page||e.layer()==page){found=e;break;}
         if(found==null)return;
         while(top()!=found)remove(top());
-        commit();
+        commit(true);
     }
+    private void addSheetControlGlass(View view,ContentBackdrop source,FrameLayout recording,ArrayList<LiquidGlassDockView> controls){
+        if(view instanceof android.widget.Button || view instanceof android.widget.EditText){
+            view.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+            ((android.widget.TextView)view).setTextColor(getContext().getColor(app.nikkisync.mobile.R.color.text_primary));
+            LiquidGlassDockView effect=new LiquidGlassDockView(getContext(),source,view);
+            recording.addView(effect,new LayoutParams(-1,-1));controls.add(effect);
+        }
+        if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++)addSheetControlGlass(group.getChildAt(i),source,recording,controls);
+    }
+    private boolean userCanDismiss(){return !(top().moving() instanceof ChromeSheetLayout sheet)||sheet.isUserDismissible();}
     public void progress(float p){
-        if(!hasOverlay()||committing)return;navigationGeneration++;stopAnimation();Entry e=top();e.moving().setAlpha(1);
+        if(!hasOverlay()||committing||!userCanDismiss())return;navigationGeneration++;stopAnimation();Entry e=top();e.moving().setAlpha(1);
         if(e.layer() instanceof PhotoTransition photo){photo.setReveal(1-Math.max(0,Math.min(1,p)));clearBlur();return;}
         var frame=BackPreviewState.frame(e.kind(),p,getWidth(),e.moving().getHeight());
         e.moving().setTranslationX(frame.x());e.moving().setTranslationY(frame.y());
@@ -148,7 +162,11 @@ public final class ChromeNavigationHost extends FrameLayout {
         animate(e.kind()==BackPreviewState.Kind.SHEET?450:170,t->{float v=e.kind()==BackPreviewState.Kind.SHEET?spring(t,.72f,620):t;e.moving().setTranslationX(x*(1-v));e.moving().setTranslationY(y*(1-v));if(e.kind()==BackPreviewState.Kind.PAGE)setPreviousBlur(startBlur*(1-v));},()->reset(e));
     }
     public void commit(){
-        if(!hasOverlay()||committing)return;navigationGeneration++;Entry e=top();committing=true;
+        commit(false);
+    }
+    private void commit(boolean programmatic){
+        if(!hasOverlay()||committing||(!programmatic&&!userCanDismiss()))return;navigationGeneration++;Entry e=top();committing=true;
+        if(!programmatic&&e.moving() instanceof ChromeSheetLayout sheet){sheet.notifyUserDismiss();if(top()!=e){committing=false;return;}}
         if(e.layer() instanceof PhotoTransition photo){float start=photo.getReveal();animate(260,t->photo.setReveal(start*(1-ease(t))),()->{remove(e);committing=false;});return;}
         float x=e.moving().getTranslationX(),y=e.moving().getTranslationY(),startBlur=previewBlurDp;e.moving().setAlpha(1);
         animate(e.kind()==BackPreviewState.Kind.SHEET?480:170,t->{
@@ -174,7 +192,7 @@ public final class ChromeNavigationHost extends FrameLayout {
     }
     private void clearBlur(){previewBlurDp=0;if(root!=null)root.setRenderEffect(null);for(Entry e:stack)e.layer().setRenderEffect(null);}
     private void remove(Entry e){stack.remove(e);covered.remove(e.layer());removeView(e.layer());e.closed().run();clearBlur();sync();}
-    private void sync(){if(callback!=null)callback.setEnabled(hasOverlay());cover(root,hasOverlay());for(Entry e:stack)cover(e.layer(),e!=top());}
+    private void sync(){if(callback!=null)callback.setEnabled(hasOverlay());cover(root,hasOverlay());for(Entry e:stack){cover(e.layer(),e!=top());if(e.layer() instanceof PhotoTransition photo)photo.setCovered(e!=top());}}
     private void cover(View view,boolean hide){
         if(view==null)return;
         if(hide){

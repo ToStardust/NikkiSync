@@ -25,6 +25,7 @@ data/
 *.user
 *.suo
 *.pem
+!apps/windows-shell/Assets/update-public-key.pem
 *.key
 *.p12
 *.pfx

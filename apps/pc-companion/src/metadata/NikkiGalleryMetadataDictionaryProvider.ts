@@ -67,7 +67,20 @@ function manifestFrom(value: unknown): MetadataDictionaryManifest {
     })
   }
   if (!entries.length) throw new Error('NikkiGallery has no named clothing entries')
-  entries.sort((a, b) => a.id.localeCompare(b.id))
+  // Exact public action IDs share this feed; do not infer them from clothing IDs or filenames.
+  if (Array.isArray(data.pose)) {
+    if (data.pose.length > 10_000) throw new Error('NikkiGallery pose size limit exceeded')
+    const poses = new Set<string>()
+    for (const value of data.pose) {
+      const row = object(value), id = idOf(row.gid)
+      if (poses.has(id)) throw new Error(`NikkiGallery duplicate pose ID ${id}`)
+      poses.add(id)
+      if (typeof row.posename !== 'string' || !row.posename.trim()) continue
+      entries.push({ kind: 'pose', id, name: row.posename.trim(),
+        raw: { source: 'nikki-gallery-public', sourceEndpoint: NIKKI_GALLERY_ENDPOINT } })
+    }
+  }
+  entries.sort((a, b) => `${a.kind}:${a.id}`.localeCompare(`${b.kind}:${b.id}`))
   return { schemaVersion: 1, provider: 'nikki-gallery-public',
     providerVersion: `v1-${createHash('sha256').update(JSON.stringify(entries)).digest('hex')}`, entries }
 }

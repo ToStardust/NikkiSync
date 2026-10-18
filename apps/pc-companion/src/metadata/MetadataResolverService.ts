@@ -28,6 +28,7 @@ export class MetadataResolverService {
   private readonly assets: AssetRepository
   private timer: NodeJS.Timeout | undefined
   private running = false
+  private stopped = false
   private readonly reads: SyncReadRepository
   private checked: { revision: number; provider: string; version: string | undefined; retryAt: number } | undefined
   private sweep: {
@@ -46,6 +47,7 @@ export class MetadataResolverService {
     this.reads = new SyncReadRepository(database)
     this.config = {
       enabled: config.enabled ?? true,
+      canResolve: config.canResolve ?? (()=>true),
       intervalMs: config.intervalMs ?? 15_000,
       batchSize: config.batchSize ?? 12,
       retryAfterMs: config.retryAfterMs ?? 10 * 60_000,
@@ -54,18 +56,20 @@ export class MetadataResolverService {
   }
 
   start(): void {
+    this.stopped=false
     if (!this.config.enabled || this.timer) return
     void this.runOnce()
     this.timer = setInterval(() => { void this.runOnce() }, this.config.intervalMs)
   }
 
   stop(): void {
+    this.stopped=true
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
   }
 
   async runOnce(): Promise<number> {
-    if (this.running || !this.config.enabled) return 0
+    if (this.running || this.stopped || !this.config.enabled || !this.config.canResolve()) return 0
     const revision = this.reads.currentRevision(), provider = this.resolver.id, version = this.resolver.version
     if (this.checked?.revision === revision && this.checked.provider === provider && this.checked.version === version && Date.now() < this.checked.retryAt) return 0
     this.running = true
@@ -83,11 +87,12 @@ export class MetadataResolverService {
       expectedRevision = nextRevision
     }
     try {
-      while (attempts < batchSize && visited < visitBudget) {
+      while (attempts < batchSize && visited < visitBudget && !this.stopped && this.config.canResolve()) {
         const pageSize = Math.min(batchSize, visitBudget - visited)
         const candidates = this.assets.listMetadataResolutionCandidates(pageSize, after)
         if (candidates.length === 0) { exhausted = true; break }
         for (const row of candidates) {
+          if(this.stopped||!this.config.canResolve())return resolved
           if (attempts >= batchSize) break
           visited++
           after = { discoveredAt: String(row.discovered_at), assetId: String(row.asset_id) }
@@ -136,6 +141,7 @@ export class MetadataResolverService {
               ...(payloadDecodedBytes === undefined ? {} : { nativeParamPayloadDecodedBytes: payloadDecodedBytes }),
               ...(nuan5Md5 ? { nativeParamNuan5Md5: nuan5Md5 } : {})
             })
+            if(this.stopped||!this.config.canResolve())return resolved
             const enrichedMetadata = this.dictionaryEnricher?.enrichMetadata(result.metadata) ?? result.metadata
             const providerRaw = enrichedMetadata.raw && typeof enrichedMetadata.raw === 'object'
               ? enrichedMetadata.raw as Record<string, unknown>
@@ -158,6 +164,7 @@ export class MetadataResolverService {
             }))
             resolved++
           } catch (error) {
+            if(this.stopped||!this.config.canResolve())return resolved
             retryAt = Math.min(retryAt, Date.parse(attemptedAt) + this.config.retryAfterMs)
             recordMutation(this.assets.updateMetadata(assetId, {
               raw: {

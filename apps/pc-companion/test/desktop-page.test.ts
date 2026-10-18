@@ -39,11 +39,14 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
     if (!elements.has(selector)) elements.set(selector, new Element())
     return elements.get(selector)!
   }
-  const navigation = ['connect', 'settings'].map((view) => {
+  const navigation = ['connect', 'settings', 'about'].map((view) => {
     const button = element('nav-' + view); button.dataset.view = view; return button
   })
-  const pages = ['connect', 'settings'].map((view) => {
+  const pages = ['connect', 'settings', 'about'].map((view) => {
     const page = element('[data-page="' + view + '"]'); page.dataset.page = view; return page
+  })
+  const projects = ['momo', 'nikkiGallery', 'releases'].map(project => {
+    const link = element('project-' + project); link.dataset.project = project; return link
   })
   const events = new Map<string, (event: unknown) => void>()
   const documentState = { hidden: false }
@@ -52,7 +55,7 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
     document: {
       get hidden() { return documentState.hidden },
       querySelector: element,
-      querySelectorAll: (selector: string) => selector === '[data-view]' ? navigation : pages,
+      querySelectorAll: (selector: string) => selector === '[data-view]' ? navigation : selector === '[data-project]' ? projects : pages,
       addEventListener: (name: string, handler: (event: unknown) => void) => events.set(name, handler),
       get activeElement() { return active }
     },
@@ -61,8 +64,32 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
     setInterval: (handler: () => Promise<void>) => { poll = handler; return 1 },
     clearInterval() {}
   })
-  return { element, navigation, pages, events, documentState, poll: () => poll!(), active: () => active }
+  return { element, navigation, pages, projects, events, documentState, poll: () => poll!(), active: () => active }
 }
+
+test('About owns updates, displays the installed version, and opens only named project links', () => {
+  const messages: unknown[] = []; let reply!: (event: unknown) => void
+  const ui = mount(async () => ({}), {postMessage: (m: unknown) => messages.push(m), addEventListener: (_: string, handler: typeof reply) => {reply=handler}})
+  ui.navigation[2]!.onclick!()
+  assert.equal(ui.pages[2]!.hidden, false); assert.equal(ui.pages[0]!.hidden, true)
+  assert.equal(ui.element('#desktop-title').textContent, '关于')
+  reply({data: {type: 'packageInfo', version: '1.0.5', build: 2026101805, hasAndroidInstaller: true, availableUpdateVersion: '1.0.6'}})
+  assert.match(ui.element('#desktop-version').textContent, /1\.0\.5/)
+  assert.match(ui.element('#check-updates').textContent, /1\.0\.6/)
+  assert.equal(ui.element('#about-update-dot').hidden, false)
+  ui.element('#check-updates').onclick!(); assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {type: 'checkUpdates'})
+  let prevented=false; ui.projects[1]!.onclick!({preventDefault(){prevented=true}})
+  assert.equal(prevented,true); assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {type: 'openProjectLink', project: 'nikkiGallery'})
+  reply({data: {type: 'packageInfo', version: '1.0.5', hasAndroidInstaller: false}})
+  assert.equal(ui.element('#about-update-dot').hidden, true)
+  assert.equal(ui.element('#check-updates').textContent, '检查更新')
+})
+
+test('browser-only About keeps repository links usable without offering an unavailable native update action', () => {
+  const ui=mount(async()=>({})); assert.equal(ui.element('#check-updates').disabled,true)
+  let prevented=false; ui.projects[1]!.onclick!({preventDefault(){prevented=true}})
+  assert.equal(prevented,false)
+})
 
 test('hidden desktop stops status requests and refreshes immediately when restored', async () => {
   let requests = 0

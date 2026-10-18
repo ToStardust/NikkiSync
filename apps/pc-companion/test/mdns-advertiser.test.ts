@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import dgram from 'node:dgram'
+import os from 'node:os'
+import { EventEmitter } from 'node:events'
+import { MdnsAdvertiser } from '../src/server/MdnsAdvertiser.js'
+
+test('mDNS ignores its own announcements and other responses, answers only valid queries', t => {
+  class Socket extends EventEmitter {
+    packets: Buffer[] = []
+    bind(_port: number, callback: () => void) { callback() }
+    setMulticastInterface() {}
+    addMembership() {}
+    setMulticastTTL() {}
+    send(packet: Buffer) { this.packets.push(packet) }
+    close() {}
+  }
+  const socket = new Socket()
+  t.mock.method(dgram, 'createSocket', () => socket)
+  t.mock.method(os, 'networkInterfaces', () => ({ fixture: [{ family: 'IPv4', internal: false, address: '192.168.1.10' }] }))
+  const advertiser = new MdnsAdvertiser()
+  try {
+    advertiser.start({ serverId: 'test-server', name: 'NikkiSync', port: 28080 })
+    assert.equal(socket.packets.length, 1)
+    socket.emit('message', socket.packets[0])
+    assert.equal(socket.packets.length, 1, 'own multicast reply must not trigger another multicast reply')
+    const labels = ['_nikkisync', '_tcp', 'local'].flatMap(label => [Buffer.from([label.length]), Buffer.from(label)])
+    const query = Buffer.concat([Buffer.alloc(12), ...labels, Buffer.from([0, 0, 12, 0, 1])])
+    query.writeUInt16BE(1, 4)
+    socket.emit('message', query)
+    assert.equal(socket.packets.length, 2)
+    const response = Buffer.from(query)
+    response.writeUInt16BE(0x8000, 2)
+    socket.emit('message', response)
+    assert.equal(socket.packets.length, 2)
+    socket.emit('message', Buffer.alloc(8))
+    assert.equal(socket.packets.length, 2, 'short malformed packet is not a DNS query')
+    const noQuestions = Buffer.from(query)
+    noQuestions.writeUInt16BE(0, 4)
+    socket.emit('message', noQuestions)
+    assert.equal(socket.packets.length, 2)
+    const unsupportedOpcode = Buffer.from(query)
+    unsupportedOpcode.writeUInt16BE(0x0800, 2)
+    socket.emit('message', unsupportedOpcode)
+    assert.equal(socket.packets.length, 2)
+  } finally { advertiser.stop() }
+})

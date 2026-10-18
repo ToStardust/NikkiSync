@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
+import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 import { PcCompanionRuntime } from './runtime.js'
 import { RuntimeMemoryMaintenance } from './RuntimeMemoryMaintenance.js'
@@ -10,6 +11,8 @@ import { loadMetadataDictionaryFile } from './metadata/MetadataDictionaryConfigF
 import { clothingNameSupplement } from './metadata/VerifiedClothingNames.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { composeMetadataDictionaryProvider, composeMetadataDictionarySupplementProvider, composeMetadataResolver } from './metadata/MetadataStartupComposition.js'
+import { MetadataOnlineConsent } from './metadata/MetadataOnlineConsent.js'
+import { orderedMetadataProviderConfigs } from './metadata/MetadataResolverConfigFile.js'
 import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
@@ -18,6 +21,8 @@ import { WeChatGalleryService, resizeForWeChat } from './wechat/WeChatGallerySer
 import { createIndexedPreviewSource,rotatePng,exportLive } from './wechat/GalleryRuntime.mjs'
 import {WeChatIconProvider,resizeWeChatIcon} from './wechat/WeChatIconProvider.js'
 import { startupFailureRecord } from './desktop/StartupFailure.js'
+import { GameVersionUpdateService } from './server/GameVersionUpdateService.js'
+import { setRemoteGameVersionReleases as setGalleryGameVersionReleases } from './wechat/GalleryRuntime.mjs'
 
 let startupPhase: Parameters<typeof startupFailureRecord>[1] = 'configuration'
 
@@ -60,8 +65,19 @@ function preferredLanIpv4(): string | undefined {
 }
 
 async function main(): Promise<void> {
+  const startupBegin = performance.now()
+  const milestones: Record<string, number> = {}
+  const markStartup = (stage: string): void => {
+    milestones[stage] = Math.round(performance.now() - startupBegin)
+    try {
+      writeFileSync(path.join(APP_DATA, 'startup-service-timings.json'), JSON.stringify({
+        build: '2026.10.13-mdns-query-guard', timestamp: new Date().toISOString(), stage, milestones
+      }, null, 2), 'utf8')
+    } catch { /* fixed stage names and durations only; best-effort startup diagnostics */ }
+  }
   const memoryMaintenance = new RuntimeMemoryMaintenance()
   mkdirSync(APP_DATA, { recursive: true })
+  markStartup('configuration')
   const pairingHost = preferredLanIpv4()
   if (!pairingHost) throw new Error('未找到局域网 IPv4 地址。请连接 Wi-Fi 或网线后重新打开 NikkiSync PC。')
 
@@ -84,11 +100,18 @@ async function main(): Promise<void> {
       ? { version: process.env.NIKKISYNC_METADATA_RESOLVER_VERSION }
       : {})
   } : undefined
-  const resolver = composeMetadataResolver(resolverFile, environmentResolverConfig)
+  const configuredProviders=orderedMetadataProviderConfigs(resolverFile)
+  const recipients=(configuredProviders.length?configuredProviders:environmentResolverConfig?[{...environmentResolverConfig,type:'remote-json'}]:[{type:'nuan5-compatible',endpoint:'https://nuan5.pro/api/decode-photo2'}])
+    .map(provider=>({name:provider.type==='nuan5-compatible'?'NUAN5':'自定义参数解析服务',endpoint:provider.endpoint??'https://nuan5.pro/api/decode-photo2',fields:provider.type==='nuan5-compatible'?['游戏UID','原生编码参数','JPEG前缀MD5']:['游戏UID','原生编码参数或令牌','可选校验值','参数格式及长度']}))
+  const onlineConsent=new MetadataOnlineConsent(path.join(APP_DATA,'metadata-online-consent.json'),recipients,resolverFile?.enabled===false)
+  const candidate=composeMetadataResolver({...resolverFile,enabled:true},environmentResolverConfig)
+  const resolver=candidate?onlineConsent.guard(candidate):undefined
   let metadataDiagnosticRevision: number | undefined
 
   startupPhase = 'database-and-tls'
+  markStartup('database-and-tls')
   const runtime: PcCompanionRuntime = new PcCompanionRuntime({
+    onStartupStage: markStartup,
     databaseFile: DATABASE_FILE,
     remoteBridge: true,
     scanner: {
@@ -120,7 +143,7 @@ async function main(): Promise<void> {
     ...(resolver ? {
       metadataResolver: {
         resolver,
-        service: { onWorkSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() } }
+        service: {canResolve:()=>onlineConsent.enabled(), onWorkSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() } }
       }
     } : {}),
     server: {
@@ -135,10 +158,11 @@ async function main(): Promise<void> {
     try {
       const row = runtime.database.connection.prepare('SELECT library_revision FROM library_state WHERE id = 1').get() as { library_revision: number }
       if (metadataDiagnosticRevision === row.library_revision) return
-      writeFileSync(path.join(APP_DATA, 'metadata-status.json'), JSON.stringify(metadataResolutionDiagnostics(runtime.database, Boolean(resolver)), null, 2), 'utf8')
+      writeFileSync(path.join(APP_DATA, 'metadata-status.json'), JSON.stringify(metadataResolutionDiagnostics(runtime.database, onlineConsent.enabled()), null, 2), 'utf8')
       metadataDiagnosticRevision = row.library_revision
     } catch { /* best-effort aggregate diagnostics; never include raw data in a fallback */ }
   }
+  const versionUpdates = new GameVersionUpdateService(runtime.database, { onCalendarChanged: setGalleryGameVersionReleases })
   startupPhase = 'scanner-and-lan'
   const started = await runtime.start()
   writeMetadataStatus()
@@ -161,7 +185,17 @@ async function main(): Promise<void> {
     })
   })
   startupPhase = 'desktop-control'
+  markStartup('desktop-control')
   const dashboard = createDesktopControlServer({
+    metadataPrivacy:{getState:()=>onlineConsent.state(),setEnabled:(enabled,version)=>{
+      if(enabled&&version!==onlineConsent.state().policyVersion)throw new Error('Current privacy policy must be accepted')
+      if(!enabled){onlineConsent.setEnabled(false);runtime.metadataResolver?.stop()}
+      const latest=loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)??resolverFile
+      writeFileSync(METADATA_RESOLVER_CONFIG_FILE,JSON.stringify({...latest,enabled}),{encoding:'utf8',mode:0o600})
+      if(enabled){onlineConsent.setEnabled(true,version);runtime.metadataResolver?.start()}
+      metadataDiagnosticRevision=undefined;writeMetadataStatus()
+    }},
+    legalDocuments:Object.fromEntries([['privacy','PRIVACY_POLICY.md'],['terms','USER_AGREEMENT.md'],['permissions','PERMISSIONS_DATA.md'],['services','SDK_SERVICES.md']].map(([name,file])=>[name,readFileSync(process.versions.bun?path.join(path.dirname(process.execPath),'legal',file!):path.join(import.meta.dirname,'..','..','..','..','docs','store-submission',file!),'utf8')])),
     getStatus: () => status.getStatus({ host: pairingHost, port: started.server.port }),
     createPairingUri: () => runtime.createPairingUri(pairingHost),
     qrSvg,
@@ -180,7 +214,11 @@ async function main(): Promise<void> {
   })
   const address = dashboard.address()
   if (!address || typeof address === 'string') throw new Error('无法启动本机配对页面')
+  markStartup('dashboard-ready')
+  versionUpdates.start()
   const shutdown = async () => {
+    onlineConsent.abortPending()
+    versionUpdates.stop()
     memoryMaintenance.stop()
     await wechat.stop()
     await new Promise<void>((resolve) => dashboard.close(() => resolve()))

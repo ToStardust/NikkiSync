@@ -1,9 +1,7 @@
 # 大喵相机助手共同图标
 
-`momo-camera.png` 是此前小程序使用的无文字 512×512 头像；SHA256：`9BC0A0D0BCD670F3DA05791E5F851AEC1C4CBBA142D0F8A5097F657DA95F47E0`。
+`momo-camera.png` 为用户于2026-10-13明确选定的1254×1254图稿：暖暖粉背景、奶油粉相机、黄色猫耳头饰和两行 Momo Camera 字样。保留用户附件原图，不再重画。SHA256：`C96328ABF0BD9E62ECA04B5A602C096CCE74FD3BBCF8E3F84E889D5A697DBD19`。
 
-原素材：[无限暖暖国际官网大喵生日公告](https://infinitynikki.infoldgames.com/en/news/249)，[官方原图](https://webstatic.infoldgames.com/7d325eec933f05b1/images/bg/S4uNqrdZtXSHlvGL.jpg)。既有设计只裁切、等比缩放和叠加相机徽标；这次不重新生成或重绘角色。
+图稿由本会话内置 imagegen 根据用户对C复古插画风格及游戏相机、黄色头饰的参考要求生成，由用户最终提供并批准使用。它替换了之前直接取自游戏公告的头像；不表示取得游戏角色、头饰或商标的授权，也不表示官方合作。上架时仍需按平台要求核实作品来源与相关权利，不冒用官方标识。
 
-`scripts/build-brand-icons.ps1` 从这一份源图生成 Windows 多尺寸 ICO 与 Android 各密度 PNG/adaptive 前景。Android 前景保留安全边距。Windows 窗口/托盘和 APK 均使用同一来源；不同系统蒙版可能改变外轮廓。
-
-角色与美术权利仍归原权利人；公开素材不代表获得第三方应用标识许可。本应用为非官方玩家工具，正式公开发布前仍需确认授权。用户此前在微信后台提交头像是用户操作，并非本脚本上传。
+`scripts/build-brand-icons.ps1` 仅等比缩放、留系统安全边距和转换文件格式，生成Windows多尺寸ICO、Android各密度PNG/adaptive前景及`momo-camera-store-512.png`。不同系统蒙版会改变外轮廓；原始图稿保留完整。手机、电脑助手和商店图标使用同一来源。

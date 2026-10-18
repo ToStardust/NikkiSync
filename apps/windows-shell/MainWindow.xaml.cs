@@ -29,13 +29,15 @@ public partial class MainWindow : Window
     private readonly TaskCompletionSource<bool> _startupCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<bool> StartupCompleted => _startupCompleted.Task;
     public Dictionary<string, double> StartupTimings { get; } = new();
+    private VerifiedUpdate? _availableUpdate;
+    private UpdateWindow? _updateWindow;
 
     public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
     {
         _service = new(new ProcessServiceFactory(), _health, desktopPort: desktopPort);
         _verificationDirectory = verificationDirectory;
         InitializeComponent();
-        _startupContent = Content;
+        _startupContent = MainSurface.Content;
         _startupTimer.Tick += (_, _) => StartupElapsed.Text = $"已等待 {(int)_startupWatch.Elapsed.TotalSeconds} 秒";
         ControlPage.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 248, 240);
         Loaded += OnLoaded;
@@ -128,6 +130,7 @@ public partial class MainWindow : Window
             StartupTimings["dashboardReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             RecordStartupTimings("ready");
             _startupCompleted.TrySetResult(true);
+            if (_verificationDirectory is null) _ = CheckForUpdatesQuietlyAsync();
         }
         catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
         { _startupTimer.Stop(); RecordStartupTimings("cancelled"); _startupCompleted.TrySetResult(false); }
@@ -166,6 +169,9 @@ public partial class MainWindow : Window
             var retry = new System.Windows.Controls.Button { Content = failure.Code == "GAME_NOT_FOUND" ? "重新自动检测" : "重试启动", Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(14, 8, 14, 8) };
             retry.Click += (_, _) => { _gameRoot = null; RetryStartup(); };
             panel.Children.Add(retry);
+            var updates = new System.Windows.Controls.Button { Content = "检查更新", Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(14, 8, 14, 8) };
+            updates.Click += (_, _) => OpenUpdates();
+            panel.Children.Add(updates);
             if (choose is not null) panel.Children.Add(choose);
             if (log is not null)
             {
@@ -175,7 +181,7 @@ public partial class MainWindow : Window
                 panel.Children.Add(new TextBlock { Text = "反馈 startup-diagnostics.log、game-discovery.log 和 startup-timings.json；日志不包含照片、个人路径、配对码或密钥。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 16, 0, 0) });
             }
             else panel.Children.Add(new TextBlock { Text = "日志无法写入，请截取上方错误代码反馈。", Margin = new Thickness(0, 16, 0, 0), TextWrapping = TextWrapping.Wrap });
-            Content = panel;
+            MainSurface.Content = panel;
             if (_verificationDirectory is not null)
             {
                 await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
@@ -193,7 +199,7 @@ public partial class MainWindow : Window
 
     private void RetryStartup()
     {
-        Content = _startupContent;
+        MainSurface.Content = _startupContent;
         StartupPanel.Visibility = Visibility.Visible;
         OnLoaded(this, new RoutedEventArgs());
     }
@@ -236,11 +242,19 @@ public partial class MainWindow : Window
     {
         if (_controlOrigin is null || !Uri.TryCreate(e.Source, UriKind.Absolute, out var source) || source.GetLeftPart(UriPartial.Authority) != _controlOrigin.GetLeftPart(UriPartial.Authority)) return;
         using var message = JsonDocument.Parse(e.WebMessageAsJson);
-        if (!message.RootElement.TryGetProperty("type", out var type)) return;
+        if (!message.RootElement.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String) return;
         if (type.GetString() == "getAutostart")
         {
             ReplyAutostart();
-            ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "packageInfo", hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path) }));
+            ReplyPackageInfo();
+        }
+        if (type.GetString() == "checkUpdates") OpenUpdates();
+        if (type.GetString() == "openProjectLink" && message.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.String
+            && DesktopProjectLinks.Resolve(project.GetString()) is { } projectUrl)
+        {
+            try { Process.Start(new ProcessStartInfo(projectUrl) { UseShellExecute = true }); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+            { System.Windows.MessageBox.Show(this, "请在浏览器中打开：\n" + projectUrl, "项目仓库"); }
         }
         if (type.GetString() == "saveAndroidInstaller") SaveAndroidInstaller();
         if (type.GetString() == "setAutostart" && message.RootElement.TryGetProperty("enabled", out var enabled) && (enabled.ValueKind is JsonValueKind.True or JsonValueKind.False))
@@ -251,6 +265,10 @@ public partial class MainWindow : Window
     }
 
     private void ReplyAutostart() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled = _autostart.IsEnabled() }));
+    private void ReplyPackageInfo() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {
+        type = "packageInfo", version = DesktopRelease.Version, build = DesktopRelease.Build,
+        hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path), availableUpdateVersion = _availableUpdate?.Manifest.Version
+    }));
 
     private string? AndroidInstallerPath => _runtimeDirectory is null ? null : Path.Combine(_runtimeDirectory, "runtime", "NikkiSync-Android.apk");
     private void SaveAndroidInstaller()
@@ -282,5 +300,62 @@ public partial class MainWindow : Window
         System.Windows.Application.Current.Shutdown();
     }
 
+    private void OpenUpdates()
+    {
+        if (_updateWindow is not null) { _updateWindow.Activate(); return; }
+        _updateWindow = new UpdateWindow(this, _availableUpdate);
+        _updateWindow.Closed += (_, _) => _updateWindow = null;
+        _updateWindow.Show();
+    }
+
+    private async Task CheckForUpdatesQuietlyAsync()
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_startupCancellation.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(35));
+            using var http = new UpdateHttp();
+            _availableUpdate = await new DesktopUpdateSource(http, DesktopRelease.CreateVerifier(), DesktopRelease.Build).CheckAsync(UpdateWindow.ReadSource(), timeout.Token);
+            if (!_startupCancellation.IsCancellationRequested) ReplyPackageInfo();
+        }
+        catch { /* Offline startup remains usable; manual update check displays feedback. */ }
+    }
+
     private Task UpdateViewPowerAsync() => _viewPower?.SetActiveAsync(IsVisible && WindowState != WindowState.Minimized) ?? Task.CompletedTask;
+
+    // Only the existing isolated startup-verification mode calls this. No external links or updates
+    // are opened: exercise the delivered WebView page and native version-message bridge, then capture it.
+    public async Task<bool> VerifyAboutAsync()
+    {
+        if (_verificationDirectory is null || _controlOrigin is null) return false;
+        ReplyPackageInfo();
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            var json = await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>{
+                document.querySelector('[data-view=about]')?.click();
+                return {title:document.querySelector('#desktop-title')?.textContent,
+                    visible:document.querySelector('[data-page=about]')?.hidden===false,
+                    version:document.querySelector('#desktop-version')?.textContent,
+                    updateEnabled:document.querySelector('#check-updates')?.disabled===false,
+                    repositories:[...document.querySelectorAll('[data-project]')].map(link=>link.href)};
+            })()");
+            using var state = JsonDocument.Parse(json);
+            var value = state.RootElement;
+            if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("version", out var version)
+                && version.GetString() is { } label && label.Contains(DesktopRelease.Version) && label.Contains(DesktopRelease.Build.ToString()))
+            {
+                File.WriteAllText(Path.Combine(_verificationDirectory, "about-verification.json"), json);
+                var links = value.GetProperty("repositories").EnumerateArray().Select(link => link.GetString()).ToHashSet();
+                var ok = value.GetProperty("title").GetString() == "关于" && value.GetProperty("visible").GetBoolean()
+                    && value.GetProperty("updateEnabled").GetBoolean()
+                    && new[] { "momo", "nikkiGallery", "releases" }.All(name => links.Contains(DesktopProjectLinks.Resolve(name)));
+                await Task.Delay(150);
+                using var image = File.Create(Path.Combine(_verificationDirectory, "about-screen.png"));
+                await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, image);
+                return ok;
+            }
+            await Task.Delay(50);
+        }
+        return false;
+    }
 }

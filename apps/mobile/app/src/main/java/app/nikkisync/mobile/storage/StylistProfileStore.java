@@ -14,6 +14,8 @@ public final class StylistProfileStore {
         String manual=preferences.getString("manual:"+uid,"");
         return manual.isEmpty()?preferences.getString("auto:"+uid,""):manual;
     }
+    public String defaultUid(){return preferences.getString("defaultUid","");}
+    public void setDefaultUid(String uid){preferences.edit().putString("defaultUid",clean(uid)).apply();}
     public void setManualNickname(String uid,String value) {
         String name=clean(value);
         if(name.isEmpty())preferences.edit().remove("manual:"+uid).apply();

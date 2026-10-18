@@ -23,7 +23,7 @@ public final class ShareCardExporter {
                 canvas.drawBitmap(background,null,new RectF((WIDTH-w)/2,(height-h)/2,(WIDTH+w)/2,(height+h)/2),paint(0,0xFFFFFFFF));
             }
             canvas.drawColor(0x7A221C26);
-            text(canvas,"NikkiSync",60,98,48,INK);
+            fitted(canvas,payload.branding().title(),60,98,48,INK,1320);
             String date=payload.capturedAt()==null||payload.capturedAt().isBlank()?"无限暖暖摄影":payload.capturedAt().split("T")[0];
             text(canvas,date+(payload.gameVersion()==null||payload.gameVersion().isBlank()?"":" · "+payload.gameVersion()),60,146,25,0xCCFFF8F0);
             rounded(canvas,60,170,96,4,2,PINK);
@@ -63,9 +63,12 @@ public final class ShareCardExporter {
                 canvas.drawText(row.displayValue(),1150,y,value);
                 y+=row.height();if(row.label().equals("光圈")) line(canvas,570,y-40,1346,y-40,0x5CFFF8F0);
             }
-            text(canvas,"NikkiSync · 穿搭与摄影记录"+(total>1?" · "+(index+1)+" / "+total:""),60,height-26,20,0xB3FFF8F0);
+            fitted(canvas,payload.branding().footer()+(total>1?" · "+(index+1)+" / "+total:""),60,height-26,20,0xB3FFF8F0,1320);
             return output;
         } catch(RuntimeException|Error error) {output.recycle();throw error;}
+    }
+    private static void fitted(Canvas canvas,String value,float x,float y,float size,int color,float width){
+        Paint p=paint(size,color);String display=android.text.TextUtils.ellipsize(value,new android.text.TextPaint(p),width,android.text.TextUtils.TruncateAt.END).toString();canvas.drawText(display,x,y,p);
     }
     private static void panel(Canvas canvas,float x,float width,int height) {
         RectF rect=new RectF(x,218,x+width,height-66);canvas.drawRoundRect(rect,22,22,paint(0,0x29F4E0E8));

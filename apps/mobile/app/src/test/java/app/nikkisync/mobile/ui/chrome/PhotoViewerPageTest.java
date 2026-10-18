@@ -11,6 +11,58 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class PhotoViewerPageTest {
+    @Test public void committedSwipeKeepsOutgoingPhotoUntilIncomingFinishesInBothDirections() throws Exception {
+        for(int direction:new int[]{1,-1}) {
+            Fixture f=fixture();
+            try {
+                ImageView outgoing=f.image;
+                ImageView adjacent=new ImageView(f.activity);
+                adjacent.setImageBitmap(android.graphics.Bitmap.createBitmap(1000,1000,android.graphics.Bitmap.Config.ARGB_8888));
+                ImageView[] incoming={null};
+                f.page.setPaging(true,true,change->{
+                    f.page.preparePhoto(null);
+                    ScrollView scroll=new ScrollView(f.activity);LinearLayout body=new LinearLayout(f.activity);scroll.addView(body);
+                    body.addView(new LinearLayout(f.activity));incoming[0]=new ImageView(f.activity);body.addView(incoming[0]);
+                    f.page.setContentView(scroll);f.page.show();
+                });
+                f.page.setAdjacentPhotos(direction<0?adjacent:null,direction>0?adjacent:null);
+                View touch=f.page.findViewWithTag("photo-gestures");float start=direction>0?800:200,end=direction>0?200:800;
+                event(touch,0,start,800,0);event(touch,2,end,800,100);event(touch,1,end,800,200);
+                assertSame("The outgoing image must still cover its side after release",f.page,outgoing.getParent());
+                assertNotNull(incoming[0].getDrawable());assertEquals(255,incoming[0].getImageAlpha());
+                var field=PhotoViewerPage.class.getDeclaredField("pagingAnimation");field.setAccessible(true);
+                var animation=(android.animation.ValueAnimator)field.get(f.page);
+                for(float fraction:new float[]{0,.25f,.5f,.75f}) {
+                    animation.setCurrentFraction(fraction);
+                    assertEquals(direction*1000,incoming[0].getTranslationX()-outgoing.getTranslationX(),.1f);
+                    assertSame(f.page,outgoing.getParent());
+                }
+                animation.end();assertNull("Release the outgoing view after completion",outgoing.getParent());
+                assertEquals(0,incoming[0].getTranslationX(),.01f);
+            } finally {f.activity.nav.close();f.activity.finish();}
+        }
+    }
+    @Test public void pagingOffsetSurvivesImageMeasurementAndTransformRefresh() throws Exception {
+        Fixture f=fixture();
+        try {
+            f.page.setPaging(true,true,direction->{
+                f.page.preparePhoto(null);
+                var scroll=new ScrollView(f.activity);var body=new LinearLayout(f.activity);scroll.addView(body);
+                body.addView(new LinearLayout(f.activity));var incoming=new ImageView(f.activity);
+                incoming.setImageBitmap(android.graphics.Bitmap.createBitmap(1000,1000,android.graphics.Bitmap.Config.ARGB_8888));body.addView(incoming);
+                f.page.setContentView(scroll);f.page.show();
+            });
+            View touch=f.page.findViewWithTag("photo-gestures");
+            event(touch,0,800,800,0);event(touch,2,200,800,100);event(touch,1,200,800,200);
+            var field=PhotoViewerPage.class.getDeclaredField("image");field.setAccessible(true);
+            ImageView incoming=(ImageView)field.get(f.page);
+            assertEquals("ImageView.setAlpha(int) is image opacity, not View opacity",255,incoming.getImageAlpha());
+            assertEquals("the photo surface must also be visible",1f,incoming.getAlpha(),.001f);
+            float offset=incoming.getTranslationX();assertTrue(offset>0);
+            f.page.refreshImageTransform();
+            assertEquals("layout/bitmap updates must not flash the incoming image at zero",offset,incoming.getTranslationX(),.01f);
+        } finally {f.activity.nav.close();f.activity.finish();}
+    }
     @Test public void detailsCanReopenAfterEveryDismissRouteAndPredictiveCancelKeepsThem() throws Exception {
         Fixture f=fixture();
         try {
@@ -90,10 +142,22 @@ public class PhotoViewerPageTest {
         Fixture f=fixture();java.util.List<Integer> changes=new java.util.ArrayList<>();
         f.page.setPaging(true,true,changes::add);View touch=f.page.findViewWithTag("photo-gestures");
         ImageView next=new ImageView(f.activity);f.page.setAdjacentPhotos(null,next);
+        next.setImageBitmap(android.graphics.Bitmap.createBitmap(1000,1000,android.graphics.Bitmap.Config.ARGB_8888));
         event(touch,0,800,800,0);event(touch,2,200,810,100);assertTrue(changes.isEmpty());
         assertEquals(View.VISIBLE,next.getVisibility());assertEquals(400,next.getTranslationX(),.01f);
         event(touch,1,200,810,200);idle();assertEquals(java.util.List.of(1),changes);
         assertEquals(1,f.activity.nav.overlayCount());f.activity.nav.close();f.activity.finish();
+    }
+    @Test public void unloadedNeighborCannotCommitToAnEmptyPhoto(){
+        Fixture f=fixture();java.util.List<Integer> changes=new java.util.ArrayList<>();
+        try {
+            f.page.setPaging(true,true,changes::add);ImageView next=new ImageView(f.activity);f.page.setAdjacentPhotos(null,next);
+            View touch=f.page.findViewWithTag("photo-gestures");
+            event(touch,0,800,800,0);event(touch,2,200,810,100);event(touch,1,200,810,200);idle();
+            assertTrue("Wait for preload instead of finishing into a black page",changes.isEmpty());
+            assertEquals(0,f.image.getTranslationX(),.01f);
+            assertNotNull(f.image.getDrawable());
+        } finally {f.activity.nav.close();f.activity.finish();}
     }
     @Test public void zoomedPanUsesStableScreenCoordinatesAndNeverPages(){
         Fixture f=fixture();java.util.List<Integer> changes=new java.util.ArrayList<>();f.page.setPaging(true,true,changes::add);

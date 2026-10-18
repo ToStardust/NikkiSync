@@ -1,0 +1,34 @@
+大陆地区分发建议（2026-10-18核对）
+
+建议：123云盘作为整包主分发，夸克作为备用；蓝奏用于小体积APK备份，上传较大EXE前核实账号当前单文件限制。百度网盘可作为已有账号用户的额外备份。
+不承诺所有访客都免登录、无限速或无需客户端，具体按账号、文件、流量和平台当时规则。
+
+123云盘：https://www.123pan.com/
+官方登录：https://login.123pan.com/centerlogin?register=invite
+官网有普通分享、直链等不同服务。自动更新如使用直链，须按对应服务规则开通并核实流量成本、软件分发用途，不将普通会员权益直接当作软件源站。
+官方服务规则：https://www.123pan.com/MemberAgreement/
+
+夸克网盘：https://pan.quark.cn/
+支持文件夹分享与有效期设置，适合整包备用下载。可把独立APK、EXE和README放同一文件夹，便于用户只下载所需部分。
+官方分享说明：https://www.quark.cn/documents/help/file-share
+
+蓝奏云：https://www.lanzou.com/u
+官方宣传分享免登录、不限制下载速度和次数；当前账号单文件上限需要在上传页确认，本次EXE约120MB，不预先保证普通账号可直接上传。
+
+百度网盘：https://pan.baidu.com/
+用于备用分享。发布后应自己用未登录/非会员状态检查真实下载流程。
+
+发布时上传
+1. 公测ZIP，或将EXE、APK、README、SHA256SUMS分别放进共享文件夹。
+2. 写明Windows64位与Android13+、正式签名旧版可覆盖、debug旧版先处理迁移。
+3. 用未登录的手机和电脑检查下载、解压、安装、连接流程，确认分享未过期、无误导广告或错误版本。
+
+自动更新和网盘分享是两种入口
+本软件默认从GitHub Releases发现带签名的新版本。GitHub每个版本的Assets需要同时上传：
+MomoCamera-PC-版本.exe
+MomoCamera-Windows-update.json
+MomoCamera-Windows-update.json.sig
+清单与sig文件在公测包“维护者-更新发布文件”目录；首次发布时将其取出并与EXE一起上传到同一个Release。
+国内直链源需要可直接获取上述JSON、对应的.json.sig以及清单内EXE地址。先确定EXE直链，再在本机用scripts/sign-desktop-update.ps1重新签署清单；不可手工修改已签JSON。
+不要向用户提供私钥、DPAPI密钥文件、签名密码、工程私有数据或游戏原照片。
+首次上传/公开发布需要发布者实际执行；本包尚未自动上传到任何网盘。

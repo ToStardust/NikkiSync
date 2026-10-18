@@ -32,7 +32,17 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     private int gesture;
     private boolean multiplePointers;
     private android.animation.ValueAnimator zoomAnimation;
+    private android.animation.ValueAnimator pagingAnimation;
+    private float pagingOffset;
+    private boolean pagingHandoff;
+    private Drawable handoffPixels;
+    private ImageView pagingOutgoing;
+    private int pagingDirection;
     private ImageView previousPhoto,nextPhoto;
+    private LivePhotoPlayback live;
+    private ContentBackdrop liveBackdrop;
+    private LiquidGlassDockView liveGlass;
+    private boolean covered;
     private Runnable dismissed=()->{};
     public void setOnDismissListener(Runnable listener){dismissed=listener==null?()->{}:listener;}
 
@@ -46,10 +56,15 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     public void setPaging(boolean previous,boolean next,java.util.function.IntConsumer change){previousAvailable=previous;nextAvailable=next;changePhoto=change;}
     /** Rebind within the same navigation entry, never stack a page per swipe. */
     public void preparePhoto(ImageView thumbnail){
+        clearLivePhoto();
+        if(pagingAnimation!=null)pagingAnimation.cancel();
+        if(!pagingHandoff){pagingOffset=0;clearPagingOutgoing();}
+        else pagingOutgoing=image;
         if(zoomAnimation!=null)zoomAnimation.cancel();
         if(image!=null)image.animate().cancel();resetAdjacent();
         source=thumbnail;sourceTag=sourceIdentity(thumbnail);transition.seed=thumbnail==null?null:copy(thumbnail.getDrawable());
         removeAllViews();addView(backdrop,new LayoutParams(-1,-1));toolbar.removeAllViews();
+        if(pagingOutgoing!=null)addView(pagingOutgoing,new LayoutParams(-1,-1));
         image=null;previousPhoto=nextPhoto=null;header=null;details=null;sheet=null;detailsBottom=Float.NaN;zoom=1;dragX=dragY=0;chromeVisible=true;
     }
 
@@ -64,6 +79,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
             var safe=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
             if(header!=null){LayoutParams h=(LayoutParams)header.getLayoutParams();h.topMargin=safe.top+dp(6);h.leftMargin=safe.left+dp(16);h.rightMargin=safe.right+dp(16);header.setLayoutParams(h);}
             LayoutParams b=(LayoutParams)toolbar.getLayoutParams();b.bottomMargin=safe.bottom+dp(16);b.leftMargin=safe.left+dp(24);b.rightMargin=safe.right+dp(24);toolbar.setLayoutParams(b);
+            positionLiveControls();
             return insets;
         });
     }
@@ -73,6 +89,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         header=body.getChildAt(0);body.removeView(header);
         image=(ImageView)body.getChildAt(0);body.removeView(image);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setBackground(null);image.setClipToOutline(false);
+        if(image.getDrawable()==null&&handoffPixels!=null)image.setImageDrawable(handoffPixels);
         if(image.getDrawable()==null&&source!=null)image.setImageDrawable(copy(source.getDrawable()));
         addView(image,new LayoutParams(-1,-1));
         View touch=new View(getContext());touch.setTag("photo-gestures");touch.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -95,7 +112,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         // into pan deltas and cause oscillation. This surface remains screen-sized and stationary.
         touch.setOnTouchListener((v,event)->{
             int action=event.getActionMasked();float x=event.getX(),y=event.getY();
-            if(action==MotionEvent.ACTION_DOWN){if(zoomAnimation!=null)zoomAnimation.cancel();image.animate().cancel();applyPan();resetAdjacent();downX=lastX=x;downY=lastY=y;gesture=0;multiplePointers=false;}
+            if(action==MotionEvent.ACTION_DOWN){if(zoomAnimation!=null)zoomAnimation.cancel();if(pagingAnimation!=null)pagingAnimation.cancel();pagingOffset=0;image.animate().cancel();applyPan();resetAdjacent();downX=lastX=x;downY=lastY=y;gesture=0;multiplePointers=false;}
             if(action==MotionEvent.ACTION_POINTER_DOWN){
                 if(gesture==2)navigation.interrupt();
                 else if(gesture==1){image.animate().cancel();image.setTranslationX(0);resetAdjacent();}
@@ -109,10 +126,12 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
                 else if(!multiplePointers){
                     if(gesture==0&&Math.max(Math.abs(dx),Math.abs(dy))>ViewConfiguration.get(getContext()).getScaledTouchSlop())
                         gesture=Math.abs(dx)>Math.abs(dy)?1:dy>0?2:3;
-                    if(gesture==1){boolean available=dx>0?previousAvailable:nextAvailable;image.setTranslationX(available?dx:dx*.18f);
+                    if(gesture==1){boolean available=dx>0?previousAvailable:nextAvailable;
                         ImageView neighbor=dx>0?previousPhoto:nextPhoto,other=dx>0?nextPhoto:previousPhoto;
+                        boolean loaded=neighbor==null||neighbor.getDrawable()!=null;
+                        pagingOffset=available&&loaded?dx:dx*.18f;applyPan();
                         if(other!=null)other.setVisibility(INVISIBLE);
-                        if(neighbor!=null){neighbor.setVisibility(VISIBLE);neighbor.setTranslationX((dx>0?-getWidth():getWidth())+dx);
+                        if(neighbor!=null){neighbor.setVisibility(loaded?VISIBLE:INVISIBLE);neighbor.setTranslationX((dx>0?-getWidth():getWidth())+dx);
                             Drawable d=neighbor.getDrawable();if(d!=null){float iw=d.getIntrinsicWidth(),ih=d.getIntrinsicHeight();float fit=fitScale(getWidth(),getHeight(),iw,ih,neighbor.getRotation())/fitScale(getWidth(),getHeight(),iw,ih,0);neighbor.setScaleX(fit);neighbor.setScaleY(fit);}}
                     }
                     if(gesture==2)navigation.progress(Math.min(.85f,Math.max(0,dy)/(Math.max(1,getHeight())*.8f)));
@@ -124,28 +143,62 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
                 boolean released=action==MotionEvent.ACTION_UP;
                 if(gesture==2){if(released&&y-downY>dp(110))navigation.commit();else navigation.cancel();}
                 else if(gesture==1){float dx=x-downX;int direction=dx<0?1:-1;
-                    if(released&&Math.abs(dx)>getWidth()*.2f&&(direction<0?previousAvailable:nextAvailable)&&changePhoto!=null){
+                    ImageView ready=direction>0?nextPhoto:previousPhoto;
+                    if(released&&Math.abs(dx)>getWidth()*.2f&&(direction<0?previousAvailable:nextAvailable)&&changePhoto!=null
+                        &&(ready==null||ready.getDrawable()!=null)){
                         float entryX=direction*getWidth()+dx;
-                        ImageView ready=direction>0?nextPhoto:previousPhoto;
                         Drawable readyPixels=ready==null?null:copy(ready.getDrawable());
-                        changePhoto.accept(direction);
+                        pagingOffset=entryX;pagingHandoff=true;handoffPixels=readyPixels;
+                        try{changePhoto.accept(direction);}finally{pagingHandoff=false;handoffPixels=null;}
+                        pagingDirection=direction;
                         if(image.getDrawable()==null&&readyPixels!=null){image.setImageDrawable(readyPixels);refreshImageTransform();}
-                        image.setTranslationX(entryX);image.animate().translationX(0).setDuration(180).start();
-                    }else {image.animate().translationX(0).setDuration(180).start();
+                        animatePaging(entryX);
+                    }else {animatePaging(pagingOffset);
                         ImageView neighbor=dx>0?previousPhoto:nextPhoto;if(neighbor!=null)neighbor.animate().translationX(dx>0?-getWidth():getWidth()).setDuration(180).withEndAction(()->neighbor.setVisibility(INVISIBLE)).start();}
                 }
+                gesture=0;multiplePointers=false;updateLivePhoto();
             }
             return true;
         });
-        setReveal(0);
+        if(getParent()==null)setReveal(0);else{reveal=1;backdrop.setAlpha(1f);transition.setVisibility(INVISIBLE);image.setImageAlpha(255);image.setAlpha(1f);refreshImageTransform();}
     }
+
+    public void setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.Source source){setLivePhoto(new LivePhotoPlayback(activity,source));}
+    void setLivePhoto(LivePhotoPlayback playback){
+        clearLivePhoto();live=playback;
+        // Texture content shares the photo transform; the gesture surface and buttons stay fixed.
+        addView(live.surface(),indexOfChild(image)+1,new LayoutParams(-1,-1));
+        live.controls().setBackgroundColor(Color.TRANSPARENT);
+        liveBackdrop=new ContentBackdrop(image);liveGlass=new LiquidGlassDockView(getContext(),liveBackdrop,live.controls());
+        addView(liveGlass,indexOfChild(transition),new LayoutParams(-1,-1));
+        addView(live.controls(),indexOfChild(transition),new LayoutParams(-2,dp(48),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL));
+        positionLiveControls();updateLivePhoto();
+    }
+    private void positionLiveControls(){
+        if(live==null)return;LayoutParams params=(LayoutParams)live.controls().getLayoutParams();
+        params.bottomMargin=((LayoutParams)toolbar.getLayoutParams()).bottomMargin+dp(68);live.controls().setLayoutParams(params);
+    }
+    private void clearLivePhoto(){
+        if(live!=null){live.close();removeView(live.surface());removeView(live.controls());live=null;}
+        if(liveGlass!=null){removeView(liveGlass);liveGlass=null;}if(liveBackdrop!=null){liveBackdrop.close();liveBackdrop=null;}
+    }
+    private void updateLivePhoto(){
+        if(live==null||image==null)return;
+        View surface=live.surface();surface.setRotation(image.getRotation());surface.setScaleX(image.getScaleX());surface.setScaleY(image.getScaleY());
+        surface.setTranslationX(image.getTranslationX());surface.setTranslationY(image.getTranslationY());
+        live.controls().setVisibility(chromeVisible?VISIBLE:INVISIBLE);live.controls().setAlpha(reveal);if(liveGlass!=null)liveGlass.setAlpha(reveal);
+        live.setEligible(isAttachedToWindow()&&image.getDrawable()!=null&&!covered&&reveal>=.999f&&transition.getVisibility()!=VISIBLE&&sheet==null
+            &&gesture==0&&!multiplePointers&&zoom<=1.001f&&!pagingHandoff&&Math.abs(pagingOffset)<.5f&&(pagingAnimation==null||!pagingAnimation.isRunning()));
+    }
+    @Override public void setCovered(boolean value){covered=value;updateLivePhoto();}
+    @Override protected void dispatchDraw(Canvas canvas){if(liveBackdrop!=null&&canvas.isHardwareAccelerated())liveBackdrop.record(getWidth(),getHeight());super.dispatchDraw(canvas);}
 
     public void addAction(String label,Runnable action){
         Button b=new Button(getContext());b.setText(label);b.setTextSize(14);b.setTextColor(Color.WHITE);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);b.setBackgroundColor(Color.TRANSPARENT);
         b.setOnClickListener(v->{action.run();if(image!=null)setZoom(zoom);});toolbar.addView(b,new LinearLayout.LayoutParams(0,-1,1));
     }
     public void show(){
-        if(getParent()!=null){setReveal(1);settle();requestApplyInsets();return;}
+        if(getParent()!=null){settle();requestApplyInsets();postDelayed(()->logViewport(),250);return;}
         var bars=activity.getWindow().getInsetsController();
         int mask=WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
         if(bars!=null){previousBarAppearance=bars.getSystemBarsAppearance();bars.setSystemBarsAppearance(0,mask);}
@@ -153,11 +206,18 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
             if(bars!=null)bars.setSystemBarsAppearance(previousBarAppearance,mask);
             dismissed.run();
         });
+        postDelayed(()->logViewport(),500);
+    }
+    private void logViewport(){
+        if(!app.nikkisync.mobile.BuildConfig.DEBUG||image==null||getParent()==null)return;
+        Drawable pixels=image.getDrawable();
+        android.util.Log.i("NikkiSyncViewport","photo="+image.getWidth()+"x"+image.getHeight()+" pixels="+(pixels!=null)+" alpha="+image.getAlpha()+" drawableAlpha="+(pixels==null?-1:pixels.getAlpha())+" scale="+image.getScaleX()+","+image.getScaleY()+" offset="+image.getTranslationX()+","+image.getTranslationY()+" reveal="+reveal+" transition="+transition.getVisibility());
     }
     public void dismiss(){navigation.dismiss(this);}
     public void openDetails(){
         if(sheet!=null&&sheet.getParent()!=null)return;
         if(zoomAnimation!=null)zoomAnimation.cancel();
+        if(pagingAnimation!=null)pagingAnimation.cancel();pagingOffset=0;
         image.animate().cancel();resetAdjacent();
         float savedZoom=zoom,savedX=dragX,savedY=dragY;
         if(details.getParent() instanceof android.view.ViewGroup parent)parent.removeView(details);
@@ -167,7 +227,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         heading.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         Button done=new Button(getContext());done.setText("完成");done.setTextColor(Color.WHITE);done.setBackgroundColor(Color.TRANSPARENT);
         heading.addView(done,new LinearLayout.LayoutParams(dp(72),dp(48)));
-        ChromeSheetLayout opened=new ChromeSheetLayout(getContext(),heading,scroller,new FrameLayout(getContext()));sheet=opened;
+        ChromeSheetLayout opened=new ChromeSheetLayout(getContext(),heading,scroller,new FrameLayout(getContext()));sheet=opened;updateLivePhoto();
         done.setOnClickListener(v->navigation.dismiss(opened));
         navigation.showPhotoDetails(opened,()->{
             if(sheet==opened){sheet=null;detailsBottom=Float.NaN;refreshImageTransform();}
@@ -175,7 +235,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         setZoom(savedZoom);dragX=savedX;dragY=savedY;applyPan();
     }
     public boolean isChromeVisible(){return chromeVisible;}
-    private void toggleChrome(){chromeVisible=!chromeVisible;header.setVisibility(chromeVisible?VISIBLE:INVISIBLE);toolbar.setVisibility(chromeVisible?VISIBLE:INVISIBLE);}
+    private void toggleChrome(){chromeVisible=!chromeVisible;header.setVisibility(chromeVisible?VISIBLE:INVISIBLE);toolbar.setVisibility(chromeVisible?VISIBLE:INVISIBLE);updateLivePhoto();}
     static float fitScale(float width,float height,float imageWidth,float imageHeight,float rotation){
         boolean sideways=Math.round(rotation/90)%2!=0;
         return Math.min(width/Math.max(1,sideways?imageHeight:imageWidth),height/Math.max(1,sideways?imageWidth:imageHeight));
@@ -194,7 +254,17 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(zoomAnimation!=null)zoomAnimation.cancel();zoomAnimation=android.animation.ValueAnimator.ofFloat(zoom,target);
         zoomAnimation.setDuration(220);zoomAnimation.addUpdateListener(a->zoomAt((Float)a.getAnimatedValue(),x,y));zoomAnimation.start();
     }
-    @Override protected void onDetachedFromWindow(){if(zoomAnimation!=null)zoomAnimation.cancel();super.onDetachedFromWindow();}
+    private void animatePaging(float start){
+        if(pagingAnimation!=null)pagingAnimation.cancel();pagingOffset=start;applyPan();
+        pagingAnimation=android.animation.ValueAnimator.ofFloat(start,0);pagingAnimation.setDuration(180);
+        pagingAnimation.setInterpolator(new android.view.animation.PathInterpolator(.2f,0,0,1));
+        pagingAnimation.addUpdateListener(a->{pagingOffset=(Float)a.getAnimatedValue();if(image!=null)applyPan();});
+        pagingAnimation.addListener(new android.animation.AnimatorListenerAdapter(){
+            @Override public void onAnimationEnd(android.animation.Animator animation){pagingAnimation=null;clearPagingOutgoing();updateLivePhoto();}
+        });pagingAnimation.start();
+    }
+    private void clearPagingOutgoing(){if(pagingOutgoing!=null)removeView(pagingOutgoing);pagingOutgoing=null;pagingDirection=0;}
+    @Override protected void onDetachedFromWindow(){clearLivePhoto();if(zoomAnimation!=null)zoomAnimation.cancel();if(pagingAnimation!=null)pagingAnimation.cancel();clearPagingOutgoing();super.onDetachedFromWindow();}
     public void refreshImageTransform(){if(image!=null)setZoom(zoom);}
     @Override protected void onLayout(boolean changed,int l,int t,int r,int b){super.onLayout(changed,l,t,r,b);refreshImageTransform();}
     private void applyPan(){
@@ -202,8 +272,10 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(d!=null){boolean sideways=Math.round(image.getRotation()/90)%2!=0;float iw=d.getIntrinsicWidth(),ih=d.getIntrinsicHeight();
             float scale=fitScale(getWidth(),getHeight(),iw,ih,image.getRotation())*zoom;
             x=Math.max(0,((sideways?ih:iw)*scale-getWidth())/2);y=Math.max(0,((sideways?iw:ih)*scale-getHeight())/2);}
-        dragX=Math.max(-x,Math.min(x,dragX));dragY=Math.max(-y,Math.min(y,dragY));image.setTranslationX(dragX);image.setTranslationY(dragY);
+        dragX=Math.max(-x,Math.min(x,dragX));dragY=Math.max(-y,Math.min(y,dragY));image.setTranslationX(dragX+pagingOffset);image.setTranslationY(dragY);
+        if(pagingOutgoing!=null)pagingOutgoing.setTranslationX(pagingOffset-pagingDirection*getWidth());
         applyDetailsViewport();
+        updateLivePhoto();
     }
     /** Use the sheet's actual animated edge; no second animator or bitmap capture. */
     private void applyDetailsViewport(){
@@ -227,9 +299,10 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(image==null)return;
         setZoom(1);header.setAlpha(reveal);toolbar.setAlpha(reveal);
         transition.setVisibility(VISIBLE);image.setAlpha(0f);
+        updateLivePhoto();
         transition.invalidate();
     }
-    @Override public void settle(){transition.setVisibility(INVISIBLE);image.setAlpha(1f);setZoom(1);}
+    @Override public void settle(){transition.setVisibility(INVISIBLE);image.setImageAlpha(255);image.setAlpha(1f);setZoom(1);updateLivePhoto();}
     private boolean sourceMatches(){return source!=null&&source.isAttachedToWindow()&&java.util.Objects.equals(sourceTag,sourceIdentity(source));}
     private static Object sourceIdentity(ImageView source){
         if(source==null)return null;

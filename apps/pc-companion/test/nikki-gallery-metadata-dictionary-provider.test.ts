@@ -23,6 +23,23 @@ const fixture = {
   pose: [], colors: {}
 }
 
+test('NikkiGallery supplementary dictionary includes exact public action names without replacing clothes', async () => {
+  const api = await provider(async () => Response.json({ ...fixture,
+    pose: [{ gid: 1090010002, posename: '侧身低头', filename: 'T_Icon_Static_002.png' }] }))
+  const result = await api.fetch()
+  assert.equal(result.status, 'updated')
+  if (result.status !== 'updated') throw new Error('Expected dictionary')
+  assert.equal(result.manifest.entries.filter(entry => entry.kind === 'clothing').length, 2)
+  assert.equal(result.manifest.entries.find(entry => entry.kind === 'pose' && entry.id === '1090010002')?.name, '侧身低头')
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  try {
+    const service = new MetadataDictionaryService(db)
+    service.setSupplement(result.manifest)
+    assert.equal(service.enrichMetadata({ pose: { id: '1090010002' } }).pose?.name, '侧身低头')
+    assert.equal(service.enrichMetadata({ pose: { id: '1090010002', name: '个人备注' } }).pose?.name, '个人备注')
+  } finally { db.close() }
+})
+
 async function provider(fetcher: typeof fetch) {
   return new NikkiGalleryMetadataDictionaryProvider({}, fetcher)
 }

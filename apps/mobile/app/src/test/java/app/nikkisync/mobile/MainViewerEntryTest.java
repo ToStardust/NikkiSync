@@ -48,6 +48,7 @@ public class MainViewerEntryTest {
                     1,1000,1200,false,false,null,null,"2.9","inferred");
             invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
             assertEquals(1,activity.navigationHost().overlayCount());
+            assertNull(activity.navigationHost().findViewWithTag("live-playback-controls"));
             findButton(activity.navigationHost(),"详情").performClick();
             assertNull(findButton(activity.navigationHost(),"保存原视频"));
         } finally {cleanup(activity);}
@@ -58,6 +59,7 @@ public class MainViewerEntryTest {
             var asset=new AssetSummary("synthetic-live","motion_photo","ready",null,null,
                     1,3840,2160,true,false,null,null,null,null);
             invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            assertNotNull(activity.navigationHost().findViewWithTag("live-playback-controls"));
             findButton(activity.navigationHost(),"保存").performClick();
             assertEquals(2,activity.navigationHost().overlayCount());
             assertNotNull(findButton(activity.navigationHost(),"实况照片"));
@@ -115,6 +117,24 @@ public class MainViewerEntryTest {
             var record=new SavedPhotoStore.Record("synthetic","content://media/external/images/media/100",0,false,0,
                     "2026-09-25T10:20:00Z","2.9","jpg");
             invoke(activity,"showSavedPhotoDetails",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    @Test public void widgetOpensOnlyAPhotoAlreadyInSavedHistory() throws Exception {
+        var activity=fixture();
+        try {
+            String uri="content://media/external/images/media/100";
+            activity.getSharedPreferences("nikkisync_saved_photos",0).edit().putString("records",
+                    new org.json.JSONArray().put(new org.json.JSONObject().put("assetId","synthetic").put("uri",uri)).toString()).commit();
+            var intent=new android.content.Intent(activity,MainActivity.class)
+                    .setAction(app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.OPEN_PHOTO)
+                    .putExtra(app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.PHOTO_URI,"content://untrusted/unknown");
+            invoke(activity,"handleIntent",new Class<?>[]{android.content.Intent.class},intent);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals(0,activity.navigationHost().overlayCount());
+            intent.putExtra(app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.PHOTO_URI,uri);
+            invoke(activity,"handleIntent",new Class<?>[]{android.content.Intent.class},intent);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
             assertEquals(1,activity.navigationHost().overlayCount());
         } finally {cleanup(activity);}
     }

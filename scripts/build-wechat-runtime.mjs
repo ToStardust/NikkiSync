@@ -18,7 +18,7 @@ export function clientApi(name='encrypted-probe'){
 `;
 for(const target of ['src','dist/src']){
  const directory=resolve(root,'apps/pc-companion',target,'wechat');mkdirSync(directory,{recursive:true});
- await build({stdin:{contents:"export {exportJpeg,exportMetadata} from './tools/wechat-gallery/photo-export.mjs';export {exportLive} from './tools/wechat-gallery/live-export.mjs';export {rotatePng} from './tools/wechat-gallery/png-export.mjs';export {createGalleryServer} from './tools/wechat-gallery/server.mjs';export {createIndexedPreviewSource,resizePreview} from './tools/wechat-gallery/source.mjs';export {clientApi,releaseProtocolRuntime} from './tools/wechat-crypto-spike/client-api.mjs';",resolveDir:root,sourcefile:'gallery-runtime-entry.mjs'},
+ await build({stdin:{contents:"export {setRemoteGameVersionReleases} from './apps/pc-companion/dist/src/server/GameVersionCalendar.js';export {exportJpeg,exportMetadata,gameVersionEnglishName,setRemoteGameVersionNames} from './tools/wechat-gallery/photo-export.mjs';export {exportLive} from './tools/wechat-gallery/live-export.mjs';export {rotatePng} from './tools/wechat-gallery/png-export.mjs';export {createGalleryServer} from './tools/wechat-gallery/server.mjs';export {createIndexedPreviewSource,resizePreview} from './tools/wechat-gallery/source.mjs';export {clientApi,releaseProtocolRuntime} from './tools/wechat-crypto-spike/client-api.mjs';",resolveDir:root,sourcefile:'gallery-runtime-entry.mjs'},
   bundle:true,platform:'node',format:'esm',target:'node24',outfile:resolve(directory,'GalleryRuntime.mjs'),
   packages:'external',external:['node:sqlite'],
   plugins:[{name:'embedded-client',setup(b){

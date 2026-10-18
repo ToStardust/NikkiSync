@@ -11,8 +11,10 @@ import { MetadataDictionaryService } from './metadata/MetadataDictionaryService.
 import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceConfig } from './metadata/MetadataDictionaryUpdateService.js'
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
 import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
+import { CachedDecodedMetadataService } from './metadata/CachedDecodedMetadataService.js'
 
 export interface PcCompanionRuntimeConfig {
+  onStartupStage?: (stage: PcStartupStage) => void
   databaseFile?: string
   scanner?: ScannerConfig
   server?: LocalSyncServerConfig
@@ -33,6 +35,9 @@ export interface PcCompanionRuntimeConfig {
   }
 }
 
+export type PcStartupStage = 'scanner' | 'lan-listen' | 'cached-metadata'
+  | 'dictionary-enrichment' | 'background-services' | 'runtime-ready'
+
 export interface PcCompanionStartResult {
   scan: ScanResult
   server: LocalSyncServerAddress
@@ -40,6 +45,7 @@ export interface PcCompanionStartResult {
 
 /** Owns the process-level lifecycle: scanner first, then LAN transport, sharing one SQLite source of truth. */
 export class PcCompanionRuntime {
+  private readonly onStartupStage: PcCompanionRuntimeConfig['onStartupStage']
   readonly database: DatabaseManager
   readonly scanner: ScannerService
   readonly server: LocalSyncServer
@@ -50,6 +56,7 @@ export class PcCompanionRuntime {
   readonly metadataDictionarySupplementUpdater?: MetadataDictionaryUpdateService
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
+    this.onStartupStage = config.onStartupStage
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
@@ -90,13 +97,20 @@ export class PcCompanionRuntime {
   }
 
   async start(): Promise<PcCompanionStartResult> {
+    this.onStartupStage?.('scanner')
     const scan = await this.scanner.start()
     try {
+      this.onStartupStage?.('lan-listen')
       const server = await this.server.start()
+      this.onStartupStage?.('cached-metadata')
+      new CachedDecodedMetadataService(this.database, this.metadataDictionary).runOnce()
+      this.onStartupStage?.('dictionary-enrichment')
       this.metadataDictionary?.reenrichResolvedAssets()
+      this.onStartupStage?.('background-services')
       this.metadataDictionaryUpdater?.start()
       this.metadataDictionarySupplementUpdater?.start()
       this.metadataResolver?.start()
+      this.onStartupStage?.('runtime-ready')
       return { scan, server }
     } catch (error) {
       await this.scanner.stop()

@@ -49,7 +49,9 @@ public final class OriginalSaver {
 
         boolean attachExif = context.getSharedPreferences("nikkisync.export", Context.MODE_PRIVATE).getBoolean("writeExif", true);
         boolean exported = isJpeg(original.mimeType()) && (attachExif || normalizedRotation != 0);
-        HttpsURLConnection connection = exported ? client.exportStill(asset.assetId(), original.resourceId(), attachExif, normalizedRotation)
+        var watermark=new app.nikkisync.mobile.storage.ExportWatermarkStore(context);
+        String cameraName=attachExif?watermark.exifCameraName(detail.metadataJson()):null;
+        HttpsURLConnection connection = exported ? client.exportStill(asset.assetId(), original.resourceId(), attachExif, normalizedRotation,cameraName)
                 : client.resource(asset.assetId(), original.resourceId());
         int status = connection.getResponseCode();
         if (status != 200) { connection.disconnect(); throw new IllegalStateException(exported ? "照片导出失败，请确认电脑已更新 NikkiSync：HTTP " + status : "原图请求失败：HTTP " + status); }
@@ -96,6 +98,26 @@ public final class OriginalSaver {
                 throw new SecurityException("原图 SHA-256 校验失败，已取消保存");
             }
             if (!exported && normalizedRotation != 0) applyExifRotation(resolver, uri, normalizedRotation);
+            if(attachExif&&isJpeg(original.mimeType())){
+                var localMetadata=PhotoExif.metadata(context,detail.metadataJson(),asset.capturedAt(),asset.gameVersion());
+                // A newer PC can supply a verified future title before this phone's catalog is updated.
+                if(!localMetadata.has("versionName")&&exported){
+                    try(var fd=resolver.openFileDescriptor(uri,"r")){
+                        if(fd!=null){
+                            var pcExif=new androidx.exifinterface.media.ExifInterface(fd.getFileDescriptor());
+                            String description=pcExif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_DESCRIPTION);
+                            String prefix="Infinity Nikki virtual photography; game parameters: ";
+                            if(description!=null&&description.startsWith(prefix)){
+                                var pcMetadata=new org.json.JSONObject(description.substring(prefix.length()));
+                                String title=pcMetadata.optString("versionName","");
+                                if(localMetadata.optString("version","").equals(pcMetadata.optString("version",""))
+                                    &&title.matches("[A-Za-z0-9][A-Za-z0-9 '\\-:,]{0,119}"))localMetadata.put("versionName",title);
+                            }
+                        }
+                    }
+                }
+                PhotoExif.write(context,uri,localMetadata);
+            }
             ContentValues ready = new ContentValues();
             ready.put(MediaStore.Images.Media.IS_PENDING, 0);
             resolver.update(uri, ready, null, null);

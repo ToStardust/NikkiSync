@@ -121,9 +121,12 @@ public final class NikkiSyncClient {
         return http.resource("/v1/assets/" + encode(assetId) + "/resources/" + encode(resourceId));
     }
     public HttpsURLConnection exportStill(String assetId, String resourceId, boolean exif, int rotation) throws Exception {
+        return exportStill(assetId,resourceId,exif,rotation,null);
+    }
+    public HttpsURLConnection exportStill(String assetId,String resourceId,boolean exif,int rotation,String cameraName) throws Exception {
         if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) throw new IllegalArgumentException("Invalid rotation");
         return http.resource("/v1/assets/" + encode(assetId) + "/resources/" + encode(resourceId)
-                + "/export?exif=" + exif + "&rotation=" + rotation);
+                + "/export?exif=" + exif + "&rotation=" + rotation+(cameraName==null?"":"&cameraName="+encode(cameraName)));
     }
 
     public HttpsURLConnection clothingThumbnail(String assetId, String clothingId) throws Exception {

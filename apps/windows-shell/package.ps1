@@ -55,6 +55,10 @@ Copy-Item -LiteralPath (Join-Path $workspace 'apps\wechat-mini-program\miniprogr
 Copy-Item -LiteralPath (Join-Path $workspace 'apps\wechat-mini-program\miniprogram\lib\THIRD_PARTY.md') -Destination (Join-Path $runtime 'wechat\THIRD_PARTY.md') -Force
 New-Item -ItemType Directory -Force (Join-Path $runtime 'branding') | Out-Null
 Copy-Item -LiteralPath (Join-Path $workspace 'assets\branding\momo-camera.png') -Destination $brandImage -Force
+New-Item -ItemType Directory -Force (Join-Path $runtime 'legal') | Out-Null
+foreach($document in @('PRIVACY_POLICY.md','USER_AGREEMENT.md','PERMISSIONS_DATA.md','SDK_SERVICES.md')) {
+  Copy-Item -LiteralPath (Join-Path $workspace ('docs\store-submission\'+$document)) -Destination (Join-Path $runtime ('legal\'+$document)) -Force
+}
 New-Item -ItemType Directory -Force $liveTools | Out-Null
 $liveFfmpeg = (Get-Command ffmpeg -CommandType Application -ErrorAction Stop).Source
 $liveFfprobe = (Get-Command ffprobe -CommandType Application -ErrorAction Stop).Source

@@ -1,6 +1,7 @@
 import type { DatabaseManager } from '@nikkisync/database';
 import type { Server } from 'node:net';
 export function releaseProtocolRuntime(): void;
+export function setRemoteGameVersionReleases(releases: readonly {version:string;effectiveAt:string;uncertainFrom?:string}[]): void;
 export interface GallerySource {
   count: number;
   refresh(): Promise<void>;
@@ -19,6 +20,8 @@ export interface GalleryConfig { type: 'NikkiSyncLocalGalleryDownload'|'NikkiSyn
 export interface GalleryEvents { authenticated(): void; disconnected(): void; transferred(): void; refreshed?(count:number): void; settled?(): void; }
 export function createIndexedPreviewSource(database: DatabaseManager, roots: string[], options: {resize(bytes: Uint8Array): Promise<Uint8Array>;exportLive?(jpeg:Uint8Array,video:Uint8Array,options:{exif:boolean;metadata:unknown;presentationUs?:number}):Promise<{image:Uint8Array;mime:'application/x-livp'}>;rotatePng?(bytes:Uint8Array,rotation:number):Promise<Uint8Array>;loadIcon?(descriptor:{candidates:{url:string;kind:'item'|'category'}[];versionKey:string}):Promise<{image:Uint8Array;mime:'image/png';source:'item'|'category'}>}): Promise<GallerySource>;
 export function exportLive(jpeg:Uint8Array,video:Uint8Array,options:{exif:boolean;metadata:unknown;presentationUs?:number;ffmpeg?:string;ffprobe?:string}):Promise<{image:Uint8Array;mime:'application/x-livp'}>;
-export function exportJpeg(bytes:Uint8Array,metadata:unknown,options:{exif:boolean;rotation:number}):Buffer;
+export function exportJpeg(bytes:Uint8Array,metadata:unknown,options:{exif:boolean;rotation:number;cameraName?:string|undefined}):Buffer;
+export function gameVersionEnglishName(version:unknown):string|undefined;
+export function setRemoteGameVersionNames(names:Record<string,string>):void;
 export function rotatePng(bytes:Uint8Array,rotation:number,script?:string):Promise<Uint8Array>;
 export function createGalleryServer(config: GalleryConfig, source: GallerySource, options: {events: GalleryEvents}): {server: Server; stop(): Promise<void>};

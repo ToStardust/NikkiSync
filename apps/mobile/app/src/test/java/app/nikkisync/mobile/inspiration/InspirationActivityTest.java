@@ -22,6 +22,7 @@ import app.nikkisync.mobile.ui.chrome.ChromeSheetLayout;
 
 @RunWith(RobolectricTestRunner.class)
 public final class InspirationActivityTest {
+    @org.junit.Before public void acceptPrivacyForExistingEditorTests(){new app.nikkisync.mobile.privacy.PrivacyConsentStore(org.robolectric.RuntimeEnvironment.getApplication()).accept();}
     @Test public void customCategoryHasCompactHeightAndAVisibleEditableField() throws Exception {
         var controller=Robolectric.buildActivity(InspirationActivity.class).setup();
         try {

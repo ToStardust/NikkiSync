@@ -12,6 +12,15 @@ import java.time.Duration;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 public class ChromeNavigationHostTest {
+    @Test public void ordinarySheetIsOffscreenBeforeItsFirstMeasuredEntryFrame(){
+        var context=RuntimeEnvironment.getApplication();var host=new ChromeNavigationHost(context);
+        host.setRoot(new View(context));
+        var title=new android.widget.TextView(context);title.setText("保存为");
+        var body=new android.widget.LinearLayout(context);body.addView(new android.widget.Button(context));
+        var sheet=new ChromeSheetLayout(context,title,body,new View(context)).wrapContentForm();
+        host.showSheet(sheet);
+        assertTrue("ordinary LIVE/save/input sheets must not paint at their final position first",sheet.getTranslationY()>0);
+    }
     @Test public void photoDetailOutsideTapDismissesOnlySheetWithoutBlurringViewer(){
         var c=RuntimeEnvironment.getApplication();var host=new ChromeNavigationHost(c);
         View root=new View(c);host.setRoot(root);

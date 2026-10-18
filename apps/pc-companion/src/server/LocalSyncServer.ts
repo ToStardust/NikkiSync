@@ -542,7 +542,8 @@ export class LocalSyncServer {
 
   private async exportStill(req:IncomingMessage,res:ServerResponse,url:URL,assetId:string,resourceId:string):Promise<void>{
     const exif=url.searchParams.get('exif'),rotation=Number(url.searchParams.get('rotation'))
-    if(Array.from(url.searchParams.keys()).some(x=>!['exif','rotation'].includes(x))||url.searchParams.getAll('exif').length!==1||url.searchParams.getAll('rotation').length!==1||!['true','false'].includes(exif??'')||!['0','90','180','270'].includes(url.searchParams.get('rotation')??'')||req.headers.range)return json(res,400,errorBody('bad_request','Invalid JPEG export options'))
+    const cameraName=url.searchParams.get('cameraName')??undefined
+    if(Array.from(url.searchParams.keys()).some(x=>!['exif','rotation','cameraName'].includes(x))||url.searchParams.getAll('exif').length!==1||url.searchParams.getAll('rotation').length!==1||url.searchParams.getAll('cameraName').length>1||cameraName!==undefined&&(exif!=='true'||!cameraName.trim()||cameraName!==cameraName.trim()||Buffer.byteLength(cameraName,'utf8')>256||/[\u0000-\u001f\u007f-\u009f]/u.test(cameraName))||!['true','false'].includes(exif??'')||!['0','90','180','270'].includes(url.searchParams.get('rotation')??'')||req.headers.range)return json(res,400,errorBody('bad_request','Invalid JPEG export options'))
     const row=this.reads.getResource(assetId,resourceId),asset=this.reads.getAsset(assetId)
     if(!row||!asset||asset.asset_type!=='photo'||asset.asset_state!=='ready'||row.stable_state!=='stable'||!['source_primary','source_high_quality'].includes(String(row.role))||row.mime_type!=='image/jpeg')return json(res,404,errorBody('resource_not_ready','Ordinary JPEG resource unavailable'))
     if(this.exportBusy)return json(res,429,errorBody('resource_not_ready','Please retry after the current export'))
@@ -555,8 +556,10 @@ export class LocalSyncServer {
         bytes=Buffer.alloc(size);let offset=0;while(offset<size){const part=await file.read(bytes,offset,size-offset,offset);if(!part.bytesRead)throw new Error('Truncated');offset+=part.bytesRead}
         const after=await file.stat();if(after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ino!==before.ino||createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error('Source changed')
       }finally{await file.close()}
-      let metadata:unknown;try{metadata=JSON.parse(String(asset.metadata_json??'{}'))}catch{}
-      output=exportJpeg(bytes,metadata,{exif:exif==='true',rotation});const exportedHash=createHash('sha256').update(output).digest('hex')
+      let metadata:any;try{metadata=JSON.parse(String(asset.metadata_json??'{}'))}catch{}
+      metadata={...(metadata&&typeof metadata==='object'?metadata:{}),
+        capture:{...(metadata?.capture??{}),capturedAt:metadata?.capture?.capturedAt??asset.captured_at}};
+      output=exportJpeg(bytes,metadata,{exif:exif==='true',rotation,cameraName});const exportedHash=createHash('sha256').update(output).digest('hex')
       res.writeHead(200,{'Content-Type':'image/jpeg','Content-Length':output.length,'X-NikkiSync-SHA256':exportedHash,'X-NikkiSync-Exif':exif==='true'?'1':'0','X-NikkiSync-Rotation':String(rotation),'X-NikkiSync-Export':'jpeg-exif-v1','Cache-Control':'private, no-store'})
       if(req.method==='HEAD'){res.end();return}
       await new Promise<void>(resolve=>{res.once('close',resolve);res.end(output,resolve)})
