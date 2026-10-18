@@ -7,15 +7,15 @@ import {resolve,join,relative,basename} from 'node:path';
 import {createHash,verify} from 'node:crypto';
 
 const root=resolve(import.meta.dirname,'../..'),repo='ToStardust/NikkiSync';
-const tag='v1.0.5-public-beta.1',version='1.0.5',build=2026101805;
-const bundle=join(root,'release/MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous');
+const tag='v1.0.5-public-beta.2',version='1.0.5',build=2026101805;
+const bundle=join(root,'release/MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous-Beta2');
 const output=join(root,'out/github-publication-1.0.5');
 const git=(args,input)=>execFileSync('git',args,{cwd:root,input,encoding:'utf8',stdio:['pipe','pipe','pipe'],env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'}}).trim();
 const sha=async path=>{const hash=createHash('sha256');for await(const bytes of createReadStream(path))hash.update(bytes);return hash.digest('hex');};
 const expected={
   'MomoCamera-PC-1.0.5.exe':'43c922b13ce93e7aa67b6a2362c8816cb0302ecc2e309d80b377ee9d89bf7e8e',
   'MomoCamera-Android-1.0.5.apk':'dfc634d3fe0d0d29b35eec9209977ce2453754a0c0daf6def9988f1af0b82aa3',
-  'MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous.zip':'659e80edca821f97844bfde3a36b88015da30906d3db69c3d40440fcdb52aea9'
+  'MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous-Beta2.zip':'75614120199aaeb14260dba1b843500e87bad3e9c6668b6169ec2081fb93e721'
 };
 const legal=new Set(['PRIVACY_POLICY.md','USER_AGREEMENT.md','PERMISSIONS_DATA.md','SDK_SERVICES.md'].map(name=>'docs/store-submission/'+name));
 
@@ -26,7 +26,7 @@ async function audit(){
   const selected=[...changed].filter(path=>
     /^(apps|packages|assets|scripts|integrations|tools)\//.test(path)&&!path.startsWith('tools/store-submission/')
     ||['.gitignore','README.md','package.json','package-lock.json'].includes(path)
-    ||legal.has(path)||path==='docs/releases/'+tag+'.md'
+    ||legal.has(path)||['docs/releases/'+tag+'.md','docs/releases/v1.0.5-public-beta.1.md'].includes(path)
     ||/^docs\/remote-bridge\/PUBLIC_BETA[^/]*\.txt$/.test(path)).sort();
   const findings=[];
   for(const path of selected){
@@ -113,8 +113,8 @@ async function main(){
     assert.ok(release.draft,'Do not mutate an existing published release');
     const url=new URL(release.upload_url.replace(/\{.*$/,''));url.searchParams.set('name',item.name);
     console.log('Uploading '+item.name+' ('+item.size+' bytes)');
-    async function* stream(){let sent=0,last=0;for await(const chunk of createReadStream(item.path)){sent+=chunk.length;const progress=Math.floor(sent/item.size*5);if(progress>last){last=progress;console.log(item.name+' '+Math.min(100,progress*20)+'%');}yield chunk;}}
-    const asset=await github(token,url.href,{method:'POST',headers:{'Content-Type':'application/octet-stream','Content-Length':String(item.size)},body:stream(),duplex:'half'});
+    async function* stream(){let sent=0,last=0;for await(const chunk of createReadStream(item.path)){sent+=chunk.length;const progress=Math.floor(sent/item.size*20);if(progress>last){last=progress;console.log(item.name+' '+Math.min(100,progress*5)+'%');}yield chunk;}}
+    const asset=await github(token,url.href,{method:'POST',headers:{'Content-Type':'application/octet-stream','Content-Length':String(item.size)},body:stream(),duplex:'half',signal:AbortSignal.timeout(1800000)});
     assert.equal(asset.size,item.size);assert.equal(asset.digest,'sha256:'+item.sha256,'Uploaded asset digest mismatch');
   }
   const uploaded=await github(token,release.assets_url);
