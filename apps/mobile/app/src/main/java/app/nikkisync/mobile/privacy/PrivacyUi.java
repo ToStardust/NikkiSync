@@ -21,7 +21,7 @@ public final class PrivacyUi {
         ChromeHost host=new ChromeHost(activity);host.contentLayer().setBackgroundResource(R.drawable.bg_gallery_ambient);
         host.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){}public void onViewDetachedFromWindow(View v){host.backdrop().close();}});
         LinearLayout content=column(activity);content.addView(text(activity,"欢迎使用大喵相机助手",24,true));
-        content.addView(text(activity,"我们会在你选择的电脑和手机之间传输照片，保存本地缓存、配对及昵称等设置。扫码时使用相机，发现电脑时使用附近设备权限。\n\n电脑的在线参数解析另需单独开启，可能向第三方发送游戏UID、编码参数与校验值。不同意此项仍可浏览、保存照片及已有参数。\n\n分享图及EXIF昵称水印默认开启，可在设置中分别关闭，导出前请检查昵称和UID。\n\n请阅读以下政策与协议，确认后再继续。",16,false));
+        content.addView(text(activity,"我们会在你选择的电脑和手机之间传输照片，保存本地缓存、配对及昵称等设置。扫码时使用相机，发现电脑时使用附近设备权限。\n\n电脑的在线参数解析默认开启，可能向第三方发送游戏UID、编码参数与校验值，可在电脑的同步设置中关闭。关闭后仍可浏览、保存照片及已有参数。\n\n分享图昵称水印默认开启，可在设置中关闭，导出前请检查昵称和UID。EXIF相机名称固定为MomoCamera,Infinity Nikki。\n\n请阅读以下政策与协议，确认后再继续。",16,false));
         for(String[] doc:new String[][]{{"隐私政策","privacy"},{"用户协议","terms"},{"权限与数据说明","permissions"},{"第三方服务与组件","services"}}){
             Button button=action(activity,doc[0],()->openDocument(activity,navigation,doc[0],doc[1]));content.addView(button);host.addDockEffect(button);
         }

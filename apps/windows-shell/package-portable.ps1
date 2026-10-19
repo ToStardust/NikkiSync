@@ -2,7 +2,11 @@ param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidA
 
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$pinnedBun = Join-Path $workspace 'out\bun-baseline-1.4.1\bun-windows-x64-baseline\bun.exe'
+if ($BunExecutable -eq 'bun' -and (Test-Path -LiteralPath $pinnedBun)) { $BunExecutable = $pinnedBun }
 if ($BunExecutable -ne 'bun') { $BunExecutable = (Resolve-Path -LiteralPath $BunExecutable).Path }
+$bunVersion = (& $BunExecutable --version).Trim()
+if ($LASTEXITCODE -ne 0 -or [version]($bunVersion.Split('-')[0]) -lt [version]'1.4.1') { throw 'Bun 1.4.1 or newer is required: older Node-compatible HTTPS upgrade sockets can silently discard the realtime handshake. Use the baseline Windows runtime.' }
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $workspace 'release'))
 $release = [IO.Path]::GetFullPath((Join-Path $workspace $OutputDirectory))
 if (-not $release.StartsWith($releaseRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be inside workspace/release.' }

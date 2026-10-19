@@ -8,6 +8,7 @@ public static class DesktopProjectLinks
         "momo" => "https://github.com/ToStardust/NikkiSync",
         "nikkiGallery" => "https://github.com/QianQianLuLu1/NikkiGallery",
         "releases" => DesktopRelease.ReleasesUrl,
+        "downloads" => DesktopRelease.DownloadsUrl,
         _ => null
     };
 }

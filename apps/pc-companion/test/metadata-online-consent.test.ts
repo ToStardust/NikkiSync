@@ -6,10 +6,11 @@ import os from 'node:os'
 import { MetadataOnlineConsent } from '../src/metadata/MetadataOnlineConsent.js'
 
 const recipients=[{name:'NUAN5',endpoint:'https://nuan5.pro/api/decode-photo2',fields:['游戏UID','编码参数','JPEG前缀MD5']}]
-test('online decoding requires versioned explicit consent, survives restart and recipient changes require fresh consent',async()=>{
+test('online decoding defaults on, preserves opt-out and validates explicit re-enabling and recipient changes',async()=>{
   const dir=mkdtempSync(path.join(os.tmpdir(),'momo-consent-'));const file=path.join(dir,'consent.json')
   try{
-    const gate=new MetadataOnlineConsent(file,recipients);assert.equal(gate.enabled(),false)
+    const gate=new MetadataOnlineConsent(file,recipients);assert.equal(gate.enabled(),true)
+    gate.setEnabled(false)
     let calls=0;const resolver=gate.guard({id:'test',resolve:async()=>{calls++;return {metadata:{},provider:'test'}}})
     await assert.rejects(resolver.resolve({assetId:'a',uid:'u',nativeParamToken:'x'}));assert.equal(calls,0)
     assert.throws(()=>gate.setEnabled(true,'old'));assert.equal(gate.enabled(),false)

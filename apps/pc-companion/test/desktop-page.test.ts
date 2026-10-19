@@ -45,7 +45,7 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
   const pages = ['connect', 'settings', 'about'].map((view) => {
     const page = element('[data-page="' + view + '"]'); page.dataset.page = view; return page
   })
-  const projects = ['momo', 'nikkiGallery', 'releases'].map(project => {
+  const projects = ['momo', 'nikkiGallery', 'releases', 'downloads'].map(project => {
     const link = element('project-' + project); link.dataset.project = project; return link
   })
   const events = new Map<string, (event: unknown) => void>()
@@ -80,6 +80,8 @@ test('About owns updates, displays the installed version, and opens only named p
   ui.element('#check-updates').onclick!(); assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {type: 'checkUpdates'})
   let prevented=false; ui.projects[1]!.onclick!({preventDefault(){prevented=true}})
   assert.equal(prevented,true); assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {type: 'openProjectLink', project: 'nikkiGallery'})
+  ui.projects[3]!.onclick!({preventDefault(){}})
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))), {type: 'openProjectLink', project: 'downloads'})
   reply({data: {type: 'packageInfo', version: '1.0.5', hasAndroidInstaller: false}})
   assert.equal(ui.element('#about-update-dot').hidden, true)
   assert.equal(ui.element('#check-updates').textContent, '检查更新')

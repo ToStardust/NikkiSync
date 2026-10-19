@@ -12,6 +12,7 @@ public static class DesktopRelease
     public const string ManifestName = "MomoCamera-Windows-update.json";
     public const string SignatureName = ManifestName + ".sig";
     public const string ReleasesUrl = "https://github.com/ToStardust/NikkiSync/releases";
+    public const string DownloadsUrl = "https://pan.baidu.com/s/5bb_o2A8iJ2MR4f_hRBlPCw";
     public static string Version => typeof(DesktopRelease).Assembly.GetName().Version?.ToString(3) ?? "1.0.1";
     public static long Build => long.Parse(typeof(DesktopRelease).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "DesktopBuild").Value!);
     public static string UpdateRoot => Path.Combine(RuntimePayload.UserDirectory, "updates");

@@ -97,8 +97,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends ComponentActivity implements NsdDiscovery.Listener, ChromePage.Owner {
     private ChromeNavigationHost navigation;
     @Override public ChromeNavigationHost navigationHost(){return navigation;}
-    @Override protected void onStop(){if(navigation!=null)navigation.interrupt();if(homeTabs!=null)homeTabs.interrupt();super.onStop();}
-    @Override protected void onResume(){super.onResume();if(identity!=null&&!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()){connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();finish();}}
+    @Override protected void onStop(){
+        connectionForeground=false;main.removeCallbacks(connectionRecovery);
+        connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();
+        if(navigation!=null)navigation.interrupt();if(homeTabs!=null)homeTabs.interrupt();super.onStop();
+    }
+    @Override protected void onResume(){
+        super.onResume();connectionForeground=true;
+        if(identity==null)return;
+        if(!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()){
+            connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();finish();return;
+        }
+        resumeConnection();
+    }
     private static final int NEARBY_PERMISSION = 401;
     private static final int PAIR_QR_SCAN = 402;
     private static final int TAB_GALLERY = 0;
@@ -106,6 +117,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private static final int TAB_MY = 2;
     private static final String PROJECT_URL = "https://github.com/ToStardust/NikkiSync";
     private static final String UPDATES_URL = PROJECT_URL + "/releases";
+    private static final String DOWNLOADS_URL = "https://pan.baidu.com/s/5bb_o2A8iJ2MR4f_hRBlPCw";
     private static final String NIKKI_GALLERY_URL = "https://github.com/QianQianLuLu1/NikkiGallery";
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -138,6 +150,30 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private boolean connectionProbePending;
     private RealtimeWebSocket realtime;
     private PairedServer pairedServer;
+    private boolean connectionForeground;
+    private boolean libraryLoadedForSession;
+    private boolean libraryLoading;
+    private app.nikkisync.mobile.net.ConnectionFailure connectionFailure;
+    private final Runnable connectionRecovery=new Runnable(){
+        @Override public void run(){
+            if(!connectionForeground||isFinishing()||isDestroyed()||identity==null
+                    ||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(MainActivity.this).accepted())return;
+            if(pairedServer!=null){
+                if(!connectionState.isReachable()){
+                    if(discovery!=null)discovery.restart();
+                    probeConnection(connectionState.session());
+                }else if(!libraryLoadedForSession)loadLibrary("已重新连接 · 正在读取图库…");
+            }
+            main.postDelayed(this,15_000);
+        }
+    };
+
+    private void resumeConnection(){
+        if(discovery!=null&&checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)==PackageManager.PERMISSION_GRANTED)discovery.start();
+        PairedServer saved=serverStore==null?null:serverStore.load();
+        if(saved!=null)connect(saved,"正在连接已配对电脑…");
+        main.removeCallbacks(connectionRecovery);main.postDelayed(connectionRecovery,15_000);
+    }
     private ProfileStatsResponse profileStats;
     private boolean profileStatsLoading;
     private SavedPhotoStore.Record pendingEditedLinkSource;
@@ -214,10 +250,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         updatePairButton();
         requestNearbyAndDiscover();
         handleIntent(getIntent());
-        if (pairedServer != null) connect(pairedServer, "正在连接已配对电脑…");
+        if (pairedServer != null) setStatus("正在连接已配对电脑…");
         else if (identity.wasRecovered()) setStatus("安全密钥已重建 · 请重新配对电脑");
         else setStatus("尚未配对 · 点击右上角配对电脑");
         updateGalleryEmptyState();
+        if(connectionForeground)resumeConnection();
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -229,6 +266,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if (shareCardExportCoordinator != null) shareCardExportCoordinator.cancel();
         if (shareCardPreview != null) shareCardPreview.dismiss();
         connectionState.beginSession();
+        main.removeCallbacks(connectionRecovery);
         if(shareProgress!=null)shareProgress.dismiss();
         if(photoSaveProgress!=null)photoSaveProgress.dismiss();
         shareWorker.shutdownNow();
@@ -697,7 +735,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         authorName.setGravity(Gravity.CENTER);author.addView(authorName);
         LinearLayout.LayoutParams authorLayout=new LinearLayout.LayoutParams(-1,-2);
         authorLayout.bottomMargin=dp(10);aboutContent.addView(author,authorLayout);
-        addMyActionCard(aboutContent,"版本更新",UPDATES_URL,"查看更新",()->openProjectLink(UPDATES_URL));
+        addMyActionCard(aboutContent,"百度网盘 · 下载与订阅更新","打开“大喵相机助手”文件夹，下载最新版 APK 后按系统提示安装。可在网盘中订阅文件夹；App 不会自动检测网盘版本或静默安装。","打开百度网盘",()->openProjectLink(DOWNLOADS_URL));
+        addMyActionCard(aboutContent,"GitHub 备用下载",UPDATES_URL,"查看更新",()->openProjectLink(UPDATES_URL));
         addMyActionCard(aboutContent,"开源项目",PROJECT_URL,"GitHub 项目",()->openProjectLink(PROJECT_URL));
         addMyActionCard(aboutContent,"NikkiGallery · 暖暖照相馆",NIKKI_GALLERY_URL,"NikkiGallery 仓库",()->openProjectLink(NIKKI_GALLERY_URL));
         var page=aboutPage;
@@ -706,7 +745,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private void openProjectLink(String url) {
         try {startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}
-        catch(android.content.ActivityNotFoundException error) {copyText("NikkiSync GitHub",url);}
+        catch(android.content.ActivityNotFoundException error) {copyText("大喵相机助手链接",url);}
     }
 
     private void showProfileStats() {
@@ -1665,6 +1704,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private void connect(PairedServer server, String message) {
         long session = connectionState.beginSession();
+        libraryLoadedForSession=false;libraryLoading=false;connectionFailure=null;
+        android.util.Log.i("NikkiSync-Connection","Starting paired connection session");
         pairedServer = server; profileStats = null; profileStatsLoading = false; connectionProbePending = false;
         setStatus(message); realtimeStop();
         if (activeTab == TAB_MY) refreshMyPage();
@@ -1681,6 +1722,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                         connectionState.realtimeResult(session, connected);
                         renderConnectionStatus();
                         if (!connected) probeConnection(session);
+                        else if(!libraryLoadedForSession)loadLibrary("已重新连接 · 正在读取图库…");
                     });
                 }
             });
@@ -1689,10 +1731,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void loadLibrary(String message) {
+        if(libraryLoading)return;
         long session = connectionState.session();
         NikkiSyncClient current = client;
         if (current == null) { if (pairedServer == null) startPairScanner(); return; }
-        setBusy(true); setStatus(message);
+        libraryLoading=true;setBusy(true); setStatus(message);
         io.execute(() -> {
             try {
                 List<AssetSummary> next = new ArrayList<>(); String cursor = null; long revision = 0; int pages = 0;
@@ -1703,6 +1746,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 long finalRevision = revision;
                 main.post(() -> {
                     if (!connectionState.isCurrent(session)) return;
+                    libraryLoading=false;libraryLoadedForSession=true;connectionFailure=null;
                     serverStore.updateRevision(finalRevision);
                     if (pairedServer != null) pairedServer = pairedServer.withRevision(finalRevision);
                     assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText("已同步 " + next.size() + " 张");
@@ -1712,6 +1756,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             } catch (Exception error) {
                 main.post(() -> {
                     if (!connectionState.isCurrent(session)) return;
+                    libraryLoading=false;connectionFailure=app.nikkisync.mobile.net.ConnectionFailure.from(error);
+                    android.util.Log.w("NikkiSync-Connection","Library unavailable: "+connectionFailure+" / "+error.getClass().getSimpleName());
                     connectionState.httpResult(session, false);
                     setBusy(false); renderConnectionStatus(); updateGalleryEmptyState();
                 });
@@ -1731,7 +1777,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private void renderConnectionStatus() {
         if (connectionState.isRealtimeConnected()) setStatus("已连接 · 实时同步中");
         else if (connectionState.isReachable()) setStatus("已连接电脑 · 实时同步重连中，可手动刷新");
-        else setStatus("电脑暂不可达 · 等待自动重连");
+        else if(connectionFailure!=null&&connectionFailure.requiresPairing())setStatus(connectionFailure.message());
+        else setStatus("电脑暂不可达 · 正在自动重试，请确认同一局域网");
         if (activeTab == TAB_MY) refreshMyPage();
         refreshSettingsPage();
         renderRemoteProfileStats();
@@ -1744,14 +1791,18 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         connectionProbePending = true;
         io.execute(() -> {
             boolean reachable;
-            try { current.assets(null, 1); reachable = true; }
-            catch (Exception error) { reachable = false; }
+            app.nikkisync.mobile.net.ConnectionFailure failure;
+            try { current.assets(null, 1); reachable = true;failure=null; }
+            catch (Exception error) { reachable = false;failure=app.nikkisync.mobile.net.ConnectionFailure.from(error); }
             boolean result = reachable;
+            var finalFailure=failure;
             main.post(() -> {
                 if (!connectionState.isCurrent(session)) return;
                 connectionProbePending = false;
+                connectionFailure=finalFailure;
                 connectionState.httpResult(session, result);
                 renderConnectionStatus();
+                if(result&&!libraryLoadedForSession)loadLibrary("已重新连接 · 正在读取图库…");
             });
         });
     }
@@ -2225,8 +2276,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         main.post(() -> {
             if(isFinishing()||serverStore==null||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted())return;
             PairedServer current = serverStore.load();
+            android.util.Log.i("NikkiSync-Connection","Discovery identity matches saved pairing: "+(current!=null&&current.serverId().equals(serverId)));
             if (current == null || !current.serverId().equals(serverId)) return;
-            if (!current.host().equals(host) || current.port() != port) {
+            if (!current.host().equals(host) || current.port() != port
+                    ||(!connectionState.isReachable()&&!connectionProbePending)) {
                 PairedServer updated = current.withEndpoint(host, port); serverStore.save(updated); pairedServer = updated;
                 connect(updated, "已重新发现电脑 · 正在连接…");
             }

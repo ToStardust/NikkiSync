@@ -7,12 +7,17 @@ import {resolve,join,relative,basename} from 'node:path';
 import {createHash,verify} from 'node:crypto';
 
 const root=resolve(import.meta.dirname,'../..'),repo='ToStardust/NikkiSync';
-const tag='v1.0.5-public-beta.2',version='1.0.5',build=2026101805;
-const bundle=join(root,'release/MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous-Beta2');
-const output=join(root,'out/github-publication-1.0.5');
+const configArgument=process.argv.find(arg=>arg.startsWith('--config='));
+const config=configArgument?JSON.parse(await readFile(resolve(root,configArgument.slice(9)),'utf8')):{};
+const tag=config.tag??'v1.0.5-public-beta.2',version=config.version??'1.0.5',build=config.build??2026101805;
+assert.match(version,/^\d+\.\d+\.\d+$/);assert.match(tag,/^v[\w.-]+$/);assert.ok(Number.isSafeInteger(build));
+const localPath=value=>{const full=resolve(root,value);assert.ok(full.startsWith(root+'\\'),'Release input must stay inside the workspace');return full;};
+const bundle=localPath(config.bundle??'release/MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous-Beta2');
+const archive=config.archive?localPath(config.archive):bundle+'.zip';
+const output=localPath(config.output??'out/github-publication-1.0.5');
 const git=(args,input)=>execFileSync('git',args,{cwd:root,input,encoding:'utf8',stdio:['pipe','pipe','pipe'],env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'}}).trim();
 const sha=async path=>{const hash=createHash('sha256');for await(const bytes of createReadStream(path))hash.update(bytes);return hash.digest('hex');};
-const expected={
+const expected=config.expected??{
   'MomoCamera-PC-1.0.5.exe':'43c922b13ce93e7aa67b6a2362c8816cb0302ecc2e309d80b377ee9d89bf7e8e',
   'MomoCamera-Android-1.0.5.apk':'dfc634d3fe0d0d29b35eec9209977ce2453754a0c0daf6def9988f1af0b82aa3',
   'MomoCamera-PublicBeta-1.0.5-2026-10-18-Anonymous-Beta2.zip':'75614120199aaeb14260dba1b843500e87bad3e9c6668b6169ec2081fb93e721'
@@ -25,8 +30,8 @@ async function audit(){
   const changed=new Set([...git(['diff','--name-only','-z','HEAD']).split('\0'),...git(['ls-files','--others','--exclude-standard','-z']).split('\0')].filter(Boolean));
   const selected=[...changed].filter(path=>
     /^(apps|packages|assets|scripts|integrations|tools)\//.test(path)&&!path.startsWith('tools/store-submission/')
-    ||['.gitignore','README.md','package.json','package-lock.json'].includes(path)
-    ||legal.has(path)||['docs/releases/'+tag+'.md','docs/releases/v1.0.5-public-beta.1.md'].includes(path)
+    ||['.gitignore','README.md','package.json','package-lock.json','.github/workflows/ci.yml'].includes(path)
+    ||legal.has(path)||path.startsWith('docs/handoff/')||path.startsWith('docs/releases/')
     ||/^docs\/remote-bridge\/PUBLIC_BETA[^/]*\.txt$/.test(path)).sort();
   const findings=[];
   for(const path of selected){
@@ -51,19 +56,19 @@ async function privacy(commit,reportPath){
   const report=JSON.parse(await readFile(resolve(root,reportPath),'utf8'));
   assert.ok(report.actualSingleExe&&report.embeddedApkMatches&&report.isolatedDashboardBoot);
   assert.equal(report.version,version);assert.equal(report.build,build);
-  assert.equal(report.exeSha256,expected['MomoCamera-PC-1.0.5.exe']);
-  assert.equal(report.apkSha256,expected['MomoCamera-Android-1.0.5.apk']);
+  assert.equal(report.exeSha256,expected[`MomoCamera-PC-${version}.exe`]);
+  assert.equal(report.apkSha256,expected[`MomoCamera-Android-${version}.apk`]);
   assert.ok(resolve(report.runtimeDirectory).startsWith(join(root,'out')+'\\'));
   execFileSync('python',[join(root,'tools/releases/audit-private-identities.py'),
     '--identity-file',join(output,'private-identity.json'),'--revision',commit,
-    '--report',join(output,'final-privacy-audit.json'),bundle,bundle+'.zip',report.runtimeDirectory],{cwd:root,stdio:'inherit'});
+    '--report',join(output,'final-privacy-audit.json'),bundle,archive,report.runtimeDirectory,...(config.extraAssets??[]).map(localPath)],{cwd:root,stdio:'inherit'});
 }
 
 async function assets(){
-  const feed=join(bundle,'维护者-更新发布文件');
-  const files=[join(bundle,'MomoCamera-PC-1.0.5.exe'),join(bundle,'MomoCamera-Android-1.0.5.apk'),bundle+'.zip',
-    join(bundle,'SHA256SUMS.txt'),join(bundle,'README.txt'),join(bundle,'RELEASE_NOTES.txt'),
-    join(feed,'MomoCamera-Windows-update.json'),join(feed,'MomoCamera-Windows-update.json.sig')];
+  const feed=config.feed?localPath(config.feed):join(bundle,'维护者-更新发布文件');
+  const files=[join(bundle,`MomoCamera-PC-${version}.exe`),join(bundle,`MomoCamera-Android-${version}.apk`),archive,
+    join(bundle,'SHA256SUMS.txt'),join(bundle,config.readme??'README.txt'),join(bundle,config.notes??'RELEASE_NOTES.txt'),
+    join(feed,'MomoCamera-Windows-update.json'),join(feed,'MomoCamera-Windows-update.json.sig'),...(config.extraAssets??[]).map(localPath)];
   const manifestBytes=await readFile(files[6]),signature=await readFile(files[7]);
   assert.ok(verify('RSA-SHA256',manifestBytes,await readFile(join(root,'apps/windows-shell/Assets/update-public-key.pem')),signature));
   const manifest=JSON.parse(manifestBytes);assert.equal(manifest.Version,version);assert.equal(manifest.Build,build);
@@ -105,7 +110,7 @@ async function main(){
   const localAssets=await assets(),body=await readFile(join(root,'docs/releases/'+tag+'.md'),'utf8');
   const matches=(await github(token,`/repos/${repo}/releases?per_page=100`)).filter(item=>item.tag_name===tag);
   assert.ok(matches.length<=1,'Ambiguous existing release');let release=matches[0];
-  if(!release)release=await github(token,`/repos/${repo}/releases`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag_name:tag,target_commitish:commit,name:'大喵相机助手 1.0.5 公测版',body,draft:true,prerelease:true,make_latest:'false'})});
+  if(!release)release=await github(token,`/repos/${repo}/releases`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag_name:tag,target_commitish:commit,name:`大喵相机助手 ${version} 公测版`,body,draft:true,prerelease:true,make_latest:'false'})});
   await mkdir(output,{recursive:true});await writeFile(join(output,'release-state.json'),JSON.stringify({releaseId:release.id,tag,commit,url:release.html_url},null,2));
   for(const item of localAssets){
     const existing=(await github(token,release.assets_url)).find(asset=>asset.name===item.name);

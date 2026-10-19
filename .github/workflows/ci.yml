@@ -26,6 +26,11 @@ jobs:
       - run: npm ci
       - run: npm run mobile:validate
       - run: npm test
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+      - run: bun test apps/pc-companion/test/local-sync-server.test.ts --test-name-pattern 'production TLS'
+      - run: bun test tools/windows-performance/sqlite-cache.test.mjs
 
   android:
     runs-on: ubuntu-latest

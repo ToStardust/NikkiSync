@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -72,10 +73,12 @@ public final class RealtimeWebSocket {
     private void connectAndRead() throws Exception {
         SSLSocket current = (SSLSocket) http.tls().socketFactory().createSocket();
         socket = current;
+        String phase="tcp-connect";
         try (current) {
         if (!running) return;
         current.connect(new InetSocketAddress(server.host(), server.port()), 5_000);
         current.setSoTimeout(5_000);
+        phase="tls-handshake";
         current.startHandshake();
         byte[] keyBytes = new byte[16]; random.nextBytes(keyBytes);
         String key = Base64.getEncoder().encodeToString(keyBytes);
@@ -91,18 +94,24 @@ public final class RealtimeWebSocket {
         for (Map.Entry<String, String> header : auth.entrySet()) request.append(header.getKey()).append(": ").append(header.getValue()).append("\r\n");
         request.append("\r\n");
         OutputStream output = current.getOutputStream();
+        phase="websocket-upgrade";
         output.write(request.toString().getBytes(StandardCharsets.US_ASCII)); output.flush();
         BufferedInputStream input = new BufferedInputStream(current.getInputStream());
         String response = readHttpHead(input);
         validateUpgrade(response, key);
-        current.setSoTimeout(0);
+        // Detect sockets stranded by a Wi-Fi change without polling the photo API.
+        current.setSoTimeout(15_000);
         if (!running) return;
         android.util.Log.i("NikkiSync-Realtime", "Realtime connected");
         listener.onConnectionState(true);
+        phase="frame-read";
         while (running && !current.isClosed()) {
-            String text = readTextFrame(input, output);
+            String text = readTextFrame(readFirstByteWithHeartbeat(input,output),input, output);
             if (text != null) listener.onText(text);
         }
+        } catch(Exception error) {
+            if(running)android.util.Log.w("NikkiSync-Realtime","Connection phase "+phase+": "+error.getClass().getSimpleName());
+            throw error;
         } finally { if (socket == current) socket = null; }
     }
 
@@ -135,6 +144,21 @@ public final class RealtimeWebSocket {
 
     static String readTextFrame(InputStream input, OutputStream output) throws Exception {
         int first = input.read(); if (first < 0) throw new EOFException();
+        return readTextFrame(first,input,output);
+    }
+
+    static int readFirstByteWithHeartbeat(InputStream input,OutputStream output) throws Exception {
+        try { return input.read(); }
+        catch(SocketTimeoutException idle) {
+            byte[] ping=new byte[6];ping[0]=(byte)0x89;ping[1]=(byte)0x80;
+            byte[] mask=new byte[4];new SecureRandom().nextBytes(mask);System.arraycopy(mask,0,ping,2,4);
+            output.write(ping);output.flush();
+            return input.read(); // Second timeout reconnects; never resume in the middle of a frame.
+        }
+    }
+
+    private static String readTextFrame(int first,InputStream input,OutputStream output) throws Exception {
+        if(first<0)throw new EOFException();
         int second = input.read(); if (second < 0) throw new EOFException();
         int opcode = first & 0x0f;
         long length = second & 0x7f;

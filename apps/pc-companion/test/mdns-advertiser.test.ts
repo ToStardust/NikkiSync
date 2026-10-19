@@ -5,6 +5,28 @@ import os from 'node:os'
 import { EventEmitter } from 'node:events'
 import { MdnsAdvertiser } from '../src/server/MdnsAdvertiser.js'
 
+test('mDNS refreshes its socket and address after hotspot changes to Wi-Fi', t => {
+  class Socket extends EventEmitter {
+    packets: Buffer[]=[]; closed=false
+    bind(_port:number,callback:()=>void){callback()}
+    setMulticastInterface(){} addMembership(){} setMulticastTTL(){}
+    send(packet:Buffer){this.packets.push(packet)} close(){this.closed=true}
+  }
+  const sockets:Socket[]=[];let address='192.168.137.1';let tick=()=>{}
+  t.mock.method(dgram,'createSocket',()=>{const socket=new Socket();sockets.push(socket);return socket})
+  t.mock.method(os,'networkInterfaces',()=>({fixture:[{family:'IPv4',internal:false,address}]}))
+  t.mock.method(globalThis,'setInterval',(callback:()=>void)=>{tick=callback;return {} as NodeJS.Timeout})
+  t.mock.method(globalThis,'clearInterval',()=>{})
+  const advertiser=new MdnsAdvertiser()
+  try{
+    advertiser.start({serverId:'same-paired-server',name:'Momo',port:28080})
+    assert.deepEqual([...sockets[0]!.packets[0]!.subarray(-4)],[192,168,137,1])
+    address='192.168.31.130';tick()
+    assert.equal(sockets[0]!.closed,true);assert.equal(sockets.length,2)
+    assert.deepEqual([...sockets[1]!.packets[0]!.subarray(-4)],[192,168,31,130])
+  }finally{advertiser.stop()}
+})
+
 test('mDNS ignores its own announcements and other responses, answers only valid queries', t => {
   class Socket extends EventEmitter {
     packets: Buffer[] = []

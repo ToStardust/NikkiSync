@@ -32,7 +32,15 @@ public sealed class UpdateWindow : Window
         stack.Children.Add(new TextBlock{Text=$"当前版本 {DesktopRelease.Version} · 公测版",Margin=new Thickness(0,8,0,0)});
         stack.Children.Add(_status);stack.Children.Add(new ScrollViewer{Content=_notes,MaxHeight=185,VerticalScrollBarVisibility=ScrollBarVisibility.Auto});
         stack.Children.Add(_progress);stack.Children.Add(_action);
-        var expander=new Expander{Header="国内更新源（可选）",Margin=new Thickness(0,20,0,0)};
+        var downloads=new Button{Content="打开百度网盘 · 下载 / 订阅更新",Padding=new Thickness(14,9,14,9),Margin=new Thickness(0,12,0,0)};
+        downloads.Click+=(_,_)=>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(DesktopRelease.DownloadsUrl){UseShellExecute=true}); }
+            catch { System.Windows.Clipboard.SetText(DesktopRelease.DownloadsUrl);_status.Text="无法打开浏览器，已复制网盘链接。"; }
+        };
+        stack.Children.Add(downloads);
+        stack.Children.Add(new TextBlock{Text="百度网盘提供电脑和安卓安装包，可在网盘中订阅文件夹。网盘更新需自行下载；“检查更新”使用签名更新源，默认为 GitHub。",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0),FontSize=12});
+        var expander=new Expander{Header="高级设置 · 自定义签名更新源",Margin=new Thickness(0,20,0,0)};
         var advanced=new StackPanel();advanced.Children.Add(new TextBlock{Text="填写开发者提供的 HTTPS 更新清单地址；留空使用 GitHub。普通网盘分享链接不能用于自动更新。",TextWrapping=TextWrapping.Wrap});
         _source.Text=ReadSource()??"";advanced.Children.Add(_source);
         var save=new Button{Content="保存并检查",HorizontalAlignment=System.Windows.HorizontalAlignment.Left,Margin=new Thickness(0,8,0,0),Padding=new Thickness(10,5,10,5)};
@@ -49,7 +57,7 @@ public sealed class UpdateWindow : Window
         Content=new ScrollViewer{Content=stack,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         _action.Click+=async(_,_)=>{if(_update is null)await CheckAsync();else await InstallAsync();};
         Closed+=(_,_)=>_cancel.Cancel();
-        if(available is not null)ShowAvailable(available);else _status.Text="点击检查，获取最新公测版本。";
+        if(available is not null)ShowAvailable(available);else _status.Text="可从百度网盘下载更新，或检查 GitHub 一键更新。";
     }
     public static string? ReadSource()
     {
@@ -70,11 +78,11 @@ public sealed class UpdateWindow : Window
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(_cancel.Token);timeout.CancelAfter(TimeSpan.FromSeconds(35));
             using var http=new UpdateHttp();var update=await new DesktopUpdateSource(http,DesktopRelease.CreateVerifier(),DesktopRelease.Build).CheckAsync(ReadSource(),timeout.Token);
-            if(update is null){_update=null;_notes.Text="";_status.Text="当前已是最新可用版本。";_action.Content="重新检查";}
+            if(update is null){_update=null;_notes.Text="";_status.Text="签名更新源暂无更高版本。百度网盘中的版本请打开文件夹查看。";_action.Content="重新检查";}
             else ShowAvailable(update);
         }
-        catch(OperationCanceledException){if(!_cancel.IsCancellationRequested)_status.Text="检查超时，请稍后重试，或填写开发者提供的国内更新源。";}
-        catch(Exception e){_status.Text=e is InvalidDataException?"更新信息未通过安全校验，请联系开发者。":"暂时无法连接更新服务，请重试或设置国内更新源。";}
+        catch(OperationCanceledException){if(!_cancel.IsCancellationRequested)_status.Text="检查超时，可点击“打开百度网盘”下载新版。";}
+        catch(Exception e){_status.Text=e is InvalidDataException?"更新信息未通过安全校验，请联系开发者。":"暂时无法连接签名更新服务，可点击“打开百度网盘”下载新版。";}
         finally{_busy=false;_action.IsEnabled=true;_source.IsEnabled=true;}
     }
     private async Task InstallAsync()

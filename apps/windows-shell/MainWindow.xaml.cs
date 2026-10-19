@@ -348,7 +348,7 @@ public partial class MainWindow : Window
                 var links = value.GetProperty("repositories").EnumerateArray().Select(link => link.GetString()).ToHashSet();
                 var ok = value.GetProperty("title").GetString() == "关于" && value.GetProperty("visible").GetBoolean()
                     && value.GetProperty("updateEnabled").GetBoolean()
-                    && new[] { "momo", "nikkiGallery", "releases" }.All(name => links.Contains(DesktopProjectLinks.Resolve(name)));
+                    && new[] { "momo", "nikkiGallery", "releases", "downloads" }.All(name => links.Contains(DesktopProjectLinks.Resolve(name)));
                 await Task.Delay(150);
                 using var image = File.Create(Path.Combine(_verificationDirectory, "about-screen.png"));
                 await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, image);

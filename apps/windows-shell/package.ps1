@@ -1,4 +1,4 @@
-param([switch]$VerifyOnly, [string]$OutputDirectory)
+param([switch]$VerifyOnly, [string]$OutputDirectory, [string]$BunExecutable='bun')
 
 $ErrorActionPreference = 'Stop'
 
@@ -31,13 +31,20 @@ function Assert-ReleaseLayout {
 }
 
 if ($VerifyOnly) { Assert-ReleaseLayout; Write-Output 'NikkiSync Windows release layout verified.'; exit 0 }
+$pinnedBun = Join-Path $workspace 'out\bun-baseline-1.4.1\bun-windows-x64-baseline\bun.exe'
+if ($BunExecutable -eq 'bun' -and (Test-Path -LiteralPath $pinnedBun)) { $BunExecutable = $pinnedBun }
+if ($BunExecutable -ne 'bun') { $BunExecutable = (Resolve-Path -LiteralPath $BunExecutable).Path }
+$bunVersion = (& $BunExecutable --version).Trim()
+if ($LASTEXITCODE -ne 0 -or [version]($bunVersion.Split('-')[0]) -lt [version]'1.4.1') { throw 'Bun 1.4.1 or newer is required for working HTTPS realtime upgrades. Use the baseline Windows runtime.' }
 
 New-Item -ItemType Directory -Force $release | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $runtime 'migrations') | Out-Null
 & (Join-Path $workspace 'scripts\build-service-icon.ps1')
 Push-Location (Join-Path $workspace 'apps\pc-companion')
 try {
-  bun build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline --windows-hide-console --windows-icon $serviceIcon --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile $service src/windows-app.ts
+  $compilerRuntime = @()
+  if ($BunExecutable -ne 'bun') { $compilerRuntime = @("--compile-executable-path=$BunExecutable") }
+  & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline @compilerRuntime --windows-hide-console --windows-icon $serviceIcon --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile $service src/windows-app.ts
   if ($LASTEXITCODE -ne 0) { throw 'Bun service compilation failed.' }
 } finally { Pop-Location }
 

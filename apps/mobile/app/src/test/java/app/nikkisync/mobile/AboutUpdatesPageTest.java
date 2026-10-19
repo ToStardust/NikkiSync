@@ -46,6 +46,10 @@ public class AboutUpdatesPageTest {
         try {
             Button about = button((View) field(activity, "settingsContent"), "关于&更新");
             assertNotNull(about); about.performClick();
+            button((View) field(activity, "aboutContent"), "打开百度网盘").performClick();
+            Intent download = Shadows.shadowOf(activity).getNextStartedActivity();
+            assertEquals(Intent.ACTION_VIEW, download.getAction());
+            assertEquals("https://pan.baidu.com/s/5bb_o2A8iJ2MR4f_hRBlPCw", download.getDataString());
             button((View) field(activity, "aboutContent"), "查看更新").performClick();
             Intent intent = Shadows.shadowOf(activity).getNextStartedActivity();
             assertNotNull(intent);

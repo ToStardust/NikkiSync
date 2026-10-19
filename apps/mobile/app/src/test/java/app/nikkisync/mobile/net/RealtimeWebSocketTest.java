@@ -7,6 +7,17 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class RealtimeWebSocketTest {
+    @Test public void idleConnectionSendsMaskedPingAndAcceptsTheNextFrame()throws Exception{
+        var output=new ByteArrayOutputStream();
+        var input=new java.io.InputStream(){int calls;public int read()throws java.io.IOException{if(calls++==0)throw new java.net.SocketTimeoutException();return 0x8a;}};
+        assertEquals(0x8a,RealtimeWebSocket.readFirstByteWithHeartbeat(input,output));
+        assertEquals(6,output.size());assertEquals(0x89,output.toByteArray()[0]&255);assertEquals(0x80,output.toByteArray()[1]&255);
+    }
+    @Test public void unresponsiveIdleConnectionExitsForReconnectInsteadOfWaitingForever(){
+        var output=new ByteArrayOutputStream();
+        var input=new java.io.InputStream(){public int read()throws java.io.IOException{throw new java.net.SocketTimeoutException();}};
+        assertThrows(java.net.SocketTimeoutException.class,()->RealtimeWebSocket.readFirstByteWithHeartbeat(input,output));assertEquals(6,output.size());
+    }
     @Test public void pingReceivesMaskedPongWithTheSamePayload() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         assertNull(RealtimeWebSocket.readTextFrame(new ByteArrayInputStream(new byte[]{(byte) 0x89, 2, 7, 9}), output));

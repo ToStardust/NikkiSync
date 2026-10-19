@@ -34,7 +34,7 @@ export const desktopPageScript = `
   const installer=document.querySelector('#android-installer'),installerNote=document.querySelector('#android-installer-note');
   const updates=document.querySelector('#check-updates'),updateDot=document.querySelector('#about-update-dot');
   updates.disabled=!bridge;
-  if(!bridge)document.querySelector('#desktop-update-note').textContent='请在 Windows 应用内检查更新，或前往发布页面下载。';
+  if(!bridge)document.querySelector('#desktop-update-note').textContent='打开百度网盘下载新版，或在 Windows 应用内检查一键更新。';
   updates.onclick=()=>bridge?.postMessage({type:'checkUpdates'});
   for(const link of document.querySelectorAll('[data-project]'))link.onclick=event=>{
     if(bridge){event.preventDefault();bridge.postMessage({type:'openProjectLink',project:link.dataset.project});}
@@ -50,7 +50,7 @@ export const desktopPageScript = `
       const available=typeof event.data.availableUpdateVersion==='string'&&event.data.availableUpdateVersion.length>0;
       updateDot.hidden=!available;updates.textContent=available?'更新至 '+event.data.availableUpdateVersion:'检查更新';
       if(available)document.querySelector('#desktop-update-note').textContent='发现新版本，点击查看更新内容。';
-      else if(bridge)document.querySelector('#desktop-update-note').textContent='检查新版本，更新时保留已有数据。';
+      else if(bridge)document.querySelector('#desktop-update-note').textContent='网盘下载新版，或检查签名更新源进行一键更新。';
     }
   });
   bridge?.postMessage({type:'getAutostart'});
