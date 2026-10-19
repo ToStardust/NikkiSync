@@ -71,7 +71,8 @@ export function exportJpeg(input,metadata,{exif=true,rotation=0,contentIdentifie
  if(exif){
   const normalized=exportMetadata(metadata),camera=normalized.camera;
   ascii(state.root.entries,0x10f,'MomoCamera');
-  ascii(state.root.entries,0x110,'MomoCamera,Infinity Nikki');
+  ascii(state.root.entries,0x110,'MomoCamera');
+  ascii(state.exif.entries,0xa434,'Infinity Nikki');
   state.root.entries.delete(0x9c9c);state.exif.entries.delete(0x9286);
   state.exif.entries.delete(0xa433);
   if(normalized.versionName)ascii(state.exif.entries,0xa433,normalized.versionName);

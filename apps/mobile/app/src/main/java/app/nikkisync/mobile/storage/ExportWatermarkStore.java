@@ -29,7 +29,7 @@ public final class ExportWatermarkStore {
         return new Branding(title.isEmpty()?camera(name):title,footer.isEmpty()?(uid.isEmpty()?"":"UID："+uid+" ")+"MomoCamera":footer);
     }
     public String exifCameraName(String json){
-        return "MomoCamera,Infinity Nikki";
+        return "MomoCamera";
     }
     private String uid(String json){
         String uid=profiles.defaultUid();if(!uid.isEmpty())return uid;

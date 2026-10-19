@@ -66,7 +66,7 @@ test('ordinary JPEG export is authenticated, source-verified, non-destructive an
     assert.equal((await fetch(base+route)).status,401);
     const result=await get(route);assert.equal(result.status,200);const output=Buffer.from(await result.arrayBuffer());
     assert.equal(result.headers.get('X-NikkiSync-SHA256'),sha256(output));assert.notEqual(sha256(output),sha256(media));assert.equal(result.headers.get('X-NikkiSync-Rotation'),'90');assert.equal(result.headers.get('X-NikkiSync-Exif'),'1');
-    assert.ok(output.includes(Buffer.from('MomoCamera,Infinity Nikki')));assert.ok(output.includes(Buffer.from('Bloom Beneath Bright Skies')));assert.equal(output.includes(Buffer.from('PRIVATE')),false);assert.deepEqual(await readFile(mediaPath),media);
+    assert.ok(output.includes(Buffer.from('MomoCamera')));assert.ok(output.includes(Buffer.from('Bloom Beneath Bright Skies')));assert.equal(output.includes(Buffer.from('PRIVATE')),false);assert.deepEqual(await readFile(mediaPath),media);
     const personalized=await get(route+'&cameraName='+encodeURIComponent('晚星的大喵相机'));
     assert.equal(personalized.status,200);assert.ok(!Buffer.from(await personalized.arrayBuffer()).includes(Buffer.from('晚星的大喵相机','utf8')));
     for(const suffix of ['&cameraName=','&cameraName=x&cameraName=y','&cameraName=x%00y','&cameraName='+encodeURIComponent('暖'.repeat(100))])assert.equal((await get(route+suffix)).status,400);

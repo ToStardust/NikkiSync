@@ -75,6 +75,7 @@ async function assets(){
   assert.equal(manifest.DownloadUrl,`https://github.com/${repo}/releases/download/${tag}/MomoCamera-PC-${version}.exe`);
   const records=[];
   for(const path of files){const name=basename(path),hash=await sha(path),size=(await stat(path)).size;
+    assert.match(name,/^[A-Za-z0-9_.-]+$/,'Use ASCII GitHub asset names to avoid server-side renaming and collisions');
     if(expected[name])assert.equal(hash,expected[name],name+' changed since delivery verification');records.push({name,path,size,sha256:hash});}
   assert.equal(manifest.Sha256.toLowerCase(),records[0].sha256);assert.equal(manifest.Size,records[0].size);
   return records;
@@ -110,6 +111,14 @@ async function main(){
   const localAssets=await assets(),body=await readFile(join(root,'docs/releases/'+tag+'.md'),'utf8');
   const matches=(await github(token,`/repos/${repo}/releases?per_page=100`)).filter(item=>item.tag_name===tag);
   assert.ok(matches.length<=1,'Ambiguous existing release');let release=matches[0];
+  let saved;try{saved=JSON.parse(await readFile(join(output,'release-state.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  if(saved){
+    assert.equal(saved.tag,tag);assert.equal(saved.commit,commit);assert.ok(Number.isSafeInteger(saved.releaseId));
+    const recorded=await github(token,`/repos/${repo}/releases/${saved.releaseId}`);
+    assert.equal(recorded.tag_name,tag,'Recorded draft tag changed; inspect instead of creating a duplicate');
+    if(release)assert.equal(release.id,recorded.id,'Recorded release differs from tag lookup');
+    release=recorded;
+  }
   if(!release)release=await github(token,`/repos/${repo}/releases`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tag_name:tag,target_commitish:commit,name:`大喵相机助手 ${version} 公测版`,body,draft:true,prerelease:true,make_latest:'false'})});
   await mkdir(output,{recursive:true});await writeFile(join(output,'release-state.json'),JSON.stringify({releaseId:release.id,tag,commit,url:release.html_url},null,2));
   for(const item of localAssets){
@@ -127,7 +136,7 @@ async function main(){
   if(release.draft)release=await github(token,`/repos/${repo}/releases/${release.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:false,prerelease:true,make_latest:'false'})});
   const publicRelease=await fetch(`https://api.github.com/repos/${repo}/releases/tags/${tag}`,{headers:{'User-Agent':'MomoCamera-Release'},signal:AbortSignal.timeout(30000)});
   assert.ok(publicRelease.ok,'Public release not yet visible');const published=await publicRelease.json();assert.equal(published.draft,false);
-  const report={repository:repo,tag,commit,url:published.html_url,prerelease:published.prerelease,assets:uploaded.map(({name,size,digest,browser_download_url})=>({name,size,digest,url:browser_download_url}))};
+  const report={repository:repo,tag,commit,url:published.html_url,prerelease:published.prerelease,assets:published.assets.map(({name,size,digest,browser_download_url})=>({name,size,digest,url:browser_download_url}))};
   await writeFile(join(output,'published.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;});

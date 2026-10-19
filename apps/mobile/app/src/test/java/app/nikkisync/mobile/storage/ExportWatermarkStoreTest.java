@@ -16,7 +16,7 @@ public class ExportWatermarkStoreTest {
         assertTrue(settings.shareEnabled());assertTrue(settings.exifEnabled());
         assertEquals("晚星的大喵相机",settings.shareBranding(null).title());
         assertEquals("UID：12345 MomoCamera",settings.shareBranding(null).footer());
-        assertEquals("MomoCamera,Infinity Nikki",settings.exifCameraName(null));
+        assertEquals("MomoCamera",settings.exifCameraName(null));
         profiles.setManualNickname("12345","月亮");
         assertEquals("月亮的大喵相机",new ExportWatermarkStore(context).shareBranding(null).title());
         assertEquals("12345",new StylistProfileStore(context).defaultUid());
@@ -26,11 +26,11 @@ public class ExportWatermarkStoreTest {
         profiles.setManualNickname("12345","晚星");profiles.setDefaultUid("12345");
         var settings=new ExportWatermarkStore(context);
         settings.setShareText("私人标题","UID 私人文字");settings.setExifText("自定义相机");
-        assertEquals("私人标题",settings.shareBranding(null).title());assertEquals("MomoCamera,Infinity Nikki",settings.exifCameraName(null));
+        assertEquals("私人标题",settings.shareBranding(null).title());assertEquals("MomoCamera",settings.exifCameraName(null));
         settings.setShareEnabled(false);
         assertEquals("大喵相机",settings.shareBranding(null).title());assertEquals("MomoCamera",settings.shareBranding(null).footer());
-        assertEquals("MomoCamera,Infinity Nikki",settings.exifCameraName(null));
-        settings.setExifEnabled(false);assertEquals("MomoCamera,Infinity Nikki",settings.exifCameraName(null));
+        assertEquals("MomoCamera",settings.exifCameraName(null));
+        settings.setExifEnabled(false);assertEquals("MomoCamera",settings.exifCameraName(null));
         settings.setShareEnabled(true);assertEquals("私人标题",settings.shareBranding(null).title());
         settings.setShareText("","");assertEquals("晚星的大喵相机",settings.shareBranding(null).title());
     }

@@ -8,7 +8,7 @@ import org.json.*;
 
 /** ASCII-safe, privacy-filtered game parameters. Shares its version catalog with the PC exporter. */
 public final class PhotoExif {
- public static final String CAMERA="MomoCamera,Infinity Nikki";
+ public static final String CAMERA="MomoCamera";
  private static volatile JSONArray releases;
  private PhotoExif(){}
  public static String versionName(Context context,String version)throws Exception{
@@ -59,6 +59,7 @@ public final class PhotoExif {
  public static void apply(ExifInterface exif,JSONObject metadata)throws Exception{
   exif.setAttribute(ExifInterface.TAG_MAKE,"MomoCamera");exif.setAttribute(ExifInterface.TAG_MODEL,CAMERA);
   exif.setAttribute(ExifInterface.TAG_SOFTWARE,"MomoCamera");
+  exif.setAttribute(ExifInterface.TAG_LENS_MODEL,"Infinity Nikki");
   exif.setAttribute(ExifInterface.TAG_LENS_MAKE,metadata.optString("versionName","").isEmpty()?null:metadata.getString("versionName"));
   exif.setAttribute(ExifInterface.TAG_USER_COMMENT,ascii(metadata.toString()));
   exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"Infinity Nikki virtual photography; game parameters: "+ascii(metadata.toString()));

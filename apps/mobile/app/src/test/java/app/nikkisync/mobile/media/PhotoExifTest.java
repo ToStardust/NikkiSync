@@ -21,7 +21,8 @@ public class PhotoExifTest {
     var pixels=android.graphics.BitmapFactory.decodeFile(file.toString());
     PhotoExif.apply(new androidx.exifinterface.media.ExifInterface(file),metadata);
     var after=new androidx.exifinterface.media.ExifInterface(file);
-    assertEquals(PhotoExif.CAMERA,after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
+    assertEquals("MomoCamera",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
+    assertEquals("Infinity Nikki",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL));
     assertEquals("Bloom Beneath Bright Skies",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MAKE));
     assertEquals(6,after.getAttributeInt(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,1));
     var read=new org.json.JSONObject(after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT));

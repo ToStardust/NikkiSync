@@ -13,8 +13,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 31
-        versionName = "1.0.7"
+        versionCode = 32
+        versionName = "1.0.8"
         buildConfigField("boolean", "STORE_SUBMISSION", providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") })
         buildConfigField("String", "APP_FILING_NUMBER", "\"${providers.gradleProperty("momoFilingNumber").orElse("").get().replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
