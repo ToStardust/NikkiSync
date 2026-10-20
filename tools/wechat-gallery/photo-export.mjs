@@ -70,9 +70,9 @@ export function exportJpeg(input,metadata,{exif=true,rotation=0,contentIdentifie
  let orientation=state.orientation;const clockwise={1:6,6:3,3:8,8:1,2:7,7:4,4:5,5:2};for(let n=0;n<rotation/90;n++)orientation=clockwise[orientation];short(state.root.entries,0x112,orientation);
  if(exif){
   const normalized=exportMetadata(metadata),camera=normalized.camera;
-  ascii(state.root.entries,0x10f,'MomoCamera');
+  state.root.entries.delete(0x10f); // Do not duplicate Model in Gallery's combined Make/Model label.
   ascii(state.root.entries,0x110,'MomoCamera');
-  ascii(state.exif.entries,0xa434,'Infinity Nikki');
+  ascii(state.exif.entries,0xa434,'InfinityNikki');
   state.root.entries.delete(0x9c9c);state.exif.entries.delete(0x9286);
   state.exif.entries.delete(0xa433);
   if(normalized.versionName)ascii(state.exif.entries,0xa433,normalized.versionName);

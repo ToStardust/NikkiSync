@@ -8,13 +8,19 @@ val releaseSigningReady = !releaseStore.isNullOrBlank() && !releasePassword.isNu
 android {
     namespace = "app.nikkisync.mobile"
     compileSdk = 35
+    ndkVersion = "28.1.13356709"
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+    }
 
     defaultConfig {
         applicationId = "app.nikkisync.mobile"
         minSdk = 33
         targetSdk = 35
-        versionCode = 32
-        versionName = "1.0.8"
+        versionCode = 34
+        versionName = "1.0.10"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
+        externalNativeBuild { cmake { targets += "momo_jpeg" } }
         buildConfigField("boolean", "STORE_SUBMISSION", providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") })
         buildConfigField("String", "APP_FILING_NUMBER", "\"${providers.gradleProperty("momoFilingNumber").orElse("").get().replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

@@ -16,13 +16,16 @@ public class PhotoExifTest {
    try{
     try(var out=new java.io.FileOutputStream(file)){assertTrue(bitmap.compress(format,100,out));}
     var exif=new androidx.exifinterface.media.ExifInterface(file);
-    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,"6");exif.saveAttributes();
+    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,"6");
+    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE,"MomoCamera");
+    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL,"MomoCamera");exif.saveAttributes();
     byte[] before=java.nio.file.Files.readAllBytes(file.toPath());
     var pixels=android.graphics.BitmapFactory.decodeFile(file.toString());
     PhotoExif.apply(new androidx.exifinterface.media.ExifInterface(file),metadata);
     var after=new androidx.exifinterface.media.ExifInterface(file);
     assertEquals("MomoCamera",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL));
-    assertEquals("Infinity Nikki",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL));
+    assertNull(after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE));
+    assertEquals("InfinityNikki",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL));
     assertEquals("Bloom Beneath Bright Skies",after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MAKE));
     assertEquals(6,after.getAttributeInt(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,1));
     var read=new org.json.JSONObject(after.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_USER_COMMENT));

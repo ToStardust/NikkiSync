@@ -30,7 +30,7 @@ async function audit(){
   const changed=new Set([...git(['diff','--name-only','-z','HEAD']).split('\0'),...git(['ls-files','--others','--exclude-standard','-z']).split('\0')].filter(Boolean));
   const selected=[...changed].filter(path=>
     /^(apps|packages|assets|scripts|integrations|tools)\//.test(path)&&!path.startsWith('tools/store-submission/')
-    ||['.gitignore','README.md','package.json','package-lock.json','.github/workflows/ci.yml'].includes(path)
+    ||['.gitignore','README.md','THIRD_PARTY_NOTICES.md','package.json','package-lock.json','.github/workflows/ci.yml'].includes(path)
     ||legal.has(path)||path.startsWith('docs/handoff/')||path.startsWith('docs/releases/')
     ||/^docs\/remote-bridge\/PUBLIC_BETA[^/]*\.txt$/.test(path)).sort();
   const findings=[];

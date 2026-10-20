@@ -7,7 +7,7 @@ test('fixed ASCII camera and photo-version LensMake retain parameters without ni
  const out=exportJpeg(input,{identity:{gameVersion:'2.9',uid:'PRIVATE'},camera:{focalLength:35},dressing:{clothes:[{name:'裙子'}]}},{cameraName:'昵称的大喵相机'});
  const tags=tagsOf(out);
  assert.equal(tags[0x110],'MomoCamera');
- assert.equal(tags[0xa434],'Infinity Nikki');
+ assert.equal(tags[0xa434],'InfinityNikki');
  assert.equal(tags[0xa433],'Bloom Beneath Bright Skies');
  assert.ok(!out.includes(Buffer.from('昵称')));
  assert.deepEqual(out.subarray(out.indexOf(Buffer.from([255,218]))),input.subarray(input.indexOf(Buffer.from([255,218]))));

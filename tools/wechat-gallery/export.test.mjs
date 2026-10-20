@@ -17,7 +17,7 @@ test('JPEG export embeds native camera tags without recompressing or modifying t
  const {exportJpeg}=await load(),source=fixtureJpeg(),before=Buffer.from(source);
  const output=exportJpeg(source,{camera:{focalLength:35.1,apertureSection:1.2,exposure:0.16},identity:{uid:'SECRET'},raw:{nativeParamToken:'SECRET'}},{exif:true,rotation:0});
  assert.deepEqual(source,before);assert.notDeepEqual(output,source);assert.ok(output.subarray(output.indexOf(Buffer.from([255,218]))).equals(source.subarray(source.indexOf(Buffer.from([255,218])))));
- const tags=tagsOf(output);assert.equal(tags[0x10f],'MomoCamera');assert.equal(tags[0x110],'MomoCamera');assert.equal(tags[0x829d],1.2);assert.equal(tags[0x920a],35.1);
+ const tags=tagsOf(output);assert.equal(tags[0x10f],undefined);assert.equal(tags[0x110],'MomoCamera');assert.equal(tags[0xa434],'InfinityNikki');assert.equal(tags[0x829d],1.2);assert.equal(tags[0x920a],35.1);
  assert.equal(tags[0x829a],undefined);assert.equal(tags[0x8827],undefined);assert.equal(tags[0x9204],undefined,'unverified game exposure is not EV');
  assert.doesNotMatch(output.subarray(0,output.indexOf(Buffer.from([255,218]))).toString(),/SECRET/);
 });
