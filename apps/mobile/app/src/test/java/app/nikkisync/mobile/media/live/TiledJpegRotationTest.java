@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
-@org.robolectric.annotation.Config(sdk=33)
+@org.robolectric.annotation.Config(sdk={30,31,32,33})
 @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
 public class TiledJpegRotationTest {
  @Test public void fourKCoverFitsWithoutThreeFullFrameAllocations()throws Exception{

@@ -31,6 +31,7 @@ The Momo branding source and transformations are documented in `assets/branding/
 - `apps/windows-shell/PORTABLE_NOTICES.md`: Windows single-file runtime notices; the packaging script preserves .NET, WebView2 and JavaScript dependency notices.
 - `apps/mobile/app/src/main/assets/licenses/libjpeg-turbo.txt`: libjpeg-turbo 3.2.0 and Independent JPEG Group notices for Android JPEG rotation. This software is based in part on the work of the Independent JPEG Group. The full notices are included in the APK; the application adds its own bounded backing store and rotation integration without modifying upstream sources.
 - Dependency license terms remain applicable independently of NikkiSync's MIT license.
+- Android uses Google desugar_jdk_libs 2.1.5 to backport Java library APIs. Upstream: https://github.com/google/desugar_jdk_libs . The complete upstream license and Classpath exception are bundled at `assets/licenses/desugar-jdk-libs.txt` in the APK.
 
 ## Android Ed25519 compatibility
 

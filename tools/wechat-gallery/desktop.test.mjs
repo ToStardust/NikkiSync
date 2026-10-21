@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
+test('renewed gallery QR uses the current network instead of the startup address',async()=>{
+ const {WeChatGalleryService}=await import('../../apps/pc-companion/dist/src/wechat/WeChatGalleryService.js');
+ let host='192.168.137.1';const hosts=[],qrHosts=[];
+ const service=new WeChatGalleryService({host:()=>host,snapshot:async()=>({count:0}),reservePort:async()=>28081,
+  qrSvg:async payload=>{qrHosts.push(JSON.parse(payload).host);return '<svg/>';},
+  listen:async config=>{hosts.push(config.host);return {port:config.port,stop:async()=>{}};}});
+ try{
+  await service.start();await service.stop();host='10.1.4.35';await service.start();
+  assert.deepEqual(hosts,['192.168.137.1','10.1.4.35']);assert.deepEqual(qrHosts,hosts);
+ }finally{await service.stop();}
+});
 test('integrated desktop QR/status/close uses local token and never exposes QR secret via status',async()=>{
  const {createDesktopControlServer}=await import('../../apps/pc-companion/dist/src/desktop/DesktopControlServer.js');
  let started=0,closed=0;

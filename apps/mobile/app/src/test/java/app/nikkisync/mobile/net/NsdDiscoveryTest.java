@@ -14,7 +14,7 @@ import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import static org.junit.Assert.*;
 
-@RunWith(RobolectricTestRunner.class) @Config(sdk=35)
+@RunWith(RobolectricTestRunner.class) @Config(sdk={30,31,32,35})
 public class NsdDiscoveryTest {
     static class Backend implements NsdDiscovery.Backend {
         final ArrayList<NsdManager.DiscoveryListener> discoveries=new ArrayList<>();

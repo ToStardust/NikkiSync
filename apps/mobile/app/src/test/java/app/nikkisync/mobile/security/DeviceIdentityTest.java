@@ -17,6 +17,7 @@ import static org.junit.Assert.*;
 
 /** Real JCA AES-GCM, with an in-memory stand-in for the hardware wrapping key only. */
 @RunWith(RobolectricTestRunner.class)
+@org.robolectric.annotation.Config(sdk={30,31,32,35})
 public class DeviceIdentityTest {
     private Context context;
     private Provider[] originalProviders;

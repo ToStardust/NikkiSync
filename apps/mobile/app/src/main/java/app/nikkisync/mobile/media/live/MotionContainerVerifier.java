@@ -14,7 +14,7 @@ public final class MotionContainerVerifier {
     private MotionContainerVerifier(){}
     public static void verify(LivePhotoProfile profile,MotionContainer.Product product,File motion,MotionContainer.Options o)throws IOException{
         File primary=product.primary();byte[] prefix;
-        try(FileInputStream in=new FileInputStream(primary)){prefix=in.readNBytes((int)Math.min(primary.length(),JpegSegments.MAX_IMAGE_BYTES));}
+        try(FileInputStream in=new FileInputStream(primary)){prefix=app.nikkisync.mobile.util.ByteStreams.readNBytes(in,(int)Math.min(primary.length(),JpegSegments.MAX_IMAGE_BYTES));}
         int jpegEnd=JpegSegments.endOffset(prefix);
         if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR){
             JpegSegments.require(product.companions().size()==1,"vivo 动态组件缺失");File video=product.companions().get(0);
@@ -72,9 +72,9 @@ public final class MotionContainerVerifier {
     private static void compareRange(File container,long offset,File source,long sourceOffset,long length)throws IOException{
         try(RandomAccessFile a=new RandomAccessFile(container,"r");FileInputStream b=new FileInputStream(source)){
             JpegSegments.require(offset>=0&&sourceOffset>=0&&length>=0&&offset<=a.length()-length&&sourceOffset<=source.length()-length,"动态数据范围越界");
-            a.seek(offset);b.skipNBytes(sourceOffset);
+            a.seek(offset);app.nikkisync.mobile.util.ByteStreams.skipNBytes(b,sourceOffset);
             byte[] left=new byte[128*1024],right=new byte[128*1024];long remaining=length;
-            while(remaining>0){if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Live 校验已取消");int n=(int)Math.min(left.length,remaining);a.readFully(left,0,n);int read=b.readNBytes(right,0,n);JpegSegments.require(read==n,"源视频截断");
+            while(remaining>0){if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Live 校验已取消");int n=(int)Math.min(left.length,remaining);a.readFully(left,0,n);int read=app.nikkisync.mobile.util.ByteStreams.readNBytes(b,right,0,n);JpegSegments.require(read==n,"源视频截断");
                 for(int i=0;i<n;i++)if(left[i]!=right[i])throw new IOException("封装后动态资源不完整/被改写");remaining-=n;}
         }
     }

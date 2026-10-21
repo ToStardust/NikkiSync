@@ -10,6 +10,7 @@ public interface IChildProcess : IAsyncDisposable
     bool HasExited { get; }
     int? ExitCode => null;
     Task<string> ReadOutputAsync(CancellationToken cancellationToken) => Task.FromResult("");
+    ScanStartupProgress? StartupProgress => null;
     void Kill();
 }
 
@@ -38,7 +39,8 @@ public sealed class ServiceProcessHost(
     private readonly TimeSpan _startupTimeout = startupTimeout ?? TimeSpan.FromMinutes(2);
     private IChildProcess? _child;
 
-    public async Task<Uri> StartAsync(string releaseDirectory, CancellationToken cancellationToken, string? gameRoot = null)
+    public async Task<Uri> StartAsync(string releaseDirectory, CancellationToken cancellationToken, string? gameRoot = null,
+        IProgress<ScanStartupProgress>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(releaseDirectory)) throw new ArgumentException("Release directory is required.", nameof(releaseDirectory));
         await StopAsync();
@@ -51,16 +53,24 @@ public sealed class ServiceProcessHost(
             $"--desktop-port {desktopPort}",
             environment);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var elapsed = Stopwatch.StartNew();
+        var watchdog = new ScanStartupWatchdog(_startupTimeout, _startupTimeout > TimeSpan.FromMinutes(30) ? _startupTimeout : TimeSpan.FromMinutes(30));
         deadline.CancelAfter(_startupTimeout);
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                deadline.Token.ThrowIfCancellationRequested();
                 if (_child.HasExited)
                 {
                     var output = await _child.ReadOutputAsync(cancellationToken);
                     throw new ServiceStartException(StartupFailure.FromServiceExit(_child.ExitCode, output));
+                }
+                if (_child.StartupProgress is { } work && watchdog.Observe(work, elapsed.Elapsed))
+                {
+                    deadline.CancelAfter(watchdog.Remaining(elapsed.Elapsed));
+                    progress?.Report(work);
                 }
                 if (await healthClient.IsReadyAsync(endpoint, deadline.Token)) return endpoint;
                 await Task.Delay(TimeSpan.FromMilliseconds(100), deadline.Token);
@@ -127,6 +137,7 @@ public sealed class ProcessServiceFactory : IServiceProcessFactory
         // Separate tails prevent verbose stdout from evicting the actual stderr reason.
         private readonly StringBuilder _stdout = new();
         private readonly StringBuilder _stderr = new();
+        private readonly ScanStartupProgressReader _progress = new();
         private readonly Task _readers;
         public ProcessChild(Process process)
         {
@@ -144,11 +155,13 @@ public sealed class ProcessServiceFactory : IServiceProcessFactory
                     {
                         tail.Append(buffer, 0, count);
                         if (tail.Length > 16384) tail.Remove(0, tail.Length - 16384);
+                        if (ReferenceEquals(tail, _stdout)) _progress.Append(buffer.AsSpan(0, count));
                     }
             }
             catch (Exception error) when (error is IOException or ObjectDisposedException) { }
         }
         public bool HasExited => _process.HasExited;
+        public ScanStartupProgress? StartupProgress { get { lock (_gate) return _progress.Latest; } }
         public int? ExitCode => HasExited ? _process.ExitCode : null;
         public async Task<string> ReadOutputAsync(CancellationToken cancellationToken)
         {

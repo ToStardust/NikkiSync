@@ -5,6 +5,7 @@
 | 组件 | 当前版本 | 用途 | 本工程观察到的外发 |
 | --- | --- | --- | --- |
 | Bouncy Castle bcprov-jdk18on | 1.86 | Ed25519及ASN.1 | 不自行联网 |
+| desugar_jdk_libs | 2.1.5 | Android 11/12 的 Java 标准库 API 兼容实现 | 不自行联网；许可随 APK 提供 |
 | AndroidX RecyclerView | 1.4.0 | 相册列表 | 不自行联网 |
 | AndroidX Activity | 1.10.1 | 页面/返回/生命周期 | 不自行联网 |
 | AndroidX ExifInterface | 1.4.2 | 本地 JPEG/PNG/WebP EXIF 写入与校验 | 不自行联网 |

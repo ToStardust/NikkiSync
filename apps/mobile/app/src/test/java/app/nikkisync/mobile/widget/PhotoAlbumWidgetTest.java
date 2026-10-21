@@ -27,7 +27,7 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 35)
+@Config(sdk = {30,31,32,35})
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class PhotoAlbumWidgetTest {
     private Context context;
@@ -136,7 +136,7 @@ public final class PhotoAlbumWidgetTest {
         var nextSquare = PhotoAlbumWidgetProvider.nextIntent(context, squareId, PhotoAlbumWidgetProvider.class);
         var nextWide = PhotoAlbumWidgetProvider.nextIntent(context, wideId, WidePhotoAlbumWidgetProvider.class);
         assertNotEquals(nextSquare, nextWide);
-        assertTrue(nextSquare.isImmutable());
+        assertTrue((Shadows.shadowOf(nextSquare).getFlags() & android.app.PendingIntent.FLAG_IMMUTABLE) != 0);
         assertEquals(squareId, Shadows.shadowOf(nextSquare).getSavedIntent().getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1));
         assertEquals(WidePhotoAlbumWidgetProvider.class.getName(), Shadows.shadowOf(nextWide).getSavedIntent().getComponent().getClassName());
     }
@@ -237,7 +237,14 @@ public final class PhotoAlbumWidgetTest {
         bitmap.eraseColor(color);
         try (var out = new FileOutputStream(file)) { bitmap.compress(Bitmap.CompressFormat.PNG, 100, out); }
         bitmap.recycle();
-        return Uri.fromFile(file);
+        // Android's serialized file URIs cannot represent a Windows drive on API 30-32.
+        // Real saved media is accessed through a content provider, with a fresh stream per read.
+        Uri uri = Uri.parse("content://momo.widget.fixture/" + name);
+        Shadows.shadowOf(context.getContentResolver()).registerInputStreamSupplier(uri, () -> {
+            try { return new java.io.FileInputStream(file); }
+            catch (java.io.IOException error) { throw new java.io.UncheckedIOException(error); }
+        });
+        return uri;
     }
 
     private void savedRows(String... uris) throws Exception {

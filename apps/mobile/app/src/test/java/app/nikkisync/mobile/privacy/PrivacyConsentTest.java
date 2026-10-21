@@ -15,6 +15,7 @@ import org.robolectric.RuntimeEnvironment;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
+@org.robolectric.annotation.Config(sdk={30,31,32,35},shadows=app.nikkisync.mobile.util.LegacyBluetoothDeviceShadow.class)
 public final class PrivacyConsentTest {
     @Test public void currentPolicyRequiresExplicitConsentAndWithdrawalInvalidatesIt() {
         var store=new PrivacyConsentStore(RuntimeEnvironment.getApplication());

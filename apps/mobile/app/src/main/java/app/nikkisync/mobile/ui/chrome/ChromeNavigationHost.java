@@ -187,10 +187,11 @@ public final class ChromeNavigationHost extends FrameLayout {
     private void setPreviousBlur(float radiusDp){
         previewBlurDp=Math.max(0,radiusDp);
         View prior=previous();if(prior==null)return;
+        if(android.os.Build.VERSION.SDK_INT<31)return;
         float radius=previewBlurDp*getResources().getDisplayMetrics().density;
         prior.setRenderEffect(radius>.01f?RenderEffect.createBlurEffect(radius,radius,Shader.TileMode.CLAMP):null);
     }
-    private void clearBlur(){previewBlurDp=0;if(root!=null)root.setRenderEffect(null);for(Entry e:stack)e.layer().setRenderEffect(null);}
+    private void clearBlur(){previewBlurDp=0;if(android.os.Build.VERSION.SDK_INT<31)return;if(root!=null)root.setRenderEffect(null);for(Entry e:stack)e.layer().setRenderEffect(null);}
     private void remove(Entry e){stack.remove(e);covered.remove(e.layer());removeView(e.layer());e.closed().run();clearBlur();sync();}
     private void sync(){if(callback!=null)callback.setEnabled(hasOverlay());cover(root,hasOverlay());for(Entry e:stack){cover(e.layer(),e!=top());if(e.layer() instanceof PhotoTransition photo)photo.setCovered(e!=top());}}
     private void cover(View view,boolean hide){

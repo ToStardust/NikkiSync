@@ -9,6 +9,7 @@ import android.widget.*;
 import app.nikkisync.mobile.R;
 
 /** Photo-first surface. Existing detail/action views live in a separate, on-demand sheet. */
+@androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PhotoViewerPage extends FrameLayout implements ChromeNavigationHost.PhotoTransition {
     private final ChromeNavigationHost navigation;
     private final Activity activity;

@@ -5,6 +5,27 @@ import os from 'node:os'
 import { EventEmitter } from 'node:events'
 import { MdnsAdvertiser } from '../src/server/MdnsAdvertiser.js'
 
+test('mDNS chooses the same real Wi-Fi host as pairing when a virtual switch is first', t => {
+  class Socket extends EventEmitter {
+    packet:Buffer=Buffer.alloc(0); selected=''
+    bind(_port:number,callback:()=>void){callback()}
+    setMulticastInterface(ip:string){this.selected=ip} addMembership(){} setMulticastTTL(){}
+    send(packet:Buffer){this.packet=packet} close(){}
+  }
+  const socket=new Socket()
+  t.mock.method(dgram,'createSocket',()=>socket)
+  t.mock.method(os,'networkInterfaces',()=>({
+    'vEthernet (Default Switch)':[{family:'IPv4',internal:false,address:'172.25.9.238'}],
+    WLAN:[{family:'IPv4',internal:false,address:'10.1.4.35'}]
+  }))
+  const advertiser=new MdnsAdvertiser()
+  try{
+    advertiser.start({serverId:'fixture-pc',name:'Momo',port:28080})
+    assert.equal(socket.selected,'10.1.4.35')
+    assert.deepEqual([...socket.packet.subarray(-4)],[10,1,4,35])
+  }finally{advertiser.stop()}
+})
+
 test('mDNS refreshes its socket and address after hotspot changes to Wi-Fi', t => {
   class Socket extends EventEmitter {
     packets: Buffer[]=[]; closed=false

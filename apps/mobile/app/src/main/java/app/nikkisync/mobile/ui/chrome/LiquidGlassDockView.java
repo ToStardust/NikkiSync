@@ -39,7 +39,8 @@ public final class LiquidGlassDockView extends View {
         int saved=canvas.save();
         canvas.clipRect(x+visible.left,y+visible.top,x+visible.right,y+visible.bottom);
         Path clip=new Path();clip.addRoundRect(rect,r,r,Path.Direction.CW);canvas.clipPath(clip);
-        if(canvas.isHardwareAccelerated()){
+        boolean gpuFrost=android.os.Build.VERSION.SDK_INT>=31&&canvas.isHardwareAccelerated();
+        if(gpuFrost){
             frost.setPosition((int)x,(int)y,(int)x+w,(int)y+h);
             RecordingCanvas c=frost.beginRecording(w,h);
             try{c.translate(-x,-y);backdrop.draw(c);}finally{frost.endRecording();}
@@ -47,7 +48,7 @@ public final class LiquidGlassDockView extends View {
             canvas.drawRenderNode(frost);
         }
         if(panel) paint.setShader(new LinearGradient(x,y,x,y+h,new int[]{0x9effffff,0x8affffff},null,Shader.TileMode.CLAMP));
-        else paint.setColor(canvas.isHardwareAccelerated()?0x80fffefb:0xdbfffefb);
+        else paint.setColor(gpuFrost?0x80fffefb:0xdbfffefb);
         canvas.drawRoundRect(rect,r,r,paint);paint.setShader(null);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(panel?d*.75f:d);

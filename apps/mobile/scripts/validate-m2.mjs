@@ -398,6 +398,6 @@ expect(
 )
 
 expect(
-  mainActivity.includes('new ActivityResultContracts.PickMultipleVisualMedia(MediaStore.getPickImagesMaxLimit())'),
+  mainActivity.includes('new ActivityResultContracts.PickMultipleVisualMedia()') && !mainActivity.includes('MediaStore.getPickImagesMaxLimit()'),
   'multi-photo picker must use the Java maxItems constructor'
 )

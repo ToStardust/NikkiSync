@@ -61,12 +61,12 @@ public final class MonetBackgroundController implements AutoCloseable {
         try{
             byte[] hash=MessageDigest.getInstance("SHA-256").digest(key.getBytes(StandardCharsets.UTF_8));StringBuilder name=new StringBuilder();for(byte b:hash)name.append(String.format("%02x",b));
             File cached=new File(new File(context.getFilesDir(),"thumbnail-cache-v1"),name+".img");
-            if(cached.isFile())try(InputStream input=new FileInputStream(cached)){Bitmap b=decode(input.readNBytes(8*1024*1024));if(b!=null)return b;}
+            if(cached.isFile())try(InputStream input=new FileInputStream(cached)){Bitmap b=decode(app.nikkisync.mobile.util.ByteStreams.readNBytes(input,8*1024*1024));if(b!=null)return b;}
             if(client==null)return null;
             connection=client.resource(asset.assetId(),resource);connection.setConnectTimeout(2000);connection.setReadTimeout(2500);
             if(connection.getResponseCode()!=200)return null;
             try(InputStream input=connection.getInputStream()){
-                byte[] bytes=input.readNBytes(8*1024*1024+1);if(bytes.length>8*1024*1024)return null;
+                byte[] bytes=app.nikkisync.mobile.util.ByteStreams.readNBytes(input,8*1024*1024+1);if(bytes.length>8*1024*1024)return null;
                 Bitmap b=decode(bytes);
                 if(b!=null){cached.getParentFile().mkdirs();File temp=File.createTempFile("monet-",".tmp",cached.getParentFile());
                     try{try(OutputStream out=new FileOutputStream(temp)){out.write(bytes);}java.nio.file.Files.move(temp.toPath(),cached.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);}catch(IOException ignored){}finally{temp.delete();}}

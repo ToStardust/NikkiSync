@@ -11,7 +11,7 @@ import org.robolectric.*;
 import org.robolectric.annotation.*;
 import app.nikkisync.mobile.storage.*;
 import static org.junit.Assert.*;
-@RunWith(RobolectricTestRunner.class) @Config(sdk=35) @GraphicsMode(GraphicsMode.Mode.NATIVE)
+@RunWith(RobolectricTestRunner.class) @Config(sdk={30,31,32,35}) @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class EditedPhotoExifTest {
  static final Uri SOURCE=Uri.parse("content://test.edited/source");
  Context context;PhotoProvider provider;

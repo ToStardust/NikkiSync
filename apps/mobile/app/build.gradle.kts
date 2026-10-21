@@ -15,10 +15,10 @@ android {
 
     defaultConfig {
         applicationId = "app.nikkisync.mobile"
-        minSdk = 33
+        minSdk = 30
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.0.10"
+        versionCode = 35
+        versionName = "1.0.11"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
         externalNativeBuild { cmake { targets += "momo_jpeg" } }
         buildConfigField("boolean", "STORE_SUBMISSION", providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") })
@@ -47,6 +47,7 @@ android {
     packaging.resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
     testOptions { unitTests.isIncludeAndroidResources = true }
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -71,6 +72,8 @@ tasks.configureEach {
 }
 
 dependencies {
+    // Backport Java 11+ APIs (including String.isBlank and Stream.toList) on Android 11/12.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     // Lightweight Ed25519 only; do not register a global BC provider or rely on OEM JCA order.
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")

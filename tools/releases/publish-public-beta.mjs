@@ -5,6 +5,7 @@ import {createReadStream} from 'node:fs';
 import {readFile,stat,mkdir,writeFile} from 'node:fs/promises';
 import {resolve,join,relative,basename} from 'node:path';
 import {createHash,verify} from 'node:crypto';
+import {containsSourceSecret} from './source-privacy.mjs';
 
 const root=resolve(import.meta.dirname,'../..'),repo='ToStardust/NikkiSync';
 const configArgument=process.argv.find(arg=>arg.startsWith('--config='));
@@ -42,7 +43,7 @@ async function audit(){
     if(identities.some(value=>['utf8','utf16le'].some(encoding=>bytes.includes(Buffer.from(value,encoding)))))findings.push({path,kind:'private-identity'});
     if(bytes.includes(0))continue;
     const text=bytes.toString('utf8');
-    if(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|\bgh[pousr]_[A-Za-z0-9]{25,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b/.test(text))findings.push({path,kind:'secret-pattern'});
+    if(containsSourceSecret(text))findings.push({path,kind:'secret-pattern'});
     if(/\b\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx]\b/.test(text))findings.push({path,kind:'identity-number-pattern'});
     if(/\b1[3-9]\d{9}\b/.test(text))findings.push({path,kind:'phone-number-pattern'});
   }

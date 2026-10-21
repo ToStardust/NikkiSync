@@ -44,6 +44,16 @@ export interface ScannerConfig extends GameDiscoveryOptions {
   debounceMs?: number
   motionAssemblyGraceMs?: number
   onSettled?(): void
+  onProgress?(progress: ScannerProgress): void
+}
+
+/** Aggregate work only: never include paths, UIDs, filenames or photo parameters. */
+export interface ScannerProgress {
+  stage: 'scan-files' | 'scan-index' | 'scan-watch'
+  filesObserved: number
+  filesCompleted: number
+  bytesRead: number
+  assetsProcessed: number
 }
 
 export interface ScanResult {

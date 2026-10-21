@@ -22,6 +22,6 @@ npm run mobile:build
 npm run mobile:install # requires one authorized USB-debugging device
 ```
 
-The APK targets Android 13+ (`minSdk 33`). The build script verifies APK signing and package id before it reports success.
+The APK supports Android 11+ (`minSdk 30`, `targetSdk 35`). Android 11 keeps translucent glass chrome and readable top shading without RenderEffect; Android 12+ retains GPU blur. AndroidX provides the image-picker fallback on older systems. Java library desugaring 2.1.5 backports newer Java APIs. The build script verifies APK signing and package id before it reports success.
 
 The current LIVE rotation implementation also requires Android NDK `28.1.13356709` and CMake `3.22.1`. Install these SDK components before building. CMake downloads the official libjpeg-turbo `3.2.0` source archive and verifies its pinned SHA-256. Large JPEG coefficient arrays use bounded RAM and anonymous export-cache files. The upstream license is bundled in the APK at `assets/licenses/libjpeg-turbo.txt`. Do not commit local SDK paths, `local.properties`, `.cxx` or generated native binaries.

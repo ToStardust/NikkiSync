@@ -23,7 +23,7 @@ export class ScanReconciler {
   private readonly resolver = new AssetResolver()
   constructor(private readonly assets: AssetRepository, private readonly motionGraceMs = 2000) {}
 
-  async reconcile(resources: DiscoveredResource[], roots: string[]): Promise<Pick<ScanResult, 'assetsCreated' | 'assetsUpdated' | 'assetsDeleted' | 'journalRevisions' | 'pendingPaths'>> {
+  async reconcile(resources: DiscoveredResource[], roots: string[], onAssetProcessed?: () => void): Promise<Pick<ScanResult, 'assetsCreated' | 'assetsUpdated' | 'assetsDeleted' | 'journalRevisions' | 'pendingPaths'>> {
     const now = new Date().toISOString(); const snapshots = this.buildSnapshots(resources, now)
     let created = 0; let updated = 0; const revisions: number[] = []
     for (const snapshot of snapshots) {
@@ -31,6 +31,7 @@ export class ScanReconciler {
       if (result.kind === 'created') created += 1
       if (result.kind === 'updated') updated += 1
       if (result.revision !== undefined) revisions.push(result.revision)
+      onAssetProcessed?.()
     }
     const deleted = this.assets.markMissingByRoots(snapshots.map((snapshot) => snapshot.assetId), roots)
     revisions.push(...deleted.map((item) => item.revision))

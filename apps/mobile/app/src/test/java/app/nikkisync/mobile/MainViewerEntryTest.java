@@ -14,6 +14,7 @@ import org.robolectric.RobolectricTestRunner;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
+@org.robolectric.annotation.Config(sdk={30,31,32,35})
 public class MainViewerEntryTest {
     @Test public void viewerFindsPhotoThumbnailWithComputerScopedCacheKey() throws Exception {
         var activity=fixture();

@@ -31,7 +31,7 @@ public final class ProgressiveTopBlurView extends View {
     @Override protected void onDraw(Canvas canvas){
         if(getWidth()==0 || getHeight()==0) return;
         float density=getResources().getDisplayMetrics().density;
-        if(!canvas.isHardwareAccelerated()){drawContrastVeil(canvas);return;} // Explicit no-blur fallback.
+        if(android.os.Build.VERSION.SDK_INT<31||!canvas.isHardwareAccelerated()){drawContrastVeil(canvas);return;}
         float radius=radiusDp*density;
         int overscan=(int)Math.ceil(radius*3), h=getHeight()+overscan;
         blurred.setPosition(0,0,getWidth(),getHeight()+overscan);

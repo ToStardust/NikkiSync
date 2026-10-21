@@ -22,6 +22,7 @@ import java.util.function.IntConsumer;
 import javax.net.ssl.HttpsURLConnection;
 
 /** Separate MP4 export following the captured preview angle; never registers a saved LIVE. */
+@androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class MotionVideoSaver {
     private MotionVideoSaver() {}
     @FunctionalInterface interface VideoTransform {

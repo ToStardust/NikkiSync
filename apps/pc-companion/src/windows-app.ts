@@ -23,6 +23,8 @@ import {WeChatIconProvider,resizeWeChatIcon} from './wechat/WeChatIconProvider.j
 import { startupFailureRecord } from './desktop/StartupFailure.js'
 import { GameVersionUpdateService } from './server/GameVersionUpdateService.js'
 import { setRemoteGameVersionReleases as setGalleryGameVersionReleases } from './wechat/GalleryRuntime.mjs'
+import { selectLanIpv4 } from './server/LanAddress.js'
+import type { ScannerProgress } from './scanner/types.js'
 
 let startupPhase: Parameters<typeof startupFailureRecord>[1] = 'configuration'
 
@@ -49,37 +51,35 @@ function readCachedGameRoot(): string | undefined {
   }
 }
 
-function isLanIpv4(address: string): boolean {
-  const [first, second] = address.split('.').map(Number)
-  return first === 10
-    || (first === 192 && second === 168)
-    || (first === 172 && second !== undefined && second >= 16 && second <= 31)
-}
-
-function preferredLanIpv4(): string | undefined {
-  const candidates = Object.values(os.networkInterfaces())
-    .flatMap((entries) => entries ?? [])
-    .filter((entry) => entry.family === 'IPv4' && !entry.internal)
-    .map((entry) => entry.address)
-  return candidates.find(isLanIpv4) ?? candidates[0]
+function currentPairingHost(): string {
+  const host = selectLanIpv4()
+  if (!host) throw new Error('未找到局域网 IPv4 地址。请连接可用的 Wi-Fi 或网线后重试。')
+  return host
 }
 
 async function main(): Promise<void> {
   const startupBegin = performance.now()
   const milestones: Record<string, number> = {}
-  const markStartup = (stage: string): void => {
-    milestones[stage] = Math.round(performance.now() - startupBegin)
+  let scanProgress: ScannerProgress | undefined
+  let startupStage = 'configuration'
+  let startupScanning = true
+  const writeStartupTimings = (): void => {
     try {
       writeFileSync(path.join(APP_DATA, 'startup-service-timings.json'), JSON.stringify({
-        build: '2026.10.13-mdns-query-guard', timestamp: new Date().toISOString(), stage, milestones
+        build: '2026.10.21-scan-progress', timestamp: new Date().toISOString(), stage: startupStage, milestones,
+        ...(scanProgress ? { scan: scanProgress } : {})
       }, null, 2), 'utf8')
-    } catch { /* fixed stage names and durations only; best-effort startup diagnostics */ }
+    } catch { /* aggregate diagnostics are best effort */ }
+  }
+  const markStartup = (stage: string): void => {
+    startupStage = stage
+    milestones[stage] = Math.round(performance.now() - startupBegin)
+    writeStartupTimings()
   }
   const memoryMaintenance = new RuntimeMemoryMaintenance()
   mkdirSync(APP_DATA, { recursive: true })
   markStartup('configuration')
-  const pairingHost = preferredLanIpv4()
-  if (!pairingHost) throw new Error('未找到局域网 IPv4 地址。请连接 Wi-Fi 或网线后重新打开 NikkiSync PC。')
+  currentPairingHost()
 
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
@@ -115,6 +115,12 @@ async function main(): Promise<void> {
     databaseFile: DATABASE_FILE,
     remoteBridge: true,
     scanner: {
+      onProgress: progress => {
+        if (!startupScanning) return
+        scanProgress = progress
+        process.stdout.write(JSON.stringify({ type: 'nikkisync-startup-progress', ...progress }) + '\n')
+        writeStartupTimings()
+      },
       onSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() },
       ...(cachedGameRoot ? { cachedInstallRoot: cachedGameRoot } : {}),
       onDiscoveryComplete: report => {
@@ -165,6 +171,7 @@ async function main(): Promise<void> {
   const versionUpdates = new GameVersionUpdateService(runtime.database, { onCalendarChanged: setGalleryGameVersionReleases })
   startupPhase = 'scanner-and-lan'
   const started = await runtime.start()
+  startupScanning = false
   writeMetadataStatus()
   const installRoot = runtime.scanner.getStatus().installation?.installRoot
   if (installRoot) {
@@ -173,7 +180,7 @@ async function main(): Promise<void> {
   const status = new DesktopStatusService(runtime.database)
   const wechat = new WeChatGalleryService({
     onWorkSettled: () => memoryMaintenance.schedule(),
-    host: pairingHost,
+    host: currentPairingHost,
     qrSvg,
     snapshot: () => createIndexedPreviewSource(runtime.database, [...new Set([...(runtime.scanner.getStatus().installation?.photoRoots ?? []),...(runtime.scanner.getStatus().installation?.motionRoots ?? [])])], {
       loadIcon:descriptor=>wechatIcons.get(descriptor),
@@ -196,8 +203,8 @@ async function main(): Promise<void> {
       metadataDiagnosticRevision=undefined;writeMetadataStatus()
     }},
     legalDocuments:Object.fromEntries([['privacy','PRIVACY_POLICY.md'],['terms','USER_AGREEMENT.md'],['permissions','PERMISSIONS_DATA.md'],['services','SDK_SERVICES.md']].map(([name,file])=>[name,readFileSync(process.versions.bun?path.join(path.dirname(process.execPath),'legal',file!):path.join(import.meta.dirname,'..','..','..','..','docs','store-submission',file!),'utf8')])),
-    getStatus: () => status.getStatus({ host: pairingHost, port: started.server.port }),
-    createPairingUri: () => runtime.createPairingUri(pairingHost),
+    getStatus: () => status.getStatus({ host: currentPairingHost(), port: started.server.port }),
+    createPairingUri: () => runtime.createPairingUri(currentPairingHost()),
     qrSvg,
     brandImage: readFileSync(process.versions.bun
       ? path.join(path.dirname(process.execPath), 'branding', 'momo-camera.png')

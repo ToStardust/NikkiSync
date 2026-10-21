@@ -27,7 +27,7 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadow.api.Shadow;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 35, shadows = PairQrScannerActivityTest.ShadowScanner.class)
+@Config(sdk = {30,31,32,35}, shadows = {PairQrScannerActivityTest.ShadowScanner.class,app.nikkisync.mobile.util.LegacyBluetoothDeviceShadow.class})
 public class PairQrScannerActivityTest {
     @Test public void firstScanRequestsCameraWithoutOpeningItBeforeGrant() throws Exception {
         var controller = Robolectric.buildActivity(PairQrScannerActivity.class).setup();

@@ -142,6 +142,59 @@ public sealed class ServiceProcessHostTests
         public Task<bool> IsReadyAsync(Uri endpoint, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
+    [Fact]
+    public async Task Startup_waits_beyond_the_normal_deadline_only_while_real_work_advances()
+    {
+        var child = new ProgressChild();
+        var reports = new List<ScanStartupProgress>();
+        var health = new ScanningHealthClient(child);
+        var host = new ServiceProcessHost(new FakeProcessFactory(child), health, TimeSpan.FromSeconds(2));
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            await host.StartAsync(@"C:\Release", cancel.Token, progress: new CollectProgress(reports));
+            Assert.Equal(10, health.Calls);
+            Assert.True(reports.Count > 2);
+            Assert.False(child.Killed);
+        }
+        finally { await host.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task Real_stdout_progress_reaches_host_without_exposing_or_buffering_raw_lines()
+    {
+        var message = "{\"type\":\"nikkisync-startup-progress\",\"stage\":\"scan-files\",\"filesObserved\":1,\"filesCompleted\":0,\"bytesRead\":8192,\"assetsProcessed\":0}";
+        await using var child = new ProcessServiceFactory().Start("powershell.exe",
+            "-NoProfile -Command \"[Console]::Out.WriteLine(('x' * 20000)); [Console]::Out.WriteLine('" + message.Replace("\"", "\\\"") + "')\"",
+            new Dictionary<string, string>());
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!child.HasExited) await Task.Delay(25, cancel.Token);
+        await child.ReadOutputAsync(cancel.Token);
+        Assert.Equal(new ScanStartupProgress("scan-files", 1, 0, 8192, 0), child.StartupProgress);
+    }
+
+    private sealed class CollectProgress(List<ScanStartupProgress> reports) : IProgress<ScanStartupProgress>
+    { public void Report(ScanStartupProgress value) => reports.Add(value); }
+    private sealed class ProgressChild : IChildProcess
+    {
+        public long Bytes = 1;
+        public bool Killed;
+        public bool HasExited => false;
+        public ScanStartupProgress? StartupProgress => new("scan-files", 1, 0, Bytes, 0);
+        public void Kill() => Killed = true;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+    private sealed class ScanningHealthClient(ProgressChild child) : IHealthClient
+    {
+        public int Calls;
+        public async Task<bool> IsReadyAsync(Uri endpoint, CancellationToken cancellationToken)
+        {
+            await Task.Delay(250, cancellationToken);
+            child.Bytes += 4096;
+            return ++Calls == 10;
+        }
+    }
+
     private sealed class FailingHealthClient : IHealthClient
     {
         public Task<bool> IsReadyAsync(Uri endpoint, CancellationToken cancellationToken) => Task.FromResult(false);

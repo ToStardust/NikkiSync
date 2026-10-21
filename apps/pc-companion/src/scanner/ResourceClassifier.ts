@@ -38,29 +38,29 @@ function mimeFor(ext: string): string {
   return 'application/octet-stream'
 }
 
-async function sha256File(filePath: string): Promise<string> {
+async function sha256File(filePath: string, onRead?: (bytes: number) => void): Promise<string> {
   const hash = createHash('sha256')
   await new Promise<void>((resolve, reject) => {
     const input = createReadStream(filePath)
-    input.on('data', (chunk) => hash.update(chunk))
+    input.on('data', (chunk) => { hash.update(chunk); onRead?.(Buffer.byteLength(chunk)) })
     input.on('end', resolve)
     input.on('error', reject)
   })
   return hash.digest('hex')
 }
 
-async function md5Range(filePath: string, start: number, endExclusive: number): Promise<string> {
+async function md5Range(filePath: string, start: number, endExclusive: number, onRead?: (bytes: number) => void): Promise<string> {
   const hash = createHash('md5')
   await new Promise<void>((resolve, reject) => {
     const input = createReadStream(filePath, { start, end: endExclusive - 1 })
-    input.on('data', (chunk) => hash.update(chunk))
+    input.on('data', (chunk) => { hash.update(chunk); onRead?.(Buffer.byteLength(chunk)) })
     input.on('end', resolve)
     input.on('error', reject)
   })
   return hash.digest('hex')
 }
 
-async function nativePhotoEnvelope(filePath: string, size: number, ext: string): Promise<{ token?: string; payload?: string; nuan5Md5?: string }> {
+async function nativePhotoEnvelope(filePath: string, size: number, ext: string, onRead?: (bytes: number) => void): Promise<{ token?: string; payload?: string; nuan5Md5?: string }> {
   if ((ext !== '.jpg' && ext !== '.jpeg') || size < 46) return {}
   const handle = await open(filePath, 'r')
   let window: Buffer | undefined
@@ -76,6 +76,7 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
       const windowStart = size - windowSize
       window = Buffer.alloc(windowSize)
       const result = await handle.read(window, 0, window.length, windowStart)
+      onRead?.(result.bytesRead)
       if (result.bytesRead !== window.length) return {}
       const finalEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]))
       if (finalEoi < 0) return {}
@@ -106,7 +107,7 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
       // [V2]N changes that boundary to the final N bytes before the delimiter EOI. The bytes
       // remain local; only this 32-character digest is retained for the resolver.
       const hashStart = versionedMatch ? boundary - hashLength : 0
-      return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary) }
+      return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary, onRead) }
     }
   } finally { window?.fill(0); await handle.close() }
 }
@@ -114,15 +115,15 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string):
 export class ResourceClassifier {
   classifyPath(filePath: string): DiscoveredResourceKind { return classifyKind(filePath) }
 
-  async classify(filePath: string, gamePlayRoot: string): Promise<DiscoveredResource> {
+  async classify(filePath: string, gamePlayRoot: string, onRead?: (bytes: number) => void): Promise<DiscoveredResource> {
     const info = await stat(filePath)
     const fileExt = path.extname(filePath).toLowerCase()
     const kind = classifyKind(filePath)
     const fileName = path.basename(filePath)
     const shouldHash = !['ignored', 'unknown_image', 'binary_companion'].includes(kind)
-    const digest = shouldHash ? await sha256File(filePath) : undefined
+    const digest = shouldHash ? await sha256File(filePath, onRead) : undefined
     const nativeEnvelope = (kind === 'high_quality' || kind === 'motion_cover')
-      ? await nativePhotoEnvelope(filePath, info.size, fileExt)
+      ? await nativePhotoEnvelope(filePath, info.size, fileExt, onRead)
       : {}
     const uid = uidFor(filePath, gamePlayRoot)
     return {

@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private string? _gameRoot;
     private string _startupPhase = "runtime";
     private readonly object _startupContent;
+    private readonly RetryableStartupInitialization _browserInitialization = new();
     private readonly CancellationTokenSource _startupCancellation = new();
     private readonly System.Windows.Threading.DispatcherTimer _startupTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Stopwatch _startupWatch = new();
@@ -87,8 +88,11 @@ public partial class MainWindow : Window
             RecordStartupTimings("starting");
             StartupProgress.IsIndeterminate = true;
             // Windows special-folder lookup does not honor a diagnostic LOCALAPPDATA override.
-            var environment = await CoreWebView2Environment.CreateAsync(null, _verificationDirectory is null ? Path.Combine(RuntimePayload.UserDirectory, "webview2") : Path.Combine(_verificationDirectory, "localdata", "NikkiSync", "webview2"));
-            await ControlPage.EnsureCoreWebView2Async(environment);
+            await _browserInitialization.EnsureAsync(async () =>
+            {
+                var environment = await CoreWebView2Environment.CreateAsync(null, _verificationDirectory is null ? Path.Combine(RuntimePayload.UserDirectory, "webview2") : Path.Combine(_verificationDirectory, "localdata", "NikkiSync", "webview2"));
+                await ControlPage.EnsureCoreWebView2Async(environment);
+            });
             _startupCancellation.Token.ThrowIfCancellationRequested();
             StartupTimings["browserReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             StartupText.Text = "3 / 4 · 正在同步相册并启动连接服务…";
@@ -105,7 +109,13 @@ public partial class MainWindow : Window
                 using var image = File.Create(Path.Combine(_verificationDirectory, "startup-screen.png"));
                 encoder.Save(image);
             }
-            var endpoint = await _service.StartAsync(_runtimeDirectory, _startupCancellation.Token, _gameRoot);
+            var endpoint = await _service.StartAsync(_runtimeDirectory, _startupCancellation.Token, _gameRoot,
+                new Progress<ScanStartupProgress>(work => StartupText.Text = work.Stage switch
+                {
+                    "scan-index" => $"3 / 4 · 正在建立相册索引：已处理 {work.AssetsProcessed:N0} 项…",
+                    "scan-watch" => "3 / 4 · 正在完成扫描并建立相册监听…",
+                    _ => $"3 / 4 · 正在扫描相册：已检查 {work.FilesCompleted:N0} 个文件，已读取 {work.BytesRead / 1073741824d:F2} GB…"
+                }));
             StartupTimings["serviceReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             _controlOrigin = new Uri(endpoint.GetLeftPart(UriPartial.Authority));
             _pageGate = new StartupPageGate(new Uri(_controlOrigin, "/"));
@@ -178,7 +188,7 @@ public partial class MainWindow : Window
                 var openLogs = new System.Windows.Controls.Button { Content = "打开日志文件夹", Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(14, 8, 14, 8) };
                 openLogs.Click += (_, _) => Process.Start(new ProcessStartInfo(diagnosticsDirectory) { UseShellExecute = true });
                 panel.Children.Add(openLogs);
-                panel.Children.Add(new TextBlock { Text = "反馈 startup-diagnostics.log、game-discovery.log 和 startup-timings.json；日志不包含照片、个人路径、配对码或密钥。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 16, 0, 0) });
+                panel.Children.Add(new TextBlock { Text = "反馈 startup-diagnostics.log、game-discovery.log、startup-timings.json 和 startup-service-timings.json；日志不包含照片、个人路径、配对码或密钥。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 16, 0, 0) });
             }
             else panel.Children.Add(new TextBlock { Text = "日志无法写入，请截取上方错误代码反馈。", Margin = new Thickness(0, 16, 0, 0), TextWrapping = TextWrapping.Wrap });
             MainSurface.Content = panel;

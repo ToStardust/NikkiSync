@@ -45,7 +45,7 @@ public final class EditedPhotoExif {
    }expected=digest.digest();digest.reset();
    try(var raw=resolver.openInputStream(target)){
     if(raw==null)throw new IOException("无法校验修图副本");
-    try(var in=new DigestInputStream(raw,digest)){in.transferTo(OutputStream.nullOutputStream());}
+    try(var in=new DigestInputStream(raw,digest)){app.nikkisync.mobile.util.ByteStreams.copy(in,null);}
    }
    if(!MessageDigest.isEqual(expected,digest.digest()))throw new IOException("修图副本校验失败");
    var ready=new ContentValues();ready.put(MediaStore.Images.Media.IS_PENDING,0);

@@ -30,9 +30,10 @@ final class TiledJpegRotation {
  }
  static Bitmap decode(File input,int clockwise,long available)throws IOException{
   BitmapRegionDecoder decoder=null;Bitmap output=null,tile=null;
-  try{
+  try(var encoded=new java.io.FileInputStream(input)){
    checkInput(input);
-   decoder=BitmapRegionDecoder.newInstance(input.getAbsolutePath());
+   // Keep the Android 11-compatible source alive through every lazy region decode.
+   decoder=BitmapRegionDecoder.newInstance(encoded,false);
    int width=decoder.getWidth(),height=decoder.getHeight();
    android.util.Log.i("NikkiSync-Live","JPEG rotation "+width+"x"+height+" requiredMiB="+(requiredBytes(width,height)/1048576)+" availableMiB="+(available/1048576));
    requireAvailable(width,height,available);

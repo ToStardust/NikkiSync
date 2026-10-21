@@ -1,5 +1,5 @@
 import dgram from 'node:dgram'
-import os from 'node:os'
+import { selectLanIpv4 } from './LanAddress.js'
 
 const MULTICAST = '224.0.0.251'
 const PORT = 5353
@@ -25,28 +25,13 @@ function txt(...values: string[]): Buffer {
   }))
 }
 
-function isLanIpv4(address: string): boolean {
-  const [first, second] = address.split('.').map(Number)
-  return first === 10
-    || (first === 192 && second === 168)
-    || (first === 172 && second !== undefined && second >= 16 && second <= 31)
-}
-
-function preferredLanIpv4(): string | undefined {
-  const candidates = Object.values(os.networkInterfaces())
-    .flatMap((entries) => entries ?? [])
-    .filter((entry) => entry.family === 'IPv4' && !entry.internal)
-    .map((entry) => entry.address)
-  return candidates.find(isLanIpv4) ?? candidates[0]
-}
-
 export class MdnsAdvertiser {
   private socket: dgram.Socket | undefined
   private timer: NodeJS.Timeout | undefined
 
   start(input: { serverId: string; name: string; port: number }): void {
     this.stop()
-    const ip = preferredLanIpv4()
+    const ip = selectLanIpv4()
     if (!ip) { this.timer = setTimeout(() => this.start(input), 10_000); return }
     const service = '_nikkisync._tcp.local'
     const safeName = input.name.replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'NikkiSync'
@@ -83,7 +68,7 @@ export class MdnsAdvertiser {
       socket.setMulticastTTL(255)
       send(); this.timer = setInterval(() => {
         if (this.socket !== socket) return
-        if (preferredLanIpv4() !== ip) this.start(input)
+        if (selectLanIpv4() !== ip) this.start(input)
         else send()
       }, 15_000)
     })

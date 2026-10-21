@@ -5,12 +5,14 @@ import { ScannerDiscovery } from './ScannerDiscovery.js'
 import { ScannerWatcher } from './ScannerWatcher.js'
 import { ScanCoordinator } from './ScanCoordinator.js'
 import { ScanReconciler } from './ScanReconciler.js'
+import { ScanProgressTracker } from './ScanProgressTracker.js'
 import type { ScannerConfig, ScannerMetrics, ScannerStatus, ScanResult } from './types.js'
 
 export class ScannerService {
   private status: ScannerStatus = 'stopped'; private installation?: Awaited<ReturnType<ScannerDiscovery['discover']>>
   private watcher: ScannerWatcher | undefined; private coordinator: ScanCoordinator; private reconciler: ScanReconciler
   private lastScan: ScanResult | undefined
+  private progress: ScanProgressTracker | undefined
   private readonly pendingRoots = new Map<string, string>()
   private pendingWaiters: Array<{ resolve: (result: ScanResult) => void; reject: (error: unknown) => void }> = []
   private draining: Promise<void> | undefined
@@ -26,6 +28,7 @@ export class ScannerService {
     this.status = 'discovering'; this.installation = await new ScannerDiscovery(this.config).discover()
     if (!this.installation) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
     const result = await this.fullScan()
+    this.progress?.stage('scan-watch')
     if (this.config.watcher !== false) {
       this.watcher = new ScannerWatcher(this.config.debounceMs ?? 250)
       this.watcher.start(result.roots, (event) => { void this.rescanPath(event.path) })
@@ -80,10 +83,14 @@ export class ScannerService {
     } finally { this.draining = undefined; this.config.onSettled?.() }
   }
   private async runScan(roots: string[]): Promise<ScanResult> {
+    const progress = this.progress = new ScanProgressTracker(this.config.onProgress)
+    progress.stage('scan-files')
     this.status = 'scanning'; const scanId = `scan_${Date.now().toString(36)}`; const all = [] as Awaited<ReturnType<ScanCoordinator['scanRoot']>>[]
-    for (const root of roots) all.push(await this.coordinator.scanRoot(root))
+    for (const root of roots) all.push(await this.coordinator.scanRoot(root, activity => progress.add(activity)))
     this.status = 'reconciling'; const resources = all.flatMap((item) => item.resources)
-    const reconciled = await this.reconciler.reconcile(resources, roots)
+    progress.stage('scan-index')
+    const reconciled = await this.reconciler.reconcile(resources, roots, () => progress.add({ assetsProcessed: 1 }))
+    progress.stage('scan-index')
     const result: ScanResult = { scanId, roots, filesObserved: all.reduce((sum, item) => sum + item.filesObserved, 0), resourcesAccepted: resources.filter((item) => !['ignored', 'unknown_image', 'binary_companion'].includes(item.kind)).length, resourcesIgnored: resources.filter((item) => ['ignored', 'unknown_image', 'binary_companion'].includes(item.kind)).length, errors: all.flatMap((item) => item.errors), ...reconciled }
     this.lastScan = result
     this.status = 'running'

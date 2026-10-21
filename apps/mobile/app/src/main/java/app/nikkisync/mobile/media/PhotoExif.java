@@ -14,7 +14,7 @@ public final class PhotoExif {
  private PhotoExif(){}
  public static String versionName(Context context,String version)throws Exception{
   if(releases==null)synchronized(PhotoExif.class){if(releases==null)try(var in=context.getAssets().open("game-version-names.json")){
-   releases=new JSONArray(new String(in.readAllBytes(),StandardCharsets.UTF_8));
+   releases=new JSONArray(new String(app.nikkisync.mobile.util.ByteStreams.readAllBytes(in),StandardCharsets.UTF_8));
   }}
   for(int i=0;i<releases.length();i++){var r=releases.getJSONObject(i);if(r.getString("version").equals(version==null?"":version.replaceFirst("^[vV]","")))return r.getString("name");}
   return "";

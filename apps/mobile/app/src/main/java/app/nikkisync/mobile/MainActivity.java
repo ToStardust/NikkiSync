@@ -94,6 +94,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class MainActivity extends ComponentActivity implements NsdDiscovery.Listener, ChromePage.Owner {
     private ChromeNavigationHost navigation;
     @Override public ChromeNavigationHost navigationHost(){return navigation;}
@@ -169,7 +170,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     };
 
     private void resumeConnection(){
-        if(discovery!=null&&checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)==PackageManager.PERMISSION_GRANTED)discovery.start();
+        if(discovery!=null&&canDiscoverNearby())discovery.start();
         PairedServer saved=serverStore==null?null:serverStore.load();
         if(saved!=null)connect(saved,"正在连接已配对电脑…");
         main.removeCallbacks(connectionRecovery);main.postDelayed(connectionRecovery,15_000);
@@ -178,7 +179,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private boolean profileStatsLoading;
     private SavedPhotoStore.Record pendingEditedLinkSource;
     private final ActivityResultLauncher<PickVisualMediaRequest> editedPhotoPicker =
-            registerForActivityResult(new ActivityResultContracts.PickMultipleVisualMedia(MediaStore.getPickImagesMaxLimit()), this::handleEditedPhotoSelection);
+            registerForActivityResult(new ActivityResultContracts.PickMultipleVisualMedia(), this::handleEditedPhotoSelection);
 
     private TextView titleLabel;
     private TextView status;
@@ -2262,8 +2263,14 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private void requestNearbyAndDiscover() {
         if(!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted()||discovery==null)return;
-        if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED) discovery.start();
+        if (canDiscoverNearby()) discovery.start();
         else requestPermissions(new String[]{Manifest.permission.NEARBY_WIFI_DEVICES}, NEARBY_PERMISSION);
+    }
+
+    private boolean canDiscoverNearby() {
+        // NSD on Android 11/12 does not use the Android 13 nearby-Wi-Fi runtime permission.
+        return android.os.Build.VERSION.SDK_INT < 33
+                || checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED;
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {

@@ -6,7 +6,7 @@ import { createGalleryServer, releaseProtocolRuntime, type GalleryConfig, type G
 type Listener = { port: number; stop(): Promise<void> }
 export interface WeChatGalleryStatus { state: 'idle'|'starting'|'waiting'|'connected'|'disconnected'|'closed'|'expired'|'error'; photoCount: number; originalsSent: number; expiresAt?: string }
 export interface WeChatGalleryConfig {
-  host: string
+  host: string | (() => string)
   snapshot(): Promise<GallerySource>
   qrSvg(payload: string): Promise<string>
   listen?(config: GalleryConfig, source: GallerySource, events: GalleryEvents): Promise<Listener>
@@ -52,7 +52,7 @@ export class WeChatGalleryService {
     await this.release();guard()
     this.current={state:'starting',photoCount:0,originalsSent:0}
     try {
-      const host=this.config.host
+      const host=typeof this.config.host === 'function' ? this.config.host() : this.config.host
       if (!net.isIPv4(host)||! /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) throw new Error('请连接局域网后重试')
       const source=await this.config.snapshot();guard()
       const port=await (this.config.reservePort??(async()=>{
