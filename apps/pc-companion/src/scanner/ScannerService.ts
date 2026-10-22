@@ -1,5 +1,6 @@
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import path from 'node:path'
+import {realpath} from 'node:fs/promises'
 import { FileStabilityGuard } from './FileStabilityGuard.js'
 import { ScannerDiscovery } from './ScannerDiscovery.js'
 import { ScannerWatcher } from './ScannerWatcher.js'
@@ -29,7 +30,13 @@ export class ScannerService {
   async start(): Promise<ScanResult> {
     this.status = 'discovering'; this.installation = await new ScannerDiscovery(this.config).discover()
     if (!this.installation&&!this.config.allowMissingInstallation&&this.extraDirectories.length===0) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
-    const retired=(this.config.retiredExtraDirectories??[]).filter(root=>!this.getScanRoots().some(active=>within(root,active)||within(active,root)))
+    // Compare physical scope aliases without changing existing asset/resource path identities.
+    const active=await Promise.all(this.getScanRoots().map(root=>realpath(root).catch(()=>root)))
+    const retired:string[]=[]
+    for(const root of this.config.retiredExtraDirectories??[]){
+      const physical=await realpath(root).catch(()=>root)
+      if(!active.some(scope=>within(physical,scope)||within(scope,physical)))retired.push(root,physical)
+    }
     if(retired.length)new AssetRepository(this.database).markMissingByRoots([],retired)
     const result = await this.fullScan()
     this.progress?.stage('scan-watch')

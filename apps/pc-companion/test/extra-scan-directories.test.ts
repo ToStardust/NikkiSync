@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {mkdtemp,mkdir,writeFile,readFile,rename,rm,symlink} from 'node:fs/promises'
+import {mkdtemp,mkdir,writeFile,readFile,rename,rm,symlink,realpath} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {DatabaseManager} from '@nikkisync/database'
@@ -9,7 +9,7 @@ import {ExtraScanDirectories,loadExtraScanDirectories,loadRetiredExtraDirectorie
 import {createDesktopControlServer} from '../src/desktop/DesktopControlServer.js'
 
 async function fixture(){
-  const root=await mkdtemp(path.join(os.tmpdir(),'momo-extra-'))
+  const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'momo-extra-')))
   const game=path.join(root,'InfinityNikki'),native=path.join(game,'X6Game/Saved/GamePlayPhotos/10001/NikkiPhotos_HighQuality')
   await mkdir(native,{recursive:true});await writeFile(path.join(game,'InfinityNikki.exe'),'')
   await writeFile(path.join(native,'Original.jpg'),'native')
@@ -165,6 +165,31 @@ test('actual filesystem watchers import newly created exports and stop watching 
     await writeFile(path.join(folder,'After-removal.jpg'),'retained locally')
     await new Promise(resolve=>setTimeout(resolve,80));assert.equal(f.ready(),1)
   }finally{await watching?.stop();await f.close()}
+})
+
+test('a physical game album cannot be added again through a different automatic-root spelling',async()=>{
+  const f=await fixture();let aliased:ScannerService|undefined
+  try{
+    await f.scanner.stop()
+    const alias=path.join(f.root,'Game alias');await symlink(f.game,alias,'junction')
+    aliased=new ScannerService(f.database,{startingPaths:[alias],runningExecutablePaths:[],watcher:false})
+    await aliased.start()
+    const extra=new ExtraScanDirectories(f.file,aliased)
+    await assert.rejects(extra.inspect(f.native),/already_covered/)
+  }finally{await aliased?.stop();await f.close()}
+})
+
+test('interrupted removal through an alternate root spelling retires the indexed physical folder',async()=>{
+  const f=await fixture();let restarted:ScannerService|undefined
+  try{
+    const folder=path.join(f.root,'Retired exports');await mkdir(folder);await writeFile(path.join(folder,'Photo.jpg'),'photo')
+    await f.extra.add((await f.extra.inspect(folder)).id);assert.equal(f.ready(),2);await f.scanner.stop()
+    const alias=path.join(f.root,'Retired alias');await symlink(folder,alias,'junction')
+    await writeFile(f.file,JSON.stringify({version:1,directories:[],retiredRoots:[alias]}))
+    restarted=new ScannerService(f.database,{startingPaths:[f.game],runningExecutablePaths:[],watcher:false,retiredExtraDirectories:loadRetiredExtraDirectories(f.file)})
+    await restarted.start();assert.equal(f.ready(),1)
+    assert.equal(await readFile(path.join(folder,'Photo.jpg'),'utf8'),'photo')
+  }finally{await restarted?.stop();await f.close()}
 })
 
 test('external LIVE requires an exact cover/video name pair rather than a similar recording',async()=>{

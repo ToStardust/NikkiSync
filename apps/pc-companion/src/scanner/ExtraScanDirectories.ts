@@ -69,7 +69,7 @@ export class ExtraScanDirectories{
     }
     const unique=roots.filter((root,index)=>!roots.some((other,otherIndex)=>otherIndex<index&&overlaps(root.path,other.path)))
     if(this.directories.length+unique.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
-    const existing=[...this.directories.map(item=>item.path),...this.scanner.getAutomaticRoots()]
+    const existing=await resolveScopes([...this.directories.map(item=>item.path),...this.scanner.getAutomaticRoots()])
     if(unique.some(root=>existing.some(added=>overlaps(root.path,added))))throw new Error('already_covered')
     let images=0,videos=0,observed=0,folders=0,limited=false
     const visit=async(directory:string,depth:number):Promise<void>=>{
@@ -94,9 +94,10 @@ export class ExtraScanDirectories{
   add(id:string):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{
     const item=this.proposals.get(id);this.proposals.delete(id)
     if(!item||item.expires<Date.now())throw new Error('selection_expired')
+    const existing=await resolveScopes([...this.directories.map(value=>value.path),...this.scanner.getAutomaticRoots()])
     for(const root of item.proposal.roots){
       if(key(await realpath(root.path))!==key(root.path))throw new Error('directory_unavailable')
-      if([...this.directories.map(value=>value.path),...this.scanner.getAutomaticRoots()].some(value=>overlaps(value,root.path)))throw new Error('already_covered')
+      if(existing.some(value=>overlaps(value,root.path)))throw new Error('already_covered')
     }
     if(this.directories.length+item.proposal.roots.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     await this.change([...this.directories,...item.proposal.roots])
@@ -129,3 +130,4 @@ export class ExtraScanDirectories{
 }
 
 async function directoryExists(directory:string):Promise<boolean>{try{return (await stat(directory)).isDirectory()}catch{return false}}
+async function resolveScopes(roots:string[]):Promise<string[]>{return Promise.all(roots.map(root=>realpath(root).catch(()=>root)))}

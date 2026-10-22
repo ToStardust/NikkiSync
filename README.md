@@ -8,7 +8,7 @@
 
 照片同步在本机/局域网完成。在线参数解析默认开启，可在同步设置关闭，此前手动关闭的选择会保留；开启时会向第三方发送游戏UID、编码参数及校验值。公共字典与游戏版本检查也可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 配置。源码不含个人照片、数据库、配对密钥、私有签名密钥和编译包。
 
-**下载 [1.0.15 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.15-public-beta.1)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份 APK。首页新增首次使用引导，可直接导出安装包、前往连接排障和添加扫描目录。合并 Wi-Fi/手机热点多地址重连、本地网络授权、额外目录扫描，以及近期 LIVE 保存兼容修复，保留 Android 11/12 支持和已有照片数据。[本版更新日志](docs/releases/v1.0.15-public-beta.1.md)
+**下载 [1.0.15 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.15-public-beta.2)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份 APK。首页新增首次使用引导，可直接导出安装包、前往连接排障和添加扫描目录。合并 Wi-Fi/手机热点多地址重连、本地网络授权、额外目录扫描，以及近期 LIVE 保存兼容修复，保留 Android 11/12 支持和已有照片数据。[本版更新日志](docs/releases/v1.0.15-public-beta.2.md)
 
 1.0.15 APK 沿用近期公测版的匿名签名，可直接覆盖相同签名的版本。更早使用旧签名的安装版本无法直接覆盖，请保留旧 App 和数据，不要为解决签名冲突卸载或清除数据；需要迁移时请通过项目仓库反馈。Windows 更新保留已有数据；连接超时时可到“同步设置 → 本地网络权限”手动授权。动态播放与系统相册 LIVE 识别仍需按机型测试。历史 [0.2.14](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14) 发布保留。
 
