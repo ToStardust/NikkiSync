@@ -30,7 +30,7 @@ public final class MotionXmp {
         if(length<=0 || pts<0 || padding<0)throw new IllegalArgumentException("无效 Motion Photo 长度/时间戳");
         if(profile==LivePhotoProfile.OPLUS&&padding!=0)throw new IllegalArgumentException("Oplus 视频必须紧接 JPEG EOI");
         String head="<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\""+RDF+"\"><rdf:Description rdf:about=\"\"";
-        if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR || profile==LivePhotoProfile.HUAWEI_LEGACY)
+        if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR || profile.usesHuaweiTail())
             return (head+"/></rdf:RDF></x:xmpmeta>").getBytes(StandardCharsets.UTF_8);
         StringBuilder s=new StringBuilder(head).append(" xmlns:GCamera=\"").append(CAMERA)
             .append("\" GCamera:MotionPhoto=\"1\" GCamera:MotionPhotoVersion=\"1\" GCamera:MotionPhotoPresentationTimestampUs=\"").append(pts).append("\"");

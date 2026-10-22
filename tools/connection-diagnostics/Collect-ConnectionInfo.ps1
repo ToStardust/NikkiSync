@@ -86,9 +86,100 @@ function Get-AssistantVersions {
     return @($versions | Sort-Object -Unique)
 }
 
+function Test-TcpPortSpec([string]$Spec, [int]$Port) {
+    if ([string]::IsNullOrWhiteSpace($Spec) -or $Spec -eq '*' -or $Spec -eq 'Any') { return $true }
+    foreach ($part in $Spec.Split(',')) {
+        $part = $part.Trim()
+        if ($part -match '^([0-9]+)-([0-9]+)$') {
+            if ($Port -ge [int]$Matches[1] -and $Port -le [int]$Matches[2]) { return $true }
+        } elseif ($part -match '^[0-9]+$' -and [int]$part -eq $Port) { return $true }
+    }
+    return $false
+}
+
+function ConvertFrom-ListenerRows($Rows, [int]$Port) {
+    $owners = @()
+    foreach ($row in $Rows) {
+        $fields = ([string]$row).Trim() -split '\s+'
+        # The state label is localized on some systems; the zero remote endpoint identifies listeners.
+        if ($fields.Count -ne 5 -or $fields[0] -ne 'TCP') { continue }
+        if (-not $fields[1].EndsWith(':' + $Port) -or $fields[2] -notmatch '^(0\.0\.0\.0|\[::\]):0$') { continue }
+        $owner = 0
+        if ([int]::TryParse($fields[4], [ref]$owner) -and $owner -gt 0) { $owners += $owner }
+    }
+    return @($owners | Sort-Object -Unique)
+}
+
+function Get-ListenerProgramPaths([int]$Port) {
+    $process = $null
+    try {
+        $info = New-Object Diagnostics.ProcessStartInfo
+        $info.FileName = Join-Path $env:SystemRoot 'System32\netstat.exe'
+        $info.Arguments = '-ano -p tcp'; $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true; $info.RedirectStandardOutput = $true
+        $process = [Diagnostics.Process]::Start($info)
+        $reading = $process.StandardOutput.ReadToEndAsync()
+        if (-not $process.WaitForExit(3000)) { $process.Kill(); return }
+        if ($process.ExitCode -ne 0) { return }
+        foreach ($owner in @(ConvertFrom-ListenerRows ($reading.GetAwaiter().GetResult() -split '\r?\n') $Port)) {
+            try {
+                $item = Get-Process -Id $owner -ErrorAction Stop
+                # Used only for an exact local rule comparison. Never format or export this path.
+                $path = [string]$item.MainModule.FileName
+                if (-not [string]::IsNullOrWhiteSpace($path)) { $path }
+            } catch { }
+        }
+    } catch { }
+    finally { if ($null -ne $process) { $process.Dispose() } }
+}
+
+function Get-RelatedRuleCounts($Rules, $ProgramPaths, [int]$Port, [int]$Profile) {
+    $counts = @{ApplicationAllow=0;ApplicationBlock=0;PortAllow=0;PortBlock=0;OtherBackendAllow=0}
+    foreach ($rule in $Rules) {
+        try {
+            if (-not $rule.Enabled -or $rule.Direction -ne 1 -or (($rule.Profiles -band $Profile) -eq 0)) { continue }
+            if ($rule.Protocol -ne 6 -and $rule.Protocol -ne 256) { continue }
+            $ports = '*'; if ($rule.Protocol -eq 6) { $ports = [string]$rule.LocalPorts }
+            if (-not (Test-TcpPortSpec $ports $Port)) { continue }
+            $program = [Environment]::ExpandEnvironmentVariables([string]$rule.ApplicationName)
+            $scope = $null
+            if ($program -and @($ProgramPaths).Count -gt 0 -and @($ProgramPaths) -contains $program) { $scope = 'Application' }
+            elseif (($program -eq '' -or $program -eq '*') -and $ports -ne '*' -and $ports -ne 'Any' -and $ports -ne '') { $scope = 'Port' }
+            elseif ($program -match '(?i)[\\/](NikkiSync|MomoCamera)-PC-service\.exe$' -and @($ProgramPaths).Count -gt 0 -and $rule.Action -eq 1) { $counts.OtherBackendAllow++ }
+            if ($null -ne $scope) {
+                if ($rule.Action -eq 1) { $counts[$scope + 'Allow']++ }
+                elseif ($rule.Action -eq 0) { $counts[$scope + 'Block']++ }
+            }
+        } catch { }
+    }
+    return $counts
+}
+
+function Get-FirewallSnapshot([int]$Port) {
+    $policy = $null
+    try {
+        $paths = @(Get-ListenerProgramPaths $Port)
+        $policy = New-Object -ComObject HNetCfg.FwPolicy2
+        $active = [int]$policy.CurrentProfileTypes
+        $rulesAvailable = $false; $rules = @()
+        try { $rules = @($policy.Rules); $rulesAvailable = $true } catch { }
+        $profiles = @()
+        foreach ($profile in @(@{Kind='Domain';Flag=1},@{Kind='Private';Flag=2},@{Kind='Public';Flag=4})) {
+            if (($active -band $profile.Flag) -eq 0) { continue }
+            $inbound = 'Unknown'
+            $action = [int]$policy.DefaultInboundAction($profile.Flag)
+            if ($action -eq 0) { $inbound = 'Block' } elseif ($action -eq 1) { $inbound = 'Allow' }
+            $profiles += @{Kind=$profile.Kind;Enabled=[bool]$policy.FirewallEnabled($profile.Flag);BlockAll=[bool]$policy.BlockAllInboundTraffic($profile.Flag);DefaultInbound=$inbound;RulesAvailable=$rulesAvailable;Counts=(Get-RelatedRuleCounts $rules $paths $Port $profile.Flag)}
+        }
+        if ($profiles.Count -eq 0) { return @{Available=$false} }
+        return @{Available=$true;OwnerKnown=($paths.Count -gt 0);Profiles=$profiles}
+    } catch { return @{Available=$false} }
+    finally { if ($null -ne $policy) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($policy) } }
+}
+
 function Format-ConnectionReport($Snapshot) {
     $lines = New-Object 'Collections.Generic.List[string]'
-    $lines.Add('MomoCamera connection diagnostic report v1')
+    $lines.Add('MomoCamera connection diagnostic report v2')
     $lines.Add('Time: ' + $Snapshot.Timestamp)
     $lines.Add('OS version: ' + $Snapshot.System)
     $lines.Add('Running assistant versions: ' + (@($Snapshot.Versions) -join ', '))
@@ -113,9 +204,28 @@ function Format-ConnectionReport($Snapshot) {
         $lines.Add('  ' + $check.Address + ': ' + $result)
     }
     $lines.Add('')
+    if ($null -eq $Snapshot.Firewall -or -not $Snapshot.Firewall.Available) {
+        $lines.Add('Windows firewall: unavailable (not evidence that the firewall is disabled)')
+    } else {
+        $lines.Add('Windows firewall active profiles (read-only):')
+        $ownerState = 'unavailable'; if ($Snapshot.Firewall.OwnerKnown) { $ownerState = 'identified locally; path omitted' }
+        $lines.Add('  TCP listener executable: ' + $ownerState)
+        foreach ($profile in $Snapshot.Firewall.Profiles) {
+            $enabled = 'no'; if ($profile.Enabled) { $enabled = 'yes' }
+            $blockAll = 'no'; if ($profile.BlockAll) { $blockAll = 'yes' }
+            $lines.Add('  ' + $profile.Kind + ': enabled=' + $enabled + '; block-all=' + $blockAll + '; default-inbound=' + $profile.DefaultInbound)
+            if ($profile.RulesAvailable) {
+                $counts = $profile.Counts
+                $lines.Add('    Related enabled inbound TCP rules: application allow=' + $counts.ApplicationAllow + '; block=' + $counts.ApplicationBlock + '; port-specific allow=' + $counts.PortAllow + '; block=' + $counts.PortBlock + '; other backend paths allow=' + $counts.OtherBackendAllow)
+            } else { $lines.Add('    Related rules: unavailable') }
+        }
+        $lines.Add('Rule counts are clues, not an effective-access verdict: address/interface/service scope, policy and other security filters may apply.')
+        $lines.Add('Other backend paths may belong to older or additional installs; they do not allow the current listener executable.')
+    }
+    $lines.Add('')
     $lines.Add('A successful local TCP check does not prove the phone can reach the PC.')
     $lines.Add('This tool does not change firewall, VPN, adapter or routing settings.')
-    $lines.Add('No photos, pairing QR/token, credentials, computer/user names or personal paths are collected.')
+    $lines.Add('No photos, pairing QR/token, credentials, computer/user names or personal paths are included in this report.')
     return ($lines -join [Environment]::NewLine)
 }
 
@@ -131,7 +241,7 @@ foreach ($adapter in @($adapters | Where-Object { $_.State -eq 'Up' })) {
         if ($checks.Count -lt 12 -and (Test-Ipv4 $ip.Address)) { $checks += @{Address=$ip.Address; Success=(Test-LocalTcp $ip.Address $syncPort)} }
     }
 }
-$snapshot = @{Timestamp=[DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz'); System=[Environment]::OSVersion.Version.ToString(); Versions=@(Get-AssistantVersions); Status=$status; Adapters=$adapters; Listeners=$listeners; Checks=$checks}
+$snapshot = @{Timestamp=[DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz'); System=[Environment]::OSVersion.Version.ToString(); Versions=@(Get-AssistantVersions); Status=$status; Adapters=$adapters; Listeners=$listeners; Checks=$checks; Firewall=(Get-FirewallSnapshot $syncPort)}
 $report = Format-ConnectionReport $snapshot
 $destination = Join-Path $OutputDirectory ('ConnectionReport-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt')
 try {

@@ -245,3 +245,5 @@ test('arrival order and UID isolation keep deterministic asset identity', async 
   const ids = (database.connection.prepare('SELECT asset_id FROM assets ORDER BY asset_id').all() as Array<{ asset_id: string }>).map((row) => row.asset_id)
   assert.equal(new Set(ids).size, 3); await scanner.stop(); database.close(); await rm(f.root, { recursive: true, force: true })
 })
+// Keep explicit-folder regressions in the default npm test scanner suite.
+import './extra-scan-directories.test.js'

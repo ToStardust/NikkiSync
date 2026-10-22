@@ -39,7 +39,8 @@ public final class NikkiSyncClient {
 
     public static PairedServer pair(PairingPayload payload, DeviceIdentity identity) throws Exception {
         PairedServer provisional = new PairedServer(payload.serverId(), "NikkiSync PC", payload.host(), payload.port(),
-                payload.tlsFingerprintSha256(), "", "", 0);
+                payload.tlsFingerprintSha256(), "", "", 0).withHosts(payload.hosts());
+        if(provisional.hosts().size()>1)provisional=VerifiedEndpointResolver.resolve(provisional);
         SignedHttpClient http = new SignedHttpClient(provisional, identity);
         JSONObject device = new JSONObject()
                 .put("deviceId", identity.deviceId())
@@ -55,10 +56,10 @@ public final class NikkiSyncClient {
             throw new SecurityException("PC identity changed during pairing");
         }
         return new PairedServer(
-                response.getString("serverId"), response.getString("serverName"), payload.host(), payload.port(),
+                response.getString("serverId"), response.getString("serverName"), provisional.host(), provisional.port(),
                 payload.tlsFingerprintSha256(), response.getString("serverPublicKey"),
                 response.getString("deviceCredential"), 0
-        );
+        ).withHosts(provisional.hosts());
     }
 
     public AssetPage assets(String cursor, int limit) throws Exception {

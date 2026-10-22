@@ -65,7 +65,7 @@ public final class LivePhotoControls {
         guidance.setTextColor(context.getColor(R.color.text_secondary));
         guidance.setText(selectedProfile(context).guidance());
         profile.setOnClickListener(v->{
-            LivePhotoProfile[] all=LivePhotoProfile.values();String[] labels=new String[all.length+1];labels[0]="自动选择（不代表机型已验收）";
+            LivePhotoProfile[] all=LivePhotoProfile.values();String[] labels=new String[all.length+1];labels[0]="自动选择（推荐）";
             for(int i=0;i<all.length;i++)labels[i+1]=all[i].label;
             String override=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString(KEY,"");int selected=0;
             for(int i=0;i<all.length;i++)if(all[i].id.equals(override))selected=i+1;
@@ -77,7 +77,7 @@ public final class LivePhotoControls {
         });parent.addView(profile);
         parent.addView(guidance);
         TextView scope=new TextView(context);scope.setTextSize(12);scope.setTextColor(context.getColor(R.color.text_secondary));
-        scope.setText("支持状态按系统/相册版本分别验收。荣耀 SDK 和原生鸿蒙尚未接入；未知环境默认尝试标准格式，不保证原生相册识别。");parent.addView(scope);
+        scope.setText("默认按设备选择格式，也可手动更改。兼容性取决于系统与图库版本；华为/荣耀使用兼容封装，荣耀官方 SDK 与原生鸿蒙客户端尚未接入。");parent.addView(scope);
         Button report=action(context,"复制当前设备测试信息",false);
         report.setOnClickListener(v->{
             LivePhotoProfile selected=selectedProfile(context);

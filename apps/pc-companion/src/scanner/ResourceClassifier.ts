@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { toPathKey } from '@nikkisync/core'
-import type { DiscoveredResource, DiscoveredResourceKind } from './types.js'
+import type { DiscoveredResource, DiscoveredResourceKind, ExtraScanRoot } from './types.js'
 
 function normalizeStem(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '').replace(/_cover$/i, '').replace(/\s+/g, '_').toLowerCase()
@@ -113,20 +113,31 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string, 
 }
 
 export class ResourceClassifier {
-  classifyPath(filePath: string): DiscoveredResourceKind { return classifyKind(filePath) }
+  classifyPath(filePath: string, extra?: ExtraScanRoot): DiscoveredResourceKind {
+    const original=classifyKind(filePath)
+    if(extra?.mode!=='images')return original
+    if(original==='unknown_image')return /_cover\.(jpe?g|png|webp)$/i.test(filePath)?'motion_cover':'high_quality'
+    if(path.extname(filePath).toLowerCase()==='.mp4'&&!/[/\\]pendingup[/\\]/i.test(filePath))return 'motion_video'
+    return original
+  }
 
-  async classify(filePath: string, gamePlayRoot: string, onRead?: (bytes: number) => void): Promise<DiscoveredResource> {
+  async classify(filePath: string, gamePlayRoot: string, onRead?: (bytes: number) => void, extra?: ExtraScanRoot): Promise<DiscoveredResource> {
     const info = await stat(filePath)
     const fileExt = path.extname(filePath).toLowerCase()
-    const kind = classifyKind(filePath)
+    const kind = this.classifyPath(filePath,extra)
     const fileName = path.basename(filePath)
     const shouldHash = !['ignored', 'unknown_image', 'binary_companion'].includes(kind)
     const digest = shouldHash ? await sha256File(filePath, onRead) : undefined
     const nativeEnvelope = (kind === 'high_quality' || kind === 'motion_cover')
       ? await nativePhotoEnvelope(filePath, info.size, fileExt, onRead)
       : {}
-    const uid = uidFor(filePath, gamePlayRoot)
+    const container=path.dirname(filePath)
+    const parentUid=/^(NikkiPhotos_(High|Low)Quality|Videos?)$/i.test(path.basename(container))?path.basename(path.dirname(container)):undefined
+    const uid=extra?(parentUid&&/^\d{5,}$/.test(parentUid)?parentUid:extra.mode==='native'?uidFor(filePath,gamePlayRoot):undefined):uidFor(filePath,gamePlayRoot)
+    let groupDirectory=path.dirname(filePath)
+    if(/^NikkiPhotos_(High|Low)Quality$/i.test(path.basename(groupDirectory)))groupDirectory=path.dirname(groupDirectory)
     return {
+      ...(extra?{extraNamespace:`extra:${extra.id}:${toPathKey(groupDirectory)}${extra.mode==='images'&&classifyKind(filePath)==='unknown_image'&&kind==='high_quality'?'|'+fileName.toLowerCase():''}`} : {}),
       absolutePath: path.resolve(filePath), pathKey: toPathKey(filePath), ...(uid ? { uid } : {}), kind,
       fileName, normalizedStem: normalizeStem(fileName), sizeBytes: info.size, mtimeMs: info.mtimeMs,
       ...(info.birthtimeMs ? { birthtimeMs: info.birthtimeMs } : {}), ...(digest ? { sha256: digest } : {}),

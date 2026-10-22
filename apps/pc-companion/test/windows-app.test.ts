@@ -118,9 +118,9 @@ test('desktop status counts current assets without loading library rows or large
     assets.create({ assetId: 'large', assetType: 'photo', discoveredAt: '2026-10-05T00:00:00.000Z', metadata: { raw: { nativeParamPayload: 'A'.repeat(256 * 1024) } } })
     assert.equal(service.getStatus(input).assets, 1)
     assets.create({ assetId: 'deleted', assetType: 'photo', assetState: 'deleted', discoveredAt: '2026-10-05T00:00:00.000Z' })
-    assert.equal(service.getStatus(input).assets, 2, 'retain the existing count of all indexed assets')
+    assert.equal(service.getStatus(input).assets, 1, 'removed sources must not remain in the visible library count')
     assets.hardDelete('large')
-    assert.equal(service.getStatus(input).assets, 1, 'counts read current rows instead of stale cached results')
+    assert.equal(service.getStatus(input).assets, 0, 'counts read current ready rows instead of stale cached results')
     assert.equal(service.getStatus({ ...input, assets: 0 }).assets, 0)
   } finally { database.close() }
 })

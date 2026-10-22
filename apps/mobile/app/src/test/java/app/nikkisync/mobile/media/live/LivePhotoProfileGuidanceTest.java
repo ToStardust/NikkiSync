@@ -9,6 +9,7 @@ public final class LivePhotoProfileGuidanceTest {
         assertTrue(LivePhotoProfile.VIVO_SINGLE_XMP.guidance().contains("单文件"));
         assertTrue(LivePhotoProfile.SAMSUNG_SEF.guidance().contains("旧式"));
         assertTrue(LivePhotoProfile.HUAWEI_LEGACY.guidance().contains("鸿蒙"));
-        assertEquals(LivePhotoProfile.STANDARD,LivePhotoProfile.defaultFor("HONOR","HONOR"));
+        assertTrue(LivePhotoProfile.HONOR_COMPAT.guidance().contains("实机确认"));
+        assertEquals(LivePhotoProfile.HONOR_COMPAT,LivePhotoProfile.defaultFor("HONOR","HONOR"));
     }
 }

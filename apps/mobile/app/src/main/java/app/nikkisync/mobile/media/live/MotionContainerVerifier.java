@@ -13,9 +13,8 @@ import java.util.Arrays;
 public final class MotionContainerVerifier {
     private MotionContainerVerifier(){}
     public static void verify(LivePhotoProfile profile,MotionContainer.Product product,File motion,MotionContainer.Options o)throws IOException{
-        File primary=product.primary();byte[] prefix;
-        try(FileInputStream in=new FileInputStream(primary)){prefix=app.nikkisync.mobile.util.ByteStreams.readNBytes(in,(int)Math.min(primary.length(),JpegSegments.MAX_IMAGE_BYTES));}
-        int jpegEnd=JpegSegments.endOffset(prefix);
+        File primary=product.primary();var jpeg=JpegSegments.inspect(primary);
+        long jpegEnd=jpeg.endOffset();
         if(profile==LivePhotoProfile.VIVO_LEGACY_PAIR){
             JpegSegments.require(product.companions().size()==1,"vivo 动态组件缺失");File video=product.companions().get(0);
             JpegSegments.require(o.pairId().equals(VivoLegacyMetadata.readId(primary))&&o.pairId().equals(VivoLegacyMetadata.readId(video)),"vivo 关联 ID 不一致");
@@ -42,20 +41,21 @@ public final class MotionContainerVerifier {
                 long back=Integer.toUnsignedLong(b.getInt(16)),size=Integer.toUnsignedLong(b.getInt(20));JpegSegments.require(back==size&&size>=8+MotionContainer.SEF_NAME.length,"SEF offset/length 无效");
                 long field=r.length()-32-back;JpegSegments.require(field>=jpegEnd,"SEF 指向 JPEG 内部");r.seek(field);byte[] h=new byte[8+MotionContainer.SEF_NAME.length];r.readFully(h);
                 ByteBuffer hb=ByteBuffer.wrap(h).order(ByteOrder.LITTLE_ENDIAN);JpegSegments.require(hb.getInt()==0x0a300000&&hb.getInt()==MotionContainer.SEF_NAME.length&&ascii(Arrays.copyOfRange(h,8,h.length)).equals("MotionPhoto_Data"),"SEF motion field 无效");
-                offset=field+h.length;length=size-h.length;JpegSegments.require(MotionXmp.timestamp(JpegSegments.xmp(prefix))==o.presentationUs(),"SEF 封面时间不一致");
-            }else if(profile==LivePhotoProfile.HUAWEI_LEGACY){
+                offset=field+h.length;length=size-h.length;JpegSegments.require(MotionXmp.timestamp(jpeg.xmp())==o.presentationUs(),"SEF 封面时间不一致");
+            }else if(profile.usesHuaweiTail()){
                 JpegSegments.require(r.length()>=60,"Huawei 尾标缺失");r.seek(r.length()-60);byte[] tail=new byte[60];r.readFully(tail);
                 JpegSegments.require(ascii(Arrays.copyOfRange(tail,0,6)).trim().equals("v6_f"+o.coverFrame()),"Huawei 封面帧不一致");
+                JpegSegments.require(ascii(Arrays.copyOfRange(tail,20,28)).trim().equals(o.coverFrame()+":"+o.frameCount()),"华为/荣耀尾标帧信息不一致");
                 String live=ascii(Arrays.copyOfRange(tail,40,60)).trim();JpegSegments.require(live.startsWith("LIVE_"),"Huawei LIVE_ 缺失");
                 try{length=Long.parseLong(live.substring(5))-20;}catch(NumberFormatException e){throw new IOException("Huawei 视频长度无效",e);}offset=r.length()-60-length;
             }else{
-                byte[] xmp=JpegSegments.xmp(prefix);length=MotionXmp.videoLength(xmp);offset=r.length()-length;
+                byte[] xmp=jpeg.xmp();length=MotionXmp.videoLength(xmp);offset=r.length()-length;
                 JpegSegments.require(MotionXmp.timestamp(xmp)==o.presentationUs(),"Motion 封面时间不一致");
                 JpegSegments.require(MotionXmp.primaryPadding(xmp)==offset-jpegEnd,"Primary padding/视频起点不一致");
                 if(profile==LivePhotoProfile.OPLUS){
                     MotionXmp.verifyOplus(xmp,length,o.presentationUs());
                     JpegSegments.require(offset==jpegEnd,"Oplus 视频没有紧接 JPEG EOI");
-                    JpegSegments.require(JpegSegments.mpfPrimarySize(prefix)==jpegEnd,"MPF 不是最终 JPEG 长度");
+                    JpegSegments.require(jpeg.mpfPrimarySize()==jpegEnd,"MPF 不是最终 JPEG 长度");
                 }
             }
         }

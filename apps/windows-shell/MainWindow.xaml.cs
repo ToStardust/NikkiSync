@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private string? _runtimeDirectory;
     private string? _gameRoot;
     private string _startupPhase = "runtime";
+    private PayloadPreparationStep _runtimeStep = PayloadPreparationStep.ReadManifest;
     private readonly object _startupContent;
     private readonly RetryableStartupInitialization _browserInitialization = new();
     private readonly CancellationTokenSource _startupCancellation = new();
@@ -32,6 +33,10 @@ public partial class MainWindow : Window
     public Dictionary<string, double> StartupTimings { get; } = new();
     private VerifiedUpdate? _availableUpdate;
     private UpdateWindow? _updateWindow;
+    private bool _networkAuthorizationBusy;
+    private bool _networkRuleAuthorized,_networkRuleOwned;
+    private int _networkAuthorizationRevision;
+    private bool _extraFolderPickerOpen;
 
     public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
     {
@@ -67,6 +72,7 @@ public partial class MainWindow : Window
         Loaded -= OnLoaded;
         _startupWatch.Restart();
         StartupTimings.Clear();
+        _runtimeStep = PayloadPreparationStep.ReadManifest;
         _startupTimer.Start();
         try
         {
@@ -80,7 +86,7 @@ public partial class MainWindow : Window
                 if (value < 1 && DateTime.UtcNow - lastProgress < TimeSpan.FromMilliseconds(100)) return;
                 lastProgress = DateTime.UtcNow;
                 Dispatcher.BeginInvoke(new Action(() => StartupProgress.Value = value * 100));
-            }));
+            }, step: value => _runtimeStep = value));
             _startupCancellation.Token.ThrowIfCancellationRequested();
             StartupTimings["runtimeReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             StartupText.Text = "2 / 4 · 准备界面显示组件…";
@@ -155,7 +161,7 @@ public partial class MainWindow : Window
             var missingBrowser = error is WebView2RuntimeNotFoundException;
             var failure = missingBrowser ? StartupFailure.Create("WEBVIEW_MISSING") : StartupFailure.FromException(error);
             var diagnosticsDirectory = _verificationDirectory is null ? RuntimePayload.UserDirectory : Path.Combine(_verificationDirectory, "localdata", "NikkiSync");
-            var log = StartupDiagnostics.Write(diagnosticsDirectory, _startupPhase, failure);
+            var log = StartupDiagnostics.Write(diagnosticsDirectory, _startupPhase, failure, error, _runtimeStep);
             panel.Children.Add(new TextBlock { Text = "NikkiSync 暂时无法启动", FontSize = 22, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) });
             panel.Children.Add(new TextBlock { Text = failure.Message, TextWrapping = TextWrapping.Wrap });
             System.Windows.Controls.Button? choose = null;
@@ -257,8 +263,11 @@ public partial class MainWindow : Window
         {
             ReplyAutostart();
             ReplyPackageInfo();
+            _=RefreshNetworkAuthorizationAsync();
         }
         if (type.GetString() == "checkUpdates") OpenUpdates();
+        if(type.GetString() is "authorizeNetwork" or "revokeNetwork") _=AuthorizeNetworkAsync(type.GetString()=="revokeNetwork");
+        if(type.GetString() is "chooseExtraScanDirectory" or "chooseSpinningMomoDirectory")ChooseExtraScanDirectory(type.GetString()=="chooseSpinningMomoDirectory");
         if (type.GetString() == "openProjectLink" && message.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.String
             && DesktopProjectLinks.Resolve(project.GetString()) is { } projectUrl)
         {
@@ -275,6 +284,85 @@ public partial class MainWindow : Window
     }
 
     private void ReplyAutostart() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled = _autostart.IsEnabled() }));
+    private void ChooseExtraScanDirectory(bool spinningMomo)
+    {
+        if(_verificationDirectory is not null||_extraFolderPickerOpen)return;
+        _extraFolderPickerOpen=true;
+        try
+        {
+            var dialog=new Microsoft.Win32.OpenFolderDialog{Title=spinningMomo?"选择“旋转吧大喵 → 设置 → 输出目录”中配置的照片文件夹":"选择要加入共享相册的照片文件夹（随后可预览并确认）"};
+            var spinning=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),"SpinningMomo");
+            if(spinningMomo&&Directory.Exists(spinning))dialog.InitialDirectory=spinning;
+            if(dialog.ShowDialog(this)!=true)return;
+            ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectorySelected",path=dialog.FolderName}));
+        }
+        catch(Exception){ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectoryError",message="无法打开文件夹选择器，请关闭其他选择窗口后重试。"}));}
+        finally{_extraFolderPickerOpen=false;}
+    }
+    private void ReplyNetworkAuthorization(bool busy,string message) => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {type="networkAuthorization",busy,message,authorized=_networkRuleAuthorized,canRevoke=_networkRuleOwned}));
+
+    private async Task<NetworkAuthorizationPlan> GetNetworkAuthorizationPlanAsync()
+    {
+        if(_runtimeDirectory is null || _controlOrigin is null) throw new InvalidOperationException();
+        using var http=new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler{UseProxy=false,AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(3)};
+        using var status=JsonDocument.Parse(await http.GetStringAsync(new Uri(_controlOrigin,"/api/status")));
+        if(status.RootElement.GetProperty("service").GetString()!="ready") throw new InvalidOperationException();
+        return NetworkAuthorizationPlan.Create(Path.Combine(_runtimeDirectory,"runtime","NikkiSync-PC-service.exe"),status.RootElement.GetProperty("port").GetInt32());
+    }
+
+    private async Task RefreshNetworkAuthorizationAsync()
+    {
+        if(_verificationDirectory is not null || _networkAuthorizationBusy) return;
+        var revision=_networkAuthorizationRevision;
+        try
+        {
+            var plan=await GetNetworkAuthorizationPlanAsync();
+            var state=await Task.Run(()=>NetworkAuthorization.ReadRulePresence(plan));
+            if(_startupCancellation.IsCancellationRequested || _networkAuthorizationBusy || revision!=_networkAuthorizationRevision) return;
+            _networkRuleOwned=state?.Owned==true;
+            _networkRuleAuthorized=_networkRuleOwned&&state?.Matches==true;
+            ReplyNetworkAuthorization(false,_networkRuleAuthorized
+                ?"已检测到本助手添加的本地网络权限。若仍连接失败，请反馈诊断报告；已有权限不等于网络必然可达。"
+                :"这是可选的连接排障功能，已能正常连接时无需操作。连接失败时可点击授权本地网络访问。");
+        }
+        catch
+        {
+            if(!_startupCancellation.IsCancellationRequested && !_networkAuthorizationBusy && revision==_networkAuthorizationRevision)
+                ReplyNetworkAuthorization(false,"暂时无法读取网络授权状态。已正常连接时无需操作；连接失败时仍可点击尝试授权。");
+        }
+    }
+
+    private async Task AuthorizeNetworkAsync(bool remove)
+    {
+        if(_networkAuthorizationBusy) return;
+        if(_verificationDirectory is not null) { ReplyNetworkAuthorization(false,"测试验收模式不修改网络权限。");return; }
+        if(_runtimeDirectory is null || _controlOrigin is null) return;
+        _networkAuthorizationBusy=true;
+        _networkAuthorizationRevision++;
+        ReplyNetworkAuthorization(true,remove?"正在撤销当前服务的授权，如出现 Windows 提示请选择“是”…":"正在设置本地网络权限，如出现 Windows 提示请选择“是”…");
+        var feedback="网络授权未完成，请重试。";
+        var stage="STATUS";
+        try
+        {
+            var plan=await GetNetworkAuthorizationPlanAsync();
+            stage="LAUNCH";
+            using var helper=Process.Start(NetworkAuthorization.CreateElevationStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException(),plan,remove))
+                ?? throw new InvalidOperationException();
+            stage="WAIT";
+            await helper.WaitForExitAsync();
+            feedback=NetworkAuthorization.ResultMessage(helper.ExitCode);
+            if(helper.ExitCode is 0 or 8) _networkRuleAuthorized=_networkRuleOwned=true;
+            if(helper.ExitCode==9) _networkRuleAuthorized=_networkRuleOwned=false;
+        }
+        catch(System.ComponentModel.Win32Exception error) when(error.NativeErrorCode==1223)
+        { feedback="已取消 Windows 授权，网络权限未修改。需要时可再次点击。"; }
+        catch { feedback=$"网络授权未完成（NET-AUTH-{stage}）。请确认助手仍在运行，并反馈此代码和诊断报告。"; }
+        finally
+        {
+            _networkAuthorizationBusy=false;
+            if(!_startupCancellation.IsCancellationRequested) ReplyNetworkAuthorization(false,feedback);
+        }
+    }
     private void ReplyPackageInfo() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {
         type = "packageInfo", version = DesktopRelease.Version, build = DesktopRelease.Build,
         hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path), availableUpdateVersion = _availableUpdate?.Manifest.Version
@@ -367,5 +455,88 @@ public partial class MainWindow : Window
             await Task.Delay(50);
         }
         return false;
+    }
+
+    public async Task<bool> VerifyFirstUseGuideAsync()
+    {
+        if(_verificationDirectory is null)return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();window.scrollTo(0,0);");
+        for(var attempt=0;attempt<60;attempt++)
+        {
+            var ready=await ControlPage.CoreWebView2.ExecuteScriptAsync("!document.querySelector('#android-installer').hidden");
+            if(ready=="true")break;
+            await Task.Delay(50);
+        }
+        var home=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>({
+            guideVisible:document.querySelector('#first-use-title')?.getClientRects().length>0,
+            wechatHidden:!document.querySelector('#wechat-start')&&!document.querySelector('#wechat-modal'),
+            installerVisible:!document.querySelector('#android-installer').hidden,
+            shortcutsInView:['#android-installer','#open-network-settings','#open-scan-settings'].every(selector=>{const rect=document.querySelector(selector).getBoundingClientRect();return rect.height>=40&&rect.top>=0&&rect.bottom<=window.innerHeight;}),
+            noHorizontalOverflow:document.documentElement.scrollWidth<=window.innerWidth
+        }))()");
+        using var homeState=JsonDocument.Parse(home);
+        if(homeState.RootElement.EnumerateObject().Any(item=>item.Value.ValueKind!=JsonValueKind.True))return false;
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"first-use-home-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        var shortcuts=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>{
+            document.querySelector('#open-network-settings').click();
+            const networkOpened=!document.querySelector('[data-page=settings]').hidden&&document.querySelector('#authorize-network').getClientRects().length>0;
+            document.querySelector('[data-view=connect]').click();document.querySelector('#open-scan-settings').click();
+            const scanOpened=!document.querySelector('[data-page=settings]').hidden&&!document.querySelector('#scan-directory-guide').hidden;
+            document.querySelector('#scan-directory-help').click();const collapsed=document.querySelector('#scan-directory-guide').hidden;
+            document.querySelector('#scan-directory-help').click();const expanded=!document.querySelector('#scan-directory-guide').hidden&&document.querySelector('#scan-directory-help').getAttribute('aria-expanded')==='true';
+            document.querySelector('#extra-scan-section').scrollIntoView({block:'start'});
+            return {networkOpened,scanOpened,collapsed,expanded};
+        })()");
+        File.WriteAllText(Path.Combine(_verificationDirectory,"first-use-guide-verification.json"),"{\"home\":"+home+",\"shortcuts\":"+shortcuts+"}");
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"directory-guide-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        using var shortcutState=JsonDocument.Parse(shortcuts);
+        return shortcutState.RootElement.EnumerateObject().All(item=>item.Value.ValueKind==JsonValueKind.True);
+    }
+
+    public async Task<bool> VerifyNetworkAuthorizationAsync()
+    {
+        if(_verificationDirectory is null) return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=settings]').click();document.querySelector('#authorize-network').click();document.querySelector('#authorize-network').scrollIntoView({block:'center'});");
+        for(var attempt=0;attempt<40;attempt++)
+        {
+            var json=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>({
+                text:document.querySelector('#network-authorization-note')?.textContent,
+                enabled:document.querySelector('#authorize-network')?.disabled===false,
+                revokeEnabled:document.querySelector('#revoke-network')?.disabled===false
+            }))()");
+            using var state=JsonDocument.Parse(json);
+            if(state.RootElement.GetProperty("text").GetString()?.Contains("测试验收模式")==true)
+            {
+                File.WriteAllText(Path.Combine(_verificationDirectory,"network-authorization-verification.json"),json);
+                using var image=File.Create(Path.Combine(_verificationDirectory,"network-authorization-screen.png"));
+                await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+                return state.RootElement.GetProperty("enabled").GetBoolean() && !state.RootElement.GetProperty("revokeEnabled").GetBoolean();
+            }
+            await Task.Delay(50);
+        }
+        return false;
+    }
+
+    public async Task<bool> VerifyExtraScanDirectoriesAsync()
+    {
+        if(_verificationDirectory is null)return false;
+        var directory=Path.Combine(_verificationDirectory,"extra-photo-fixture");Directory.CreateDirectory(directory);
+        var photo=Path.Combine(directory,"External.png");
+        File.WriteAllBytes(photo,Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="));
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=settings]').click();");
+        ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectorySelected",path=directory}));
+        async Task<bool> UntilAsync(string expression)
+        {
+            for(var attempt=0;attempt<160;attempt++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync(expression)=="true")return true;await Task.Delay(50);}return false;
+        }
+        if(!await UntilAsync("document.querySelector('#scan-directory-preview').hidden===false"))return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#confirm-scan-directory').click();");
+        if(!await UntilAsync("document.querySelector('#scan-directory-preview').hidden===true && document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')"))return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#extra-scan-section').scrollIntoView({block:'start'});");
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"extra-scan-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#scan-directory-list button').click();document.querySelector('#scan-directory-list button').click();");
+        var removed=await UntilAsync("!document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')");
+        File.WriteAllText(Path.Combine(_verificationDirectory,"extra-scan-verification.json"),JsonSerializer.Serialize(new{previewConfirmed=true,added=true,removed,originalPreserved=File.Exists(photo),privateFixture=true}));
+        return removed&&File.Exists(photo);
     }
 }

@@ -21,7 +21,7 @@ test('integrated desktop QR/status/close uses local token and never exposes QR s
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const base='http://127.0.0.1:'+server.address().port;
  try{
-  const html=await(await fetch(base)).text();assert.match(html,/微信小程序/);assert.match(html,/Android App/);
+  const html=await(await fetch(base)).text();assert.match(html,/首次使用引导/);assert.doesNotMatch(html,/id="wechat-start"|id="wechat-modal"|微信小程序/);assert.match(html,/Android App/);
   const token=/name="nikkisync-desktop-token" content="([^"]+)"/.exec(html)?.[1];assert.ok(token);
   const headers={'X-NikkiSync-Desktop-Token':token};
   assert.equal((await fetch(base+'/api/wechat/session',{method:'POST'})).status,403);

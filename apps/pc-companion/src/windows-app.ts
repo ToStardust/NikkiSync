@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {realpath} from 'node:fs/promises'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
@@ -23,8 +24,9 @@ import {WeChatIconProvider,resizeWeChatIcon} from './wechat/WeChatIconProvider.j
 import { startupFailureRecord } from './desktop/StartupFailure.js'
 import { GameVersionUpdateService } from './server/GameVersionUpdateService.js'
 import { setRemoteGameVersionReleases as setGalleryGameVersionReleases } from './wechat/GalleryRuntime.mjs'
-import { selectLanIpv4 } from './server/LanAddress.js'
+import { selectLanIpv4, listLanIpv4 } from './server/LanAddress.js'
 import type { ScannerProgress } from './scanner/types.js'
+import {ExtraScanDirectories,loadExtraScanDirectories,loadRetiredExtraDirectories} from './scanner/ExtraScanDirectories.js'
 
 let startupPhase: Parameters<typeof startupFailureRecord>[1] = 'configuration'
 
@@ -41,6 +43,7 @@ const METADATA_DICTIONARY_SUPPLEMENT_FILE = path.join(APP_DATA, 'metadata-dictio
 const METADATA_DICTIONARY_REMOTE_CONFIG_FILE = path.join(APP_DATA, 'metadata-dictionary-remote.json')
 const METADATA_THUMBNAIL_CACHE_DIR = path.join(APP_DATA, 'metadata-thumbnails')
 const GAME_ROOT_CACHE_FILE = path.join(APP_DATA, 'game-install-root.txt')
+const EXTRA_SCAN_DIRECTORIES_FILE=path.join(APP_DATA,'extra-scan-directories.json')
 
 function readCachedGameRoot(): string | undefined {
   try {
@@ -115,6 +118,9 @@ async function main(): Promise<void> {
     databaseFile: DATABASE_FILE,
     remoteBridge: true,
     scanner: {
+      allowMissingInstallation:true,
+      extraDirectories:loadExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE),
+      retiredExtraDirectories:loadRetiredExtraDirectories(EXTRA_SCAN_DIRECTORIES_FILE),
       onProgress: progress => {
         if (!startupScanning) return
         scanProgress = progress
@@ -156,6 +162,7 @@ async function main(): Promise<void> {
       host: process.env.NIKKISYNC_BIND ?? '0.0.0.0',
       port: Number(process.env.NIKKISYNC_PORT ?? 28080),
       mdns: process.env.NIKKISYNC_MDNS !== '0',
+      connectionHosts: () => listLanIpv4(),
       name: APP_NAME,
       metadataThumbnailCache
     }
@@ -182,7 +189,7 @@ async function main(): Promise<void> {
     onWorkSettled: () => memoryMaintenance.schedule(),
     host: currentPairingHost,
     qrSvg,
-    snapshot: () => createIndexedPreviewSource(runtime.database, [...new Set([...(runtime.scanner.getStatus().installation?.photoRoots ?? []),...(runtime.scanner.getStatus().installation?.motionRoots ?? [])])], {
+    snapshot: async () => createIndexedPreviewSource(runtime.database, (await Promise.all(runtime.scanner.getScanRoots().map(async root=>{try{return await realpath(root)}catch{return undefined}}))).filter((root):root is string=>Boolean(root)), {
       loadIcon:descriptor=>wechatIcons.get(descriptor),
       exportLive:(jpeg,video,options)=>exportLive(jpeg,video,{...options,...(process.versions.bun?{ffmpeg:path.join(path.dirname(process.execPath),'wechat','media','ffmpeg.exe'),ffprobe:path.join(path.dirname(process.execPath),'wechat','media','ffprobe.exe')}:{})}),
       rotatePng:(bytes,rotation)=>rotatePng(bytes,rotation,process.versions.bun?path.join(path.dirname(process.execPath),'wechat','rotate-png.ps1'):path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','rotate-png.ps1')),
@@ -194,6 +201,7 @@ async function main(): Promise<void> {
   startupPhase = 'desktop-control'
   markStartup('desktop-control')
   const dashboard = createDesktopControlServer({
+    scanDirectories:new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop()),
     metadataPrivacy:{getState:()=>onlineConsent.state(),setEnabled:(enabled,version)=>{
       if(enabled&&version!==onlineConsent.state().policyVersion)throw new Error('Current privacy policy must be accepted')
       if(!enabled){onlineConsent.setEnabled(false);runtime.metadataResolver?.stop()}
@@ -204,7 +212,7 @@ async function main(): Promise<void> {
     }},
     legalDocuments:Object.fromEntries([['privacy','PRIVACY_POLICY.md'],['terms','USER_AGREEMENT.md'],['permissions','PERMISSIONS_DATA.md'],['services','SDK_SERVICES.md']].map(([name,file])=>[name,readFileSync(process.versions.bun?path.join(path.dirname(process.execPath),'legal',file!):path.join(import.meta.dirname,'..','..','..','..','docs','store-submission',file!),'utf8')])),
     getStatus: () => status.getStatus({ host: currentPairingHost(), port: started.server.port }),
-    createPairingUri: () => runtime.createPairingUri(currentPairingHost()),
+    createPairingUri: () => runtime.createPairingUri(currentPairingHost(), undefined, listLanIpv4()),
     qrSvg,
     brandImage: readFileSync(process.versions.bun
       ? path.join(path.dirname(process.execPath), 'branding', 'momo-camera.png')

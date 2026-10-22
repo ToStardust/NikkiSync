@@ -35,8 +35,8 @@ public final class LivePhotoCoreChecks {
         eq(LivePhotoProfile.XIAOMI, LivePhotoProfile.defaultFor("Xiaomi", "POCO"), "Xiaomi baseline");
         eq(LivePhotoProfile.OPLUS, LivePhotoProfile.defaultFor("OnePlus", "oneplus"), "Oplus route");
         eq(LivePhotoProfile.VIVO_LEGACY_PAIR, LivePhotoProfile.defaultFor("vivo", "iQOO"), "legacy candidate");
-        eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor("HONOR", "HONOR"), "Honor is not Huawei");
-        eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor("HUAWEI", "HUAWEI"), "private tail is opt-in");
+        eq(LivePhotoProfile.HONOR_COMPAT, LivePhotoProfile.defaultFor("HONOR", "HONOR"), "independent Honor compatibility route");
+        eq(LivePhotoProfile.HUAWEI_LEGACY, LivePhotoProfile.defaultFor("HUAWEI", "HUAWEI"), "reported working Huawei format is automatic");
         eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor(null, null), "unknown is unverified standard");
         rejects(() -> LivePhotoProfile.fromId("invented-sdk"), "unknown profile is rejected");
 
@@ -95,7 +95,7 @@ public final class LivePhotoCoreChecks {
                     byte[] b = Files.readAllBytes(product.primary().toPath());
                     eq("SEFT",new String(b,b.length-4,4,StandardCharsets.US_ASCII),"SEF remains last");
                 }
-                if (profile == LivePhotoProfile.HUAWEI_LEGACY) {
+                if (profile.usesHuaweiTail()) {
                     byte[] b = Files.readAllBytes(product.primary().toPath());
                     eq("LIVE_",new String(b,b.length-20,5,StandardCharsets.US_ASCII),"Huawei tail location");
                 }

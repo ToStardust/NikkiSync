@@ -15,6 +15,22 @@ import { LocalTlsIdentityService } from '../src/server/LocalTlsIdentityService.j
 
 function sha256(data: Buffer): string { return createHash('sha256').update(data).digest('hex') }
 
+test('server connection candidates refresh without changing identity or consuming a pairing token',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize();let hosts=['192.168.1.5','10.1.2.3'];
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,connectionHosts:()=>hosts});
+  try{
+    const address=await server.start(),base=`http://127.0.0.1:${address.port}`;
+    const first=await (await fetch(`${base}/v1/server`)).json() as {serverId:string;connectionHosts:string[]};
+    assert.deepEqual(first.connectionHosts,hosts);hosts=['192.168.43.12'];
+    const second=await (await fetch(`${base}/v1/server`)).json() as typeof first;
+    assert.equal(second.serverId,first.serverId);assert.deepEqual(second.connectionHosts,hosts);
+    const pairing=new PairingService(db);const qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'00'.repeat(32)});
+    await fetch(`${base}/v1/server`);
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+    assert.equal(pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'multi_endpoint',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC').serverId,first.serverId);
+  }finally{await server.stop();db.close();}
+})
+
 test('paired realtime handshake and hello work over the production TLS transport',async()=>{
   const db=new DatabaseManager(':memory:');db.initialize(await readFile(path.resolve('packages/database/migrations/0001_initial.sql'),'utf8'));
   const identity=new LocalTlsIdentityService(db).getOrCreate();

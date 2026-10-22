@@ -6,7 +6,7 @@ import { ScannerWatcher } from './ScannerWatcher.js'
 import { ScanCoordinator } from './ScanCoordinator.js'
 import { ScanReconciler } from './ScanReconciler.js'
 import { ScanProgressTracker } from './ScanProgressTracker.js'
-import type { ScannerConfig, ScannerMetrics, ScannerStatus, ScanResult } from './types.js'
+import type { ExtraScanRoot, ScannerConfig, ScannerMetrics, ScannerStatus, ScanResult } from './types.js'
 
 export class ScannerService {
   private status: ScannerStatus = 'stopped'; private installation?: Awaited<ReturnType<ScannerDiscovery['discover']>>
@@ -16,22 +16,26 @@ export class ScannerService {
   private readonly pendingRoots = new Map<string, string>()
   private pendingWaiters: Array<{ resolve: (result: ScanResult) => void; reject: (error: unknown) => void }> = []
   private draining: Promise<void> | undefined
+  private extraDirectories:ExtraScanRoot[]=[]
   constructor(private readonly database: DatabaseManager, config: ScannerConfig = {}) {
     const stability = { pollIntervalMs: 200, stableChecks: 3, maxWaitMs: 10_000, assumeStableIfOlderMs: 2000, ...config.stability }
     this.coordinator = new ScanCoordinator(new FileStabilityGuard(stability))
     this.reconciler = new ScanReconciler(new AssetRepository(database), config.motionAssemblyGraceMs ?? 2000)
     this.config = config
+    this.extraDirectories=[...(config.extraDirectories??[])]
   }
   private readonly config: ScannerConfig
 
   async start(): Promise<ScanResult> {
     this.status = 'discovering'; this.installation = await new ScannerDiscovery(this.config).discover()
-    if (!this.installation) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
+    if (!this.installation&&!this.config.allowMissingInstallation&&this.extraDirectories.length===0) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
+    const retired=(this.config.retiredExtraDirectories??[]).filter(root=>!this.getScanRoots().some(active=>within(root,active)||within(active,root)))
+    if(retired.length)new AssetRepository(this.database).markMissingByRoots([],retired)
     const result = await this.fullScan()
     this.progress?.stage('scan-watch')
     if (this.config.watcher !== false) {
       this.watcher = new ScannerWatcher(this.config.debounceMs ?? 250)
-      this.watcher.start(result.roots, (event) => { void this.rescanPath(event.path) })
+      this.watcher.start(result.roots, (event) => { void this.rescanPath(event.path).catch(()=>{}) })
     }
     this.status = 'running'; return result
   }
@@ -42,19 +46,35 @@ export class ScannerService {
   }
   async fullScan(): Promise<ScanResult> {
     if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
-    if (!this.installation) throw new Error('Infinity Nikki installation was not found')
-    const roots = [...this.installation.photoRoots, ...this.installation.motionRoots.filter((motionRoot) => !this.installation?.photoRoots.some((photoRoot) => motionRoot.toLowerCase().startsWith(`${photoRoot.toLowerCase()}\\`)))]
-    return this.enqueueScan(roots)
+    if (!this.installation&&!this.config.allowMissingInstallation&&this.extraDirectories.length===0) throw new Error('Infinity Nikki installation was not found')
+    return this.enqueueScan(this.getScanRoots())
   }
   async rescanPath(filePath: string): Promise<ScanResult> {
     if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
-    if (!this.installation) throw new Error('Infinity Nikki installation was not found')
-    const allRoots = [...this.installation.photoRoots, ...this.installation.motionRoots]
-    const sourceRoot = allRoots.find((root) => path.resolve(filePath).toLowerCase().startsWith(`${path.resolve(root).toLowerCase()}\\`))
+    const allRoots = this.getScanRoots()
+    const sourceRoot = allRoots.find((root) => within(filePath,root))
     if (!sourceRoot) return this.fullScan()
+    if(this.extraDirectories.some(item=>within(sourceRoot,item.path)))return this.enqueueScan([sourceRoot])
     const relative = path.relative(sourceRoot, filePath).split(path.sep)
     const uid = relative.find((part) => /^\d{5,}$/.test(part))
     return this.enqueueScan([uid ? path.join(sourceRoot, uid) : sourceRoot])
+  }
+  getAutomaticRoots():string[]{return [...(this.installation?.photoRoots??[]),...(this.installation?.motionRoots??[])]}
+  getScanRoots():string[]{
+    const roots=[...this.getAutomaticRoots(),...this.extraDirectories.map(item=>item.path)].map(root=>path.resolve(root))
+    return roots.filter((root,index)=>!roots.some((parent,other)=>other!==index&&within(root,parent)&&(root.length>parent.length||other<index)))
+  }
+  async setExtraDirectories(next:ExtraScanRoot[]):Promise<ScanResult>{
+    await this.draining
+    const removed=this.extraDirectories.filter(old=>!next.some(item=>item.id===old.id))
+    const added=next.filter(item=>!this.extraDirectories.some(old=>old.id===item.id&&old.mode===item.mode))
+    this.watcher?.stop()
+    this.extraDirectories=[...next]
+    if(removed.length)new AssetRepository(this.database).markMissingByRoots([],removed.map(item=>item.path))
+    if(this.config.watcher!==false){this.watcher??=new ScannerWatcher(this.config.debounceMs??250);this.watcher.start(this.getScanRoots(),event=>{void this.rescanPath(event.path).catch(()=>{})})}
+    // Adding a small export folder must not rehash an already indexed, potentially huge game album.
+    // Watchers stay active during the new pass; their events join the same serialized scan queue.
+    return added.length?this.enqueueScan(added.map(item=>item.path)):removed.length?this.enqueueScan([]):this.fullScan()
   }
   private enqueueScan(roots: string[]): Promise<ScanResult> {
     // There is no queued pass to resolve waiters when a new install has no media directories.
@@ -86,10 +106,12 @@ export class ScannerService {
     const progress = this.progress = new ScanProgressTracker(this.config.onProgress)
     progress.stage('scan-files')
     this.status = 'scanning'; const scanId = `scan_${Date.now().toString(36)}`; const all = [] as Awaited<ReturnType<ScanCoordinator['scanRoot']>>[]
-    for (const root of roots) all.push(await this.coordinator.scanRoot(root, activity => progress.add(activity)))
+    for (const root of roots) all.push(await this.coordinator.scanRoot(root, activity => progress.add(activity),this.extraDirectories.find(item=>within(root,item.path))))
     this.status = 'reconciling'; const resources = all.flatMap((item) => item.resources)
     progress.stage('scan-index')
-    const reconciled = await this.reconciler.reconcile(resources, roots, () => progress.add({ assetsProcessed: 1 }))
+    // An unplugged drive or unreadable folder is not evidence that its originals were deleted.
+    const completedRoots=roots.filter((_root,index)=>all[index]?.errors.length===0)
+    const reconciled = await this.reconciler.reconcile(resources, completedRoots, () => progress.add({ assetsProcessed: 1 }))
     progress.stage('scan-index')
     const result: ScanResult = { scanId, roots, filesObserved: all.reduce((sum, item) => sum + item.filesObserved, 0), resourcesAccepted: resources.filter((item) => !['ignored', 'unknown_image', 'binary_companion'].includes(item.kind)).length, resourcesIgnored: resources.filter((item) => ['ignored', 'unknown_image', 'binary_companion'].includes(item.kind)).length, errors: all.flatMap((item) => item.errors), ...reconciled }
     this.lastScan = result
@@ -99,4 +121,9 @@ export class ScannerService {
   getStatus(): ScannerMetrics {
     return { status: this.status, ...(this.installation ? { installation: this.installation } : {}), ...(this.lastScan ? { lastScan: this.lastScan } : {}) }
   }
+}
+
+function within(candidate:string,root:string):boolean{
+  const key=path.resolve(candidate).toLowerCase(),parent=path.resolve(root).toLowerCase()
+  return key===parent||key.startsWith(parent+path.sep)
 }

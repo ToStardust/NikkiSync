@@ -46,6 +46,7 @@ export interface LocalSyncServerConfig {
   maxJsonBodyBytes?: number
   metadataThumbnailCache?: MetadataThumbnailCache
   remoteBridge?: RemoteBridgeService
+  connectionHosts?: () => string[]
 }
 
 export interface LocalSyncServerAddress {
@@ -147,7 +148,7 @@ export class LocalSyncServer {
   private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
   private readonly clothingSearchResponseCache = new Map<string, ClothingSearchResponse>()
   private readonly remoteRoutes: RemoteRoutes | undefined
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge'>
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge' | 'connectionHosts'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.reads = new SyncReadRepository(database)
@@ -163,6 +164,7 @@ export class LocalSyncServer {
       journalPollMs: config.journalPollMs ?? 250,
       mdns: config.mdns ?? true,
       maxJsonBodyBytes: config.maxJsonBodyBytes ?? 1024 * 1024,
+      ...(config.connectionHosts ? { connectionHosts: config.connectionHosts } : {}),
       ...(config.tls ? { tls: config.tls } : {}),
       ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {}),
       ...(config.remoteBridge ? { remoteBridge: config.remoteBridge } : {})
@@ -271,7 +273,7 @@ export class LocalSyncServer {
       libraryRevision: this.reads.currentRevision(),
       capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true, profileStats: true }
     }
-    json(res, 200, body)
+    json(res, 200, { ...body, ...(this.config.connectionHosts ? { connectionHosts: this.config.connectionHosts().slice(0, 8) } : {}) })
   }
 
   private async handlePair(req: IncomingMessage, res: ServerResponse): Promise<void> {

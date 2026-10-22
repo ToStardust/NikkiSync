@@ -48,6 +48,36 @@ test('mDNS refreshes its socket and address after hotspot changes to Wi-Fi', t =
   }finally{advertiser.stop()}
 })
 
+test('mDNS follows hotspot address changes while an unrecognized /32 stays up', t => {
+  class Socket extends EventEmitter {
+    packet: Buffer = Buffer.alloc(0); selected = ''; closed = false
+    bind(_port: number, callback: () => void) { callback() }
+    setMulticastInterface(ip: string) { this.selected = ip }
+    addMembership() {} setMulticastTTL() {}
+    send(packet: Buffer) { this.packet = packet }
+    close() { this.closed = true }
+  }
+  const sockets: Socket[] = []; let address = '10.28.113.197'; let tick = () => {}
+  t.mock.method(dgram, 'createSocket', () => { const socket = new Socket(); sockets.push(socket); return socket })
+  t.mock.method(os, 'networkInterfaces', () => ({
+    custom: [{ family: 'IPv4', internal: false, address: '172.30.216.166', netmask: '255.255.255.255' }],
+    WLAN: [{ family: 'IPv4', internal: false, address, netmask: '255.255.255.0' }]
+  }))
+  t.mock.method(globalThis, 'setInterval', (callback: () => void) => { tick = callback; return {} as NodeJS.Timeout })
+  t.mock.method(globalThis, 'clearInterval', () => {})
+  const advertiser = new MdnsAdvertiser()
+  try {
+    advertiser.start({ serverId: 'same-paired-server', name: 'Momo', port: 28080 })
+    assert.equal(sockets[0]!.selected, '10.28.113.197')
+    assert.deepEqual([...sockets[0]!.packet.subarray(-4)], [10, 28, 113, 197])
+    address = '192.168.43.12'; tick()
+    assert.equal(sockets[0]!.closed, true)
+    assert.equal(sockets.length, 2)
+    assert.equal(sockets[1]!.selected, '192.168.43.12')
+    assert.deepEqual([...sockets[1]!.packet.subarray(-4)], [192, 168, 43, 12])
+  } finally { advertiser.stop() }
+})
+
 test('mDNS ignores its own announcements and other responses, answers only valid queries', t => {
   class Socket extends EventEmitter {
     packets: Buffer[] = []

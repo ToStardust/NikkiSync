@@ -8,6 +8,12 @@ namespace NikkiSync.WindowsShell.Services;
 
 public sealed record PayloadFile(string Path, long Length, string Sha256);
 public sealed record PayloadManifest(string ArchiveSha256, PayloadFile[] Files);
+public enum PayloadPreparationStep
+{
+    ReadManifest, ValidateManifest, CreateCache, CheckCachePath, AcquireCacheLock,
+    ValidateCache, ValidateArchive, ValidateEntries, CreateStaging, ExtractFiles,
+    BackupCache, PublishCache, Ready
+}
 
 // The ZIP and its file hashes are build artifacts embedded in the desktop executable.
 // Never collect a used release directory: it may contain browser data or pairing secrets.
@@ -17,8 +23,9 @@ public static class RuntimePayload
     public const string ManifestResource = "NikkiSync.Runtime.json";
     public static string UserDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NikkiSync");
 
-    public static string Prepare(string? cacheRoot = null, Action<double>? progress = null)
+    public static string Prepare(string? cacheRoot = null, Action<double>? progress = null, Action<PayloadPreparationStep>? step = null)
     {
+        step?.Invoke(PayloadPreparationStep.ReadManifest);
         var assembly = Assembly.GetExecutingAssembly();
         using var archive = assembly.GetManifestResourceStream(ArchiveResource);
         if (archive is null) return AppContext.BaseDirectory; // Existing folder builds remain supported.
@@ -26,11 +33,12 @@ public static class RuntimePayload
             ?? throw new InvalidDataException("缺少内置运行文件清单。");
         var manifest = JsonSerializer.Deserialize<PayloadManifest>(metadata)
             ?? throw new InvalidDataException("内置运行文件清单无效。");
-        return Deploy(archive, manifest.ArchiveSha256, cacheRoot ?? Path.Combine(UserDirectory, "portable-runtime"), manifest.Files, progress);
+        return Deploy(archive, manifest.ArchiveSha256, cacheRoot ?? Path.Combine(UserDirectory, "portable-runtime"), manifest.Files, progress, step);
     }
 
-    public static string Deploy(Stream archive, string archiveHash, string cacheRoot, IReadOnlyList<PayloadFile> files, Action<double>? progress = null)
+    public static string Deploy(Stream archive, string archiveHash, string cacheRoot, IReadOnlyList<PayloadFile> files, Action<double>? progress = null, Action<PayloadPreparationStep>? step = null)
     {
+        step?.Invoke(PayloadPreparationStep.ValidateManifest);
         if (!ValidHash(archiveHash) || files.Count is < 1 or > 64) throw new InvalidDataException("Invalid payload manifest.");
         var expected = new Dictionary<string, PayloadFile>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in files)
@@ -41,10 +49,13 @@ public static class RuntimePayload
         }
         if (files.Sum(file => file.Length) > 268435456) throw new InvalidDataException("Payload exceeds size limit.");
         var root = Path.GetFullPath(cacheRoot);
+        step?.Invoke(PayloadPreparationStep.CreateCache);
         Directory.CreateDirectory(root);
+        step?.Invoke(PayloadPreparationStep.CheckCachePath);
         RejectLink(root);
         var target = Path.Combine(root, archiveHash.ToUpperInvariant());
         // Synchronize extraction across launches without holding a background polling timer.
+        step?.Invoke(PayloadPreparationStep.AcquireCacheLock);
         using var mutex = new Mutex(false, "Local\\NikkiSync-payload-" + archiveHash.ToUpperInvariant());
         var acquired = false;
         try
@@ -52,13 +63,16 @@ public static class RuntimePayload
             try { acquired = mutex.WaitOne(TimeSpan.FromMinutes(1)); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) throw new IOException("另一个程序正在准备运行文件，请稍后重试。");
-            if (IsValid(target, files)) { progress?.Invoke(1); return target; }
+            step?.Invoke(PayloadPreparationStep.ValidateCache);
+            if (IsValid(target, files)) { step?.Invoke(PayloadPreparationStep.Ready); progress?.Invoke(1); return target; }
             // An interrupted or modified cache is not accepted merely because a marker exists.
+            step?.Invoke(PayloadPreparationStep.ValidateArchive);
             archive.Position = 0;
             if (!Convert.ToHexString(SHA256.HashData(archive)).Equals(archiveHash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("内置运行文件校验失败，请重新下载程序。");
             archive.Position = 0;
             using var zip = new ZipArchive(archive, ZipArchiveMode.Read, true);
+            step?.Invoke(PayloadPreparationStep.ValidateEntries);
             if (zip.Entries.Count != files.Count) throw new InvalidDataException("Unexpected payload entries.");
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in zip.Entries)
@@ -68,11 +82,13 @@ public static class RuntimePayload
                     throw new InvalidDataException("Unexpected payload file.");
             }
             var staging = target + ".tmp-" + Guid.NewGuid().ToString("N");
+            step?.Invoke(PayloadPreparationStep.CreateStaging);
             Directory.CreateDirectory(staging);
             try
             {
                 long done = 0; var total = Math.Max(1, files.Sum(file => file.Length));
                 var buffer = new byte[81920];
+                step?.Invoke(PayloadPreparationStep.ExtractFiles);
                 foreach (var entry in zip.Entries)
                 {
                     var destination = Path.Combine(staging, entry.FullName);
@@ -94,11 +110,14 @@ public static class RuntimePayload
                 }
                 if (Directory.Exists(target))
                 {
+                    step?.Invoke(PayloadPreparationStep.BackupCache);
                     RejectLink(target);
                     // Preserve the old folder for diagnosis; never overwrite a running binary.
                     Directory.Move(target, target + ".bad-" + Guid.NewGuid().ToString("N"));
                 }
+                step?.Invoke(PayloadPreparationStep.PublishCache);
                 Directory.Move(staging, target);
+                step?.Invoke(PayloadPreparationStep.Ready);
                 progress?.Invoke(1);
                 return target;
             }

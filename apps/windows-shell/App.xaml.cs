@@ -14,6 +14,12 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if(e.Args.Length>0 && e.Args[0]=="--authorize-network")
+        {
+            // The elevated short-lived helper never starts the UI, scanner, updater or single-instance activation.
+            var result=e.Args.Length==4?NetworkAuthorization.RunHelper(e.Args[1],e.Args[2],e.Args[3]):3;
+            Shutdown(result);return;
+        }
         if (e.Args.Length == 2 && e.Args[0] == "--release-info")
         {
             File.WriteAllText(Path.GetFullPath(e.Args[1]), JsonSerializer.Serialize(new { version = DesktopRelease.Version, build = DesktopRelease.Build }));
@@ -42,6 +48,9 @@ public partial class App : System.Windows.Application
             MainWindow = verificationWindow;
             verificationWindow.Show();
             var ok = await verificationWindow.StartupCompleted;
+            if(ok)ok=await verificationWindow.VerifyFirstUseGuideAsync();
+            if(ok)ok=await verificationWindow.VerifyExtraScanDirectoriesAsync();
+            if(ok) ok=await verificationWindow.VerifyNetworkAuthorizationAsync();
             if (ok) ok = await verificationWindow.VerifyAboutAsync();
             File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
             {
@@ -60,9 +69,10 @@ public partial class App : System.Windows.Application
         {
             var directory = Path.GetFullPath(e.Args[1]);
             Window? verificationWindow = null;
+            var preparationStep = PayloadPreparationStep.ReadManifest;
             try
             {
-                var runtime = RuntimePayload.Prepare(Path.Combine(directory, "runtime-cache"));
+                var runtime = RuntimePayload.Prepare(Path.Combine(directory, "runtime-cache"), step: value => preparationStep = value);
                 Directory.CreateDirectory(directory);
                 string? browserVersion = null;
                 if (e.Args[0] == "--verify-webview")
@@ -84,7 +94,11 @@ public partial class App : System.Windows.Application
             catch (Exception error)
             {
                 Directory.CreateDirectory(directory);
-                File.WriteAllText(Path.Combine(directory, "verification.json"), JsonSerializer.Serialize(new { ok = false, error = error.Message }));
+                File.WriteAllText(Path.Combine(directory, "verification.json"), JsonSerializer.Serialize(new {
+                    ok = false, error = StartupFailure.FromException(error).Code,
+                    exceptionKind = StartupDiagnostics.ExceptionKind(error),
+                    hresultHex = $"0x{unchecked((uint)error.HResult):X8}", runtimeStep = preparationStep.ToString()
+                }));
                 verificationWindow?.Close();
                 Shutdown(1);
             }

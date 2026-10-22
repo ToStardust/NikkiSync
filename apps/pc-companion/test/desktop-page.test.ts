@@ -2,6 +2,38 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { desktopPageScript } from '../src/desktop/DesktopPageScript.js'
+import { renderDesktopPage } from '../src/desktop/DesktopPage.js'
+
+test('first-use guide replaces the unfinished WeChat entry and exposes the three next steps', () => {
+  const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:0,pairedDevices:0,firstRun:true},{remoteToken:'test-token',wechat:true})
+  assert.match(html, /首次使用引导/)
+  assert.doesNotMatch(html, /id="wechat-start"|id="wechat-modal"|微信小程序/)
+  for(const id of ['open-network-settings','open-scan-settings','android-installer']) assert.match(html,new RegExp('id="'+id+'"'))
+  assert.match(html, /校园网.*隔离/)
+  assert.match(html, /<button[^>]+id="scan-directory-help"[^>]+aria-expanded="false"/)
+  assert.match(html, /id="scan-directory-guide"[^>]+hidden/)
+})
+
+test('folder help is a keyboard-operable button which expands and collapses the instructions', () => {
+  const ui=mount(async()=>({}))
+  assert.equal(ui.element('#scan-directory-guide').hidden,true)
+  ui.element('#scan-directory-help').onclick!()
+  assert.equal(ui.element('#scan-directory-guide').hidden,false)
+  assert.equal(ui.element('#scan-directory-help').attributes['aria-expanded'],'true')
+  ui.element('#scan-directory-help').onclick!()
+  assert.equal(ui.element('#scan-directory-guide').hidden,true)
+  assert.equal(ui.element('#scan-directory-help').attributes['aria-expanded'],'false')
+})
+
+test('the home scan shortcut opens settings with folder guidance, without choosing or sharing a folder', () => {
+  const messages:unknown[]=[]
+  const ui=mount(async()=>({}),{postMessage:(message:unknown)=>messages.push(message),addEventListener(){}})
+  ui.element('#open-scan-settings').onclick!()
+  assert.equal(ui.pages[1]!.hidden,false)
+  assert.equal(ui.element('#scan-directory-guide').hidden,false)
+  assert.equal(ui.element('#scan-directory-help').attributes['aria-expanded'],'true')
+  assert.deepEqual(JSON.parse(JSON.stringify(messages)),[{type:'getAutostart'}])
+})
 
 test('APK export is offered only when the native desktop reports a bundled installer', () => {
   let receive!: (event: { data: unknown }) => void
@@ -22,6 +54,7 @@ test('APK export is offered only when the native desktop reports a bundled insta
 function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
   let active: Element | undefined
   class Element {
+    children:Element[]=[];style={cssText:''};className='';content='local-token'
     hidden = false; disabled = false; checked = false; inert = false
     textContent = ''; innerHTML = ''; dataset: Record<string, string> = {}
     attributes: Record<string, string> = {}
@@ -29,7 +62,8 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
     onchange?: () => void
     setAttribute(name: string, value: string) { this.attributes[name] = value }
     removeAttribute(name: string) { delete this.attributes[name] }
-    replaceChildren() { this.innerHTML = '' }
+    replaceChildren() { this.innerHTML = '';this.children=[] }
+    appendChild(child:Element){this.children.push(child)}
     querySelector(selector: string) { return element(selector) }
     focus() { active = this }
     querySelectorAll() { return [element('#close')] }
@@ -55,6 +89,7 @@ function mount(fetcher: (url: string) => Promise<unknown>, bridge?: unknown) {
     document: {
       get hidden() { return documentState.hidden },
       querySelector: element,
+      createElement:()=>new Element(),
       querySelectorAll: (selector: string) => selector === '[data-view]' ? navigation : selector === '[data-project]' ? projects : pages,
       addEventListener: (name: string, handler: (event: unknown) => void) => events.set(name, handler),
       get activeElement() { return active }
@@ -91,6 +126,47 @@ test('browser-only About keeps repository links usable without offering an unava
   const ui=mount(async()=>({})); assert.equal(ui.element('#check-updates').disabled,true)
   let prevented=false; ui.projects[1]!.onclick!({preventDefault(){prevented=true}})
   assert.equal(prevented,false)
+})
+
+test('network authorization is a named native action with no web-supplied program or port', () => {
+  const messages: unknown[]=[];let reply!:(event:unknown)=>void
+  const ui=mount(async()=>({}),{postMessage:(message:unknown)=>messages.push(message),addEventListener(_:string,handler:typeof reply){reply=handler}})
+  assert.equal(ui.element('#authorize-network').disabled,false)
+  ui.element('#authorize-network').onclick!()
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'authorizeNetwork'})
+  reply({data:{type:'networkAuthorization',busy:true,message:'waiting'}})
+  assert.equal(ui.element('#authorize-network').disabled,true)
+  assert.equal(ui.element('#revoke-network').disabled,true)
+  reply({data:{type:'networkAuthorization',busy:false,message:'cancelled'}})
+  assert.equal(ui.element('#authorize-network').disabled,false)
+  assert.equal(ui.element('#network-authorization-note').textContent,'cancelled')
+  ui.element('#revoke-network').onclick!()
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'revokeNetwork'})
+  reply({data:{type:'networkAuthorization',busy:false,message:'already allowed',authorized:true,canRevoke:true}})
+  assert.equal(ui.element('#authorize-network').disabled,true)
+  assert.equal(ui.element('#authorize-network').textContent,'已添加本地网络权限')
+  assert.equal(ui.element('#revoke-network').disabled,false)
+  reply({data:{type:'networkAuthorization',busy:false,message:'removed',authorized:false,canRevoke:false}})
+  assert.equal(ui.element('#authorize-network').disabled,false)
+  assert.equal(ui.element('#revoke-network').disabled,true)
+  const browser=mount(async()=>({}))
+  assert.equal(browser.element('#authorize-network').disabled,true)
+})
+
+test('home guidance opens settings and an extra folder is shared only after confirmation',async()=>{
+  const messages:unknown[]=[];let receive!:(event:unknown)=>void;const calls:string[]=[]
+  const ui=mount(async(url)=>{calls.push(url);return {ok:true,json:async()=>url.endsWith('/inspect')?{id:'proposal',roots:[{path:'C:/Photo exports'}],images:3,videos:0,hint:'external',limited:false}:{directories:[],automaticRoots:['C:/GamePhotos'],message:''}}},{postMessage:(message:unknown)=>messages.push(message),addEventListener(_:string,handler:typeof receive){receive=handler}})
+  assert.equal(ui.element('#add-scan-directory').disabled,false)
+  ui.element('#open-network-settings').onclick!();assert.equal(ui.pages[1]!.hidden,false)
+  ui.element('#add-scan-directory').onclick!();assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'chooseExtraScanDirectory'})
+  receive({data:{type:'extraScanDirectorySelected',path:'C:/Photo exports'}})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(ui.element('#scan-directory-preview').hidden,false)
+  assert.equal(calls.some(url=>url.endsWith('/confirm')),false)
+  await ui.element('#confirm-scan-directory').onclick!()
+  assert.equal(calls.some(url=>url.endsWith('/confirm')),true)
+  assert.equal(ui.element('#scan-directory-preview').hidden,true)
+  assert.equal(mount(async()=>({})).element('#add-scan-directory').disabled,true)
 })
 
 test('hidden desktop stops status requests and refreshes immediately when restored', async () => {

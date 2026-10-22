@@ -5,7 +5,6 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.media.ExifInterface;
 import android.net.Uri;
-import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 
@@ -70,7 +69,7 @@ public final class OriginalSaver {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.DISPLAY_NAME, original.fileName());
         values.put(MediaStore.Images.Media.MIME_TYPE, original.mimeType());
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/NikkiSync");
+        values.put(MediaStore.Images.Media.RELATIVE_PATH, GallerySavePolicy.stillPath());
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new IllegalStateException("系统相册创建文件失败");
@@ -118,9 +117,12 @@ public final class OriginalSaver {
                 }
                 PhotoExif.write(context,uri,localMetadata);
             }
+            long savedAt=System.currentTimeMillis();
+            GallerySavePolicy.prepareStill(resolver,uri,original.mimeType(),savedAt);
             ContentValues ready = new ContentValues();
+            GallerySavePolicy.addDate(ready,savedAt);
             ready.put(MediaStore.Images.Media.IS_PENDING, 0);
-            resolver.update(uri, ready, null, null);
+            if(resolver.update(uri, ready, null, null)!=1)throw new java.io.IOException("系统相册未完成照片发布");
             progress.update("保存完成",1,1);
             return uri;
         } catch (Exception error) {

@@ -1,16 +1,16 @@
 # 大喵相机助手 · NikkiSync
 
-《无限暖暖》的非官方摄影同步工具，包含 Windows 桥接与托盘程序、Android 相册和微信小程序。支持浏览游戏照片、读取穿搭和拍摄参数、生成分享图、下载原图/视频；Android 提供旋转、预览手势、持久缓存及能力范围内的 LIVE 保存。
+《无限暖暖》的非官方摄影同步工具，包含 Windows 桥接与托盘程序、Android 相册，以及开发中的微信小程序。支持浏览游戏照片、读取穿搭和拍摄参数、生成分享图、下载原图/视频；Android 提供旋转、预览手势、持久缓存及能力范围内的 LIVE 保存。
 
 **给对接开发者：先阅读 [开发与接口入口](docs/INTEGRATION.md)。** 原创源码使用 [MIT](LICENSE)；游戏美术和第三方资源不在本项目 MIT 授权范围内，参见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-当前 Windows 优先自动查找安装位置，无需先开游戏；手动选择仅为备选。Android 保留液态玻璃 UI、旋转与预测性返回、穿搭/参数分享图。小程序支持普通照片/视频和分享图；iPhone 小程序原生 LIVE 保存仍搁置。
+当前 Windows 优先自动查找安装位置，无需先开游戏；也可在同步设置添加搬迁相册、旋转吧大喵等软件的照片输出目录。Android 保留液态玻璃 UI、旋转与预测性返回、穿搭/参数分享图。微信小程序尚未完成，本轮暂时隐藏电脑端入口。
 
 照片同步在本机/局域网完成。在线参数解析默认开启，可在同步设置关闭，此前手动关闭的选择会保留；开启时会向第三方发送游戏UID、编码参数及校验值。公共字典与游戏版本检查也可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 配置。源码不含个人照片、数据库、配对密钥、私有签名密钥和编译包。
 
-**下载 [1.0.11 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.11-public-beta.1)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份公测 APK。支持 Android 11/12，修复旧系统启动、选图和 Java API 兼容问题；合并局域网地址选择、二维码刷新及大相册首次启动/重试修复，保留原图、EXIF 与 LIVE 旋转功能。[本版更新日志](docs/releases/v1.0.11-public-beta.1.md)
+**下载 [1.0.15 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.15-public-beta.1)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份 APK。首页新增首次使用引导，可直接导出安装包、前往连接排障和添加扫描目录。合并 Wi-Fi/手机热点多地址重连、本地网络授权、额外目录扫描，以及近期 LIVE 保存兼容修复，保留 Android 11/12 支持和已有照片数据。[本版更新日志](docs/releases/v1.0.15-public-beta.1.md)
 
-本次公测 APK 改用匿名签名证书，无法直接覆盖此前使用旧签名的安装版本。请保留旧 App 和数据，不要为解决签名冲突直接卸载或清除数据；需要迁移的用户请先通过项目仓库反馈。此后公测版将沿用这份新签名。Windows 更新方式不变，保留已有数据。动态播放与系统相册 LIVE 识别仍需按机型测试。历史 [0.2.14](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14) 发布保留。
+1.0.15 APK 沿用近期公测版的匿名签名，可直接覆盖相同签名的版本。更早使用旧签名的安装版本无法直接覆盖，请保留旧 App 和数据，不要为解决签名冲突卸载或清除数据；需要迁移时请通过项目仓库反馈。Windows 更新保留已有数据；连接超时时可到“同步设置 → 本地网络权限”手动授权。动态播放与系统相册 LIVE 识别仍需按机型测试。历史 [0.2.14](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14) 发布保留。
 
 下面保留早期里程碑记录；当前功能与构建入口以 [INTEGRATION.md](docs/INTEGRATION.md) 和 `docs/remote-bridge` 最新验收记录为准。
 

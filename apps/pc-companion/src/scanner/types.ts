@@ -7,6 +7,7 @@ export type ScannerStatus = 'stopped' | 'discovering' | 'scanning' | 'reconcilin
 export type DiscoveredResourceKind = 'high_quality' | 'low_quality' | 'motion_cover' | 'motion_video' | 'unknown_image' | 'binary_companion' | 'ignored'
 
 export interface DiscoveredResource {
+  extraNamespace?: string
   absolutePath: string
   pathKey: string
   uid?: string
@@ -39,6 +40,9 @@ export interface StabilityConfig {
 }
 
 export interface ScannerConfig extends GameDiscoveryOptions {
+  extraDirectories?: ExtraScanRoot[]
+  retiredExtraDirectories?: string[]
+  allowMissingInstallation?: boolean
   stability?: Partial<StabilityConfig>
   watcher?: boolean
   debounceMs?: number
@@ -46,6 +50,8 @@ export interface ScannerConfig extends GameDiscoveryOptions {
   onSettled?(): void
   onProgress?(progress: ScannerProgress): void
 }
+
+export interface ExtraScanRoot { id: string; path: string; mode: 'native' | 'images' }
 
 /** Aggregate work only: never include paths, UIDs, filenames or photo parameters. */
 export interface ScannerProgress {

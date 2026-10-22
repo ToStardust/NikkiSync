@@ -43,6 +43,43 @@ public sealed class RuntimePayloadTests : IDisposable
         Assert.Equal(Content, System.IO.File.ReadAllBytes(Path.Combine(path, File.Path)));
     }
 
+    [Fact]
+    public void Fresh_deploy_and_verified_reuse_report_their_actual_steps()
+    {
+        var zip=Archive((File.Path,Content));var steps=new List<PayloadPreparationStep>();
+        RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:steps.Add);
+        Assert.Contains(PayloadPreparationStep.ValidateArchive,steps);
+        Assert.Contains(PayloadPreparationStep.ExtractFiles,steps);
+        Assert.Contains(PayloadPreparationStep.PublishCache,steps);
+        Assert.Equal(PayloadPreparationStep.Ready,steps[^1]);
+        steps.Clear();
+        RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:steps.Add);
+        Assert.Contains(PayloadPreparationStep.ValidateCache,steps);
+        Assert.DoesNotContain(PayloadPreparationStep.ExtractFiles,steps);
+        Assert.Equal(PayloadPreparationStep.Ready,steps[^1]);
+    }
+
+    [Fact]
+    public void Actual_exclusive_file_lock_reports_validation_step_and_sharing_violation()
+    {
+        var zip=Archive((File.Path,Content));
+        var path=RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File]);
+        using var locked=new FileStream(Path.Combine(path,File.Path),FileMode.Open,FileAccess.Read,FileShare.None);
+        var steps=new List<PayloadPreparationStep>();
+        var error=Assert.Throws<IOException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:steps.Add));
+        Assert.Equal(PayloadPreparationStep.ValidateCache,steps[^1]);
+        Assert.Equal("FILE_BUSY",StartupFailure.FromException(error).Code);
+    }
+
+    [Fact]
+    public void Corrupt_archive_stops_at_archive_validation_and_is_not_published()
+    {
+        var zip=Archive((File.Path,Content));var steps=new List<PayloadPreparationStep>();
+        Assert.Throws<InvalidDataException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),new string('0',64),_root,[File],step:steps.Add));
+        Assert.Equal(PayloadPreparationStep.ValidateArchive,steps[^1]);
+        Assert.Empty(Directory.GetDirectories(_root));
+    }
+
     [Theory]
     [InlineData("../escape.exe")]
     [InlineData("runtime/../../escape.exe")]

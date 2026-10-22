@@ -136,9 +136,11 @@ public final class LivePhotoRotation {
                     if(stopping.get()||complete.isDone())return;
                     try{ProgressHolder holder=new ProgressHolder();if(active[0].getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE)progress.accept(holder.progress);
                         handler.postDelayed(this,200);
-                    }catch(RuntimeException e){complete.completeExceptionally(e);}
+                    }catch(OutOfMemoryError e){complete.completeExceptionally(LiveExportGuard.memoryFailure(e));}
+                    catch(RuntimeException e){complete.completeExceptionally(e);}
                 }};handler.post(poll);
-            }catch(Exception e){complete.completeExceptionally(e);}
+            }catch(OutOfMemoryError e){complete.completeExceptionally(LiveExportGuard.memoryFailure(e));}
+            catch(Exception e){complete.completeExceptionally(e);}
         });
         boolean interrupted=false;
         try{

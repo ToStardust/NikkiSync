@@ -1,4 +1,5 @@
 import type { AssetState } from '@nikkisync/core'
+import {toPathKey} from '@nikkisync/core'
 import { ChangeJournalRepository } from './change-journal-repository.js'
 import type { DatabaseManager } from './database-manager.js'
 import type { AssetReconcileInput, AssetReconcileResult, CreateAssetInput } from './models.js'
@@ -179,8 +180,8 @@ export class AssetRepository {
     return this.database.transaction(() => {
       const rows = this.database.connection.prepare(
         `SELECT DISTINCT a.asset_id FROM assets a JOIN resources r ON r.asset_id = a.asset_id
-         WHERE a.asset_state <> 'deleted' AND (${roots.map(() => 'r.path_key LIKE ?').join(' OR ') || '0'})`
-      ).all(...roots.map((root) => `${root.replaceAll('\\', '/').toLowerCase().replace(/%/g, '%%')}%`)) as Array<Record<string, unknown>>
+         WHERE a.asset_state <> 'deleted' AND (${roots.map(() => 'instr(r.path_key, ?) = 1').join(' OR ') || '0'})`
+      ).all(...roots.map((root) => toPathKey(root)+'/')) as Array<Record<string, unknown>>
       const result: Array<{ assetId: string; revision: number }> = []
       for (const row of rows) {
         const assetId = String(row.asset_id)
@@ -212,6 +213,8 @@ export class AssetRepository {
   count(): number {
     return Number(this.database.connection.prepare('SELECT COUNT(*) AS count FROM assets').get()?.count ?? 0)
   }
+
+  countVisible():number{return Number(this.database.connection.prepare("SELECT COUNT(*) AS count FROM assets WHERE asset_state<>'deleted'").get()?.count??0)}
 
   updateState(assetId: string, state: AssetState, updatedAt = new Date().toISOString()): number {
     return this.database.transaction(() => {

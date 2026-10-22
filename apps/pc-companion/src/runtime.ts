@@ -127,7 +127,7 @@ export class PcCompanionRuntime {
     this.database.close()
   }
 
-  createPairingUri(host: string, ttlMs?: number): string {
-    return buildPairingUri(this.server.createPairingPayload(host, ttlMs))
+  createPairingUri(host: string, ttlMs?: number, hosts?: readonly string[]): string {
+    return buildPairingUri({ ...this.server.createPairingPayload(host, ttlMs), ...(hosts ? { hosts } : {}) })
   }
 }

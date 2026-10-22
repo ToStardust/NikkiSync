@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const packageDir=process.env.MOMO_DIAGNOSTIC_TEST_DIR??fileURLToPath(new URL('../../release/MomoCamera-Connection-Diagnostics-20261021-LaunchFix/',import.meta.url))
+const packageDir=process.env.MOMO_DIAGNOSTIC_TEST_DIR??fileURLToPath(new URL('../../release/MomoCamera-Connection-Diagnostics-20261021-Firewall-v2/',import.meta.url))
 function run(launcher){
   const result=spawnSync(process.env.ComSpec??'cmd.exe',['/d','/s','/c',`""${launcher}""`],{input:'\r\n',timeout:20000,windowsHide:true,windowsVerbatimArguments:true})
   if(result.error)throw result.error

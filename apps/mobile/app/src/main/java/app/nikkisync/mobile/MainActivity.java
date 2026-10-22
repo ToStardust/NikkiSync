@@ -1753,6 +1753,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     assets.clear(); assets.addAll(next); adapter.setItems(next); countLabel.setText("已同步 " + next.size() + " 张");
                     connectionState.httpResult(session, true);
                     setBusy(false); renderConnectionStatus(); updateSelection(); updateGalleryEmptyState();
+                    refreshKnownEndpoints(current,session);
                 });
             } catch (Exception error) {
                 main.post(() -> {
@@ -1787,20 +1788,56 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void probeConnection(long session) {
+        probeConnection(session,null);
+    }
+
+    private void refreshKnownEndpoints(NikkiSyncClient current,long session){
+        io.execute(()->{
+            try{
+                PairedServer verified=app.nikkisync.mobile.net.VerifiedEndpointResolver.inspect(current.server());
+                main.post(()->{
+                    if(!connectionState.isCurrent(session))return;
+                    PairedServer latest=serverStore.load();
+                    if(latest!=null&&latest.serverId().equals(verified.serverId())&&latest.tlsFingerprintSha256().equals(verified.tlsFingerprintSha256())){
+                        PairedServer updated=latest.withHosts(verified.hosts());serverStore.save(updated);pairedServer=updated;
+                    }
+                });
+            }catch(Exception ignored){}
+        });
+    }
+
+    private void probeConnection(long session,PairedServer discovered) {
         NikkiSyncClient current = client;
         if (current == null || connectionProbePending || io.isShutdown()) return;
         connectionProbePending = true;
+        PairedServer known=discovered==null?serverStore.load():discovered;
+        if(known==null){connectionProbePending=false;return;}
         io.execute(() -> {
             boolean reachable;
             app.nikkisync.mobile.net.ConnectionFailure failure;
-            try { current.assets(null, 1); reachable = true;failure=null; }
+            PairedServer selected=null;
+            try {
+                selected=app.nikkisync.mobile.net.VerifiedEndpointResolver.resolve(known);
+                new NikkiSyncClient(selected,identity).assets(null,1);
+                reachable = true;failure=null;
+            }
             catch (Exception error) { reachable = false;failure=app.nikkisync.mobile.net.ConnectionFailure.from(error); }
             boolean result = reachable;
             var finalFailure=failure;
+            PairedServer verified=selected;
             main.post(() -> {
                 if (!connectionState.isCurrent(session)) return;
                 connectionProbePending = false;
                 connectionFailure=finalFailure;
+                if(result&&verified!=null){
+                    PairedServer latest=serverStore.load();
+                    if(latest==null||!latest.serverId().equals(verified.serverId())||!latest.tlsFingerprintSha256().equals(verified.tlsFingerprintSha256()))return;
+                    PairedServer updated=latest.withEndpoint(verified.host(),verified.port()).withHosts(verified.hosts());
+                    serverStore.save(updated);pairedServer=updated;
+                    if(!current.server().host().equals(updated.host())||current.server().port()!=updated.port()){
+                        connect(updated,"已自动找到可达地址 · 正在连接…");return;
+                    }
+                }
                 connectionState.httpResult(session, result);
                 renderConnectionStatus();
                 if(result&&!libraryLoadedForSession)loadLibrary("已重新连接 · 正在读取图库…");
@@ -2281,15 +2318,12 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     @Override public void onEndpoint(String serverId, String host, int port) {
         main.post(() -> {
-            if(isFinishing()||serverStore==null||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted())return;
+            if(!connectionForeground||isFinishing()||serverStore==null||!new app.nikkisync.mobile.privacy.PrivacyConsentStore(this).accepted())return;
             PairedServer current = serverStore.load();
             android.util.Log.i("NikkiSync-Connection","Discovery identity matches saved pairing: "+(current!=null&&current.serverId().equals(serverId)));
             if (current == null || !current.serverId().equals(serverId)) return;
-            if (!current.host().equals(host) || current.port() != port
-                    ||(!connectionState.isReachable()&&!connectionProbePending)) {
-                PairedServer updated = current.withEndpoint(host, port); serverStore.save(updated); pairedServer = updated;
-                connect(updated, "已重新发现电脑 · 正在连接…");
-            }
+            if(connectionState.isReachable()||connectionProbePending)return;
+            probeConnection(connectionState.session(),current.withEndpoint(host,port));
         });
     }
 

@@ -61,7 +61,7 @@ public final class MotionContainer {
             if(profile==LivePhotoProfile.SAMSUNG_SEF){
                 long size=8L+SEF_NAME.length+video.length();JpegSegments.require(size<=0xffffffffL,"SEF 视频超出 32 位范围");
                 out.write(new byte[]{0,0,0x30,0x0a});out.write(le32(SEF_NAME.length));out.write(SEF_NAME);copy(video,out);out.write(sefIndex(size));
-            }else{copy(video,out);if(profile==LivePhotoProfile.HUAWEI_LEGACY)out.write(huaweiTail(options,video.length()));}
+            }else{copy(video,out);if(profile.usesHuaweiTail())out.write(huaweiTail(options,video.length()));}
         }
         return new Product(image,List.of());
     }
