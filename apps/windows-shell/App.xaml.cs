@@ -14,6 +14,14 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if(e.Args.Length>0&&e.Args[0]=="--recycle-file")
+        {
+            Shutdown(e.Args.Length==4?RecycleOnly.Run(e.Args[1],e.Args[2],e.Args[3]):3);return;
+        }
+          if(e.Args.Length>0&&e.Args[0]=="--repair-network")
+          {
+              Shutdown(e.Args.Length==5?WindowsNetworkConflict.RunHelper(e.Args[1],e.Args[2],e.Args[3],e.Args[4]):3);return;
+          }
         if(e.Args.Length>0 && e.Args[0]=="--authorize-network")
         {
             // The elevated short-lived helper never starts the UI, scanner, updater or single-instance activation.
@@ -51,6 +59,7 @@ public partial class App : System.Windows.Application
             if(ok)ok=await verificationWindow.VerifyFirstUseGuideAsync();
             if(ok)ok=await verificationWindow.VerifyExtraScanDirectoriesAsync();
             if(ok) ok=await verificationWindow.VerifyNetworkAuthorizationAsync();
+            if(ok) ok=await verificationWindow.VerifyOrganizerAsync();
             if (ok) ok = await verificationWindow.VerifyAboutAsync();
             File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
             {

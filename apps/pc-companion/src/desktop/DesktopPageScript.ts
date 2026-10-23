@@ -1,5 +1,7 @@
 import {extraScanDirectoriesScript} from './ExtraScanDirectoriesPanel.js'
+import {organizerScript} from './OrganizerPanel.js'
 export const desktopPageScript = `
+${organizerScript}
 (()=>{
   const shell=document.querySelector('.app-shell');
   let activeDialog,returnFocus;
@@ -21,7 +23,7 @@ export const desktopPageScript = `
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
   });
 
-  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。'],about:['关于','版本、更新与项目仓库。']};
+  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。'],organizer:['最近删除','核对手机整理的照片，确认后移入电脑回收站。'],about:['关于','版本、更新与项目仓库。']};
   const navigation=[...document.querySelectorAll('[data-view]')];
   let desktopView='connect';
   function showDesktopView(view){
@@ -42,6 +44,14 @@ export const desktopPageScript = `
   authorize.disabled=!bridge;revoke.disabled=true;
   authorize.onclick=()=>bridge?.postMessage({type:'authorizeNetwork'});
   revoke.onclick=()=>bridge?.postMessage({type:'revokeNetwork'});
+  const conflictCheck=document.querySelector('#check-network-conflicts'),conflictRepair=document.querySelector('#repair-network-conflicts'),conflictRestore=document.querySelector('#restore-network-conflicts');
+  let conflictBusy=false,conflictAllowed=true,authorizationBusy=false;
+  function conflictButtons(){conflictCheck.disabled=conflictRestore.disabled=!bridge||conflictBusy||authorizationBusy;conflictRepair.disabled=!bridge||conflictBusy||authorizationBusy||!conflictAllowed;}
+  conflictCheck.onclick=()=>bridge?.postMessage({type:'checkNetworkConflicts'});
+  conflictRepair.onclick=()=>bridge?.postMessage({type:'repairNetworkConflicts'});
+  conflictRestore.onclick=()=>bridge?.postMessage({type:'restoreNetworkConflicts'});
+  conflictButtons();
+  if(!bridge)document.querySelector('#network-conflict-note').textContent='请在 Windows 助手中检查和修复连接权限。';
   if(!bridge)document.querySelector('#network-authorization-note').textContent='请在 Windows 应用内点击“允许手机连接”完成网络授权。';
   const installer=document.querySelector('#android-installer'),installerNote=document.querySelector('#android-installer-note');
   const installerUnavailable=document.querySelector('#android-installer-unavailable');
@@ -57,7 +67,13 @@ export const desktopPageScript = `
   autostart.disabled=true;
   bridge?.addEventListener('message',event=>{
     void handleExtraDirectoryMessage(event);
+    if(event.data?.type==='networkConflicts'){
+      conflictBusy=!!event.data.busy;if(typeof event.data.canRepair==='boolean')conflictAllowed=event.data.canRepair;
+      conflictButtons();
+      if(typeof event.data.message==='string')document.querySelector('#network-conflict-note').textContent=event.data.message;
+    }
     if(event.data?.type==='networkAuthorization'){
+      authorizationBusy=!!event.data.busy;conflictButtons();
       if(typeof event.data.authorized==='boolean')networkAuthorized=event.data.authorized;
       if(typeof event.data.canRevoke==='boolean')networkCanRevoke=event.data.canRevoke;
       authorize.disabled=!!event.data.busy||networkAuthorized;
@@ -73,9 +89,10 @@ export const desktopPageScript = `
       installer.hidden=installerNote.hidden=!event.data.hasAndroidInstaller;
       installerUnavailable.hidden=!!event.data.hasAndroidInstaller;
       if(typeof event.data.version==='string')document.querySelector('#desktop-version').textContent='版本 '+event.data.version+(event.data.build?' · 构建号 '+event.data.build:'');
-      const available=typeof event.data.availableUpdateVersion==='string'&&event.data.availableUpdateVersion.length>0;
-      updateDot.hidden=!available;updates.textContent=available?'更新至 '+event.data.availableUpdateVersion:'检查更新';
-      if(available)document.querySelector('#desktop-update-note').textContent='发现新版本，点击查看更新内容。';
+      const available=typeof event.data.availableUpdateVersion==='string'&&Number.isSafeInteger(event.data.availableUpdateBuild)&&event.data.availableUpdateBuild>event.data.build;
+      const revision=available&&event.data.availableUpdateVersion===event.data.version;
+      updateDot.hidden=!available;updates.textContent=available?(revision?'更新当前版本修订':'更新至 '+event.data.availableUpdateVersion):'检查更新';
+      if(available)document.querySelector('#desktop-update-note').textContent=revision?'发现同版本修订：当前构建 '+event.data.build+' → 新构建 '+event.data.availableUpdateBuild+'。点击查看修复内容。':'发现新版本 '+event.data.availableUpdateVersion+'，点击查看更新内容。';
       else if(bridge)document.querySelector('#desktop-update-note').textContent='网盘下载新版，或检查签名更新源进行一键更新。';
     }
   });

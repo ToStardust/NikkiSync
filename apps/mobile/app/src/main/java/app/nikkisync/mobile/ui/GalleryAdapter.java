@@ -33,6 +33,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
 
     private static final int TYPE_HEADER = 0;
     private static final int TYPE_PHOTO = 1;
+    private static final Object SELECTION = new Object();
 
     private final Context context;
     private final ImageLoader images;
@@ -51,6 +52,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public void setItems(List<AssetSummary> next) {
+        if (items.equals(next)) return;
         items.clear();
         items.addAll(next);
         rows.clear();
@@ -83,8 +85,10 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     public boolean hasSelection() { return !singleAdjustDispatch && !selected.isEmpty(); }
 
     public boolean toggle(AssetSummary asset) {
+        boolean wasEmpty=selected.isEmpty();
         if (!selected.add(asset.assetId())) selected.remove(asset.assetId());
-        notifyDataSetChanged();
+        if(wasEmpty!=selected.isEmpty())notifyItemRangeChanged(0,rows.size(),SELECTION);
+        else for(int i=0;i<rows.size();i++)if(rows.get(i).asset!=null&&rows.get(i).asset.assetId().equals(asset.assetId()))notifyItemChanged(i,SELECTION);
         return selected.contains(asset.assetId());
     }
 
@@ -95,8 +99,9 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public void clearSelection() {
+        if(selected.isEmpty())return;
         selected.clear();
-        notifyDataSetChanged();
+        notifyItemRangeChanged(0,rows.size(),SELECTION);
     }
 
     @Override public int getItemCount() { return rows.size(); }
@@ -110,6 +115,16 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         return new PhotoHolder(new Cell(context));
     }
 
+    @Override public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder,int position,@NonNull List<Object> payloads){
+        if(!payloads.isEmpty()&&holder instanceof PhotoHolder photo){bindSelection(photo,rows.get(position).asset);return;}
+        onBindViewHolder(holder,position);
+    }
+    private void bindSelection(PhotoHolder photo,AssetSummary asset){
+        photo.cell.bind(asset,selected.contains(asset.assetId()));
+        photo.cell.check.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);
+        photo.cell.check.setText(selected.contains(asset.assetId())?"✓":"○");
+        photo.cell.check.setContentDescription(selected.contains(asset.assetId())?"取消选择照片":"选择照片");
+    }
     @Override public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
         Row row = rows.get(position);
         if (holder instanceof HeaderHolder header) {

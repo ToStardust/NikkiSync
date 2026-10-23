@@ -201,6 +201,7 @@ async function main(): Promise<void> {
   startupPhase = 'desktop-control'
   markStartup('desktop-control')
   const dashboard = createDesktopControlServer({
+    deletions:runtime.deletions,
     scanDirectories:new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop()),
     metadataPrivacy:{getState:()=>onlineConsent.state(),setEnabled:(enabled,version)=>{
       if(enabled&&version!==onlineConsent.state().policyVersion)throw new Error('Current privacy policy must be accepted')

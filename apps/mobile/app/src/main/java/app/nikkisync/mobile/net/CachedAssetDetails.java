@@ -45,6 +45,9 @@ public final class CachedAssetDetails {
         JSONObject metadata=asset.optJSONObject("metadata");
         JSONObject raw=metadata==null?null:metadata.optJSONObject("raw");
         if(raw!=null) {
+            // Preserve availability without persisting the native resolver token/payload.
+            raw.put("sourceParametersPresent",raw.optBoolean("sourceParametersPresent",false)
+                    || !raw.optString("nativeParamToken","").isBlank() || !raw.optString("nativeParamPayload","").isBlank());
             // The phone renders canonical fields; PC resolver credentials/payloads have no display use.
             var remove=new java.util.ArrayList<String>();var keys=raw.keys();
             while(keys.hasNext()) {String key=keys.next();if(key.startsWith("nativeParam"))remove.add(key);}

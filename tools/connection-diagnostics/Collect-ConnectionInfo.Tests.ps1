@@ -43,4 +43,28 @@ Assert-True ($report.Contains('Public: enabled=yes; block-all=no; default-inboun
 foreach ($private in @('never-export','Private Person','secret-network','password=secret','NikkiSync-PC-service.exe')) { Assert-True (-not $report.Contains($private)) "Firewall private field leaked: $private" }
 $snapshot.Firewall = @{Available=$false}
 Assert-True ((Format-ConnectionReport $snapshot).Contains('Windows firewall: unavailable')) 'An inaccessible firewall must not be described as disabled or open'
-Write-Output 'PASS: address validation, safe status, private-field allowlist, listener owners, firewall profiles and rule scopes'
+$profileMap=ConvertTo-InterfaceProfileMap @(
+    @{InterfaceIndex=7;NetworkCategory='Public';Name='secret-network'},
+    @{InterfaceIndex=9;NetworkCategory='Private'},
+    @{InterfaceIndex=10;NetworkCategory='DomainAuthenticated'},
+    @{InterfaceIndex=11;NetworkCategory='secret-network'},
+    @{InterfaceIndex=12;NetworkCategory='Private'},@{InterfaceIndex=12;NetworkCategory='Public'}
+)
+Assert-True ($profileMap[7] -eq 'Public' -and $profileMap[9] -eq 'Private' -and $profileMap[10] -eq 'Domain') 'Associate profiles with their own interface, not the global active profile mask'
+Assert-True ($profileMap[11] -eq 'Unknown' -and $profileMap[12] -eq 'Unknown') 'Unknown and ambiguous profile data cannot imply Public or Private'
+$scopedRule=@{Enabled=$true;Direction=1;Protocol=6;Profiles=4;Action=0;ApplicationName=$program;LocalPorts='*';RemoteAddresses='*';LocalAddresses='*';RemotePorts='*';InterfaceTypes='All';Interfaces=$null;ServiceName='';Name='Private Person'}
+$scopeCounts=Get-RelatedRuleCounts @($scopedRule) @($program) 28080 4
+Assert-True ($scopeCounts.ApplicationScopes.Count -eq 1 -and $scopeCounts.ApplicationScopes[0].RemoteScope -eq 'Any') 'Summarize scope for the exact current listener executable'
+$scopedRule.RemoteAddresses='10.9.8.7';$scopedRule.LocalAddresses='10.9.8.8';$scopedRule.ServiceName='secret-service';$scopedRule.Interfaces=@('secret-interface')
+$restricted=Get-RelatedRuleCounts @($scopedRule) @($program) 28080 4
+Assert-True ($restricted.ApplicationScopes[0].RemoteScope -eq 'Restricted' -and $restricted.ApplicationScopes[0].ServiceScope -eq 'Bound' -and $restricted.ApplicationScopes[0].InterfaceScope -eq 'Restricted') 'Do not mistake a scoped rule for an unrestricted conflict'
+$snapshot.Adapters[0].FirewallProfile=$profileMap[7]
+$snapshot.Firewall=@{Available=$true;OwnerKnown=$true;Profiles=@(@{Kind='Public';Enabled=$true;BlockAll=$false;DefaultInbound='Block';RulesAvailable=$true;Counts=$restricted})}
+$report=Format-ConnectionReport $snapshot
+Assert-True ($report.Contains('Windows network profile: Public') -and $report.Contains('action=Block; remote-scope=Restricted')) 'Report the per-adapter profile and sanitized rule scope'
+foreach($private in @('Private Person','secret-network','secret-service','secret-interface','10.9.8.7','10.9.8.8',$program)){Assert-True (-not $report.Contains($private)) 'New scope diagnostics must not leak names, rule addresses or paths'}
+$snapshot.Adapters[0].FirewallProfile='secret-network'
+Assert-True ((Format-ConnectionReport $snapshot).Contains('Windows network profile: Unknown')) 'Profile output uses a fixed allowlist'
+$collectorSource=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Collect-ConnectionInfo.ps1') -Raw
+Assert-True ($collectorSource -notmatch '(?i)\b(Set|Remove|Disable|Enable|New)-Net(Firewall|Connection|Adapter|Route)|\.Rules\.(Add|Remove)\s*\(') 'Diagnostics must not mutate network or firewall rules'
+Write-Output 'PASS: address validation, safe status, listener owners, adapter profiles, sanitized rule scopes and read-only privacy'

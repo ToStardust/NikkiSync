@@ -128,6 +128,7 @@ public final class SuitSearchDialog {
             boolean autoSearch
     ) {
         ChromePage dialog = new ChromePage(activity);
+        dialog.useAmbientBackground();
 
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);

@@ -70,6 +70,11 @@ public final class NikkiSyncClient {
         return page;
     }
 
+    public org.json.JSONArray syncOrganizer(org.json.JSONArray items)throws Exception {
+        byte[] body=new JSONObject().put("items",items).toString().getBytes(StandardCharsets.UTF_8);
+        return new JSONObject(SignedHttpClient.readUtf8(http.open("POST","/v1/organizer/sync",body,true))).getJSONArray("items");
+    }
+
     public AssetDetail asset(String assetId) throws Exception {
         return details==null?JsonCodec.assetDetail(http.json("GET", "/v1/assets/" + encode(assetId))):details.get(assetId);
     }

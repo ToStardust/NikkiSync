@@ -194,8 +194,10 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     @Override public void setCovered(boolean value){covered=value;updateLivePhoto();}
     @Override protected void dispatchDraw(Canvas canvas){if(liveBackdrop!=null&&canvas.isHardwareAccelerated())liveBackdrop.record(getWidth(),getHeight());super.dispatchDraw(canvas);}
 
-    public void addAction(String label,Runnable action){
+    public void addAction(String label,Runnable action){addAction(label,true,action);}
+    public void addAction(String label,boolean enabled,Runnable action){
         Button b=new Button(getContext());b.setText(label);b.setTextSize(14);b.setTextColor(Color.WHITE);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);b.setBackgroundColor(Color.TRANSPARENT);
+        b.setEnabled(enabled);b.setAlpha(enabled?1f:.35f);
         b.setOnClickListener(v->{action.run();if(image!=null)setZoom(zoom);});toolbar.addView(b,new LinearLayout.LayoutParams(0,-1,1));
     }
     public void show(){

@@ -19,6 +19,7 @@ public final class ChromePage {
         chrome.contentLayer().addView(background,new FrameLayout.LayoutParams(-1,-1));monet.restore(activity,background);
     }
     public void photo(NikkiSyncClient client,AssetSummary asset){if(asset!=null)monet.updatePhoto(activity,client,asset,background);}
+    public void useAmbientBackground(){background.setVisibility(View.GONE);chrome.contentLayer().setBackgroundResource(app.nikkisync.mobile.R.drawable.bg_gallery_ambient);}
     public void setContentView(View content){
         LinearLayout body=content instanceof ScrollView scroll?(LinearLayout)scroll.getChildAt(0):(LinearLayout)content;
         View header=body.getChildAt(0);body.removeView(header);
@@ -27,6 +28,8 @@ public final class ChromePage {
         chrome.contentLayer().addView(content,new FrameLayout.LayoutParams(-1,-1));
         chrome.installChrome(header,new FrameLayout(activity),content);
     }
+    public void addGlassControl(View control){control.setBackgroundColor(android.graphics.Color.TRANSPARENT);chrome.addDockEffect(control);}
     public void show(){((Owner)activity).navigationHost().push(chrome,monet::close);}
+    public boolean isShowing(){return chrome.getParent()!=null;}
     public void dismiss(){((Owner)activity).navigationHost().dismiss(chrome);}
 }

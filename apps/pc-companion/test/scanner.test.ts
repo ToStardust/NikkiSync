@@ -247,3 +247,4 @@ test('arrival order and UID isolation keep deterministic asset identity', async 
 })
 // Keep explicit-folder regressions in the default npm test scanner suite.
 import './extra-scan-directories.test.js'
+import './organizer.test.js'

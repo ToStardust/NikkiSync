@@ -7,6 +7,7 @@ import {DatabaseManager} from '@nikkisync/database'
 import {ScannerService} from '../src/scanner/ScannerService.js'
 import {ExtraScanDirectories,loadExtraScanDirectories,loadRetiredExtraDirectories} from '../src/scanner/ExtraScanDirectories.js'
 import {createDesktopControlServer} from '../src/desktop/DesktopControlServer.js'
+import {jpegImageLength} from '../src/scanner/JpegImageBoundary.js'
 
 async function fixture(){
   const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'momo-extra-')))
@@ -19,6 +20,56 @@ async function fixture(){
   const file=path.join(root,'extra.json'),extra=new ExtraScanDirectories(file,scanner)
   return {root,game,native,database,scanner,extra,file,ready:()=>Number(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c),close:async()=>{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}}
 }
+
+const exportedJpeg=Buffer.from([255,216,255,218,0,2,1,2,3,255,217])
+const nativeJpeg=Buffer.concat([exportedJpeg,Buffer.from('native-parameters'),Buffer.from([255,217]),Buffer.from(Buffer.alloc(32,7).toString('base64'))])
+
+test('JPEG identity skips thumbnail EOI, handles stuffed bytes/restarts and rejects truncated data',async()=>{
+  const f=await fixture()
+  try{
+    const jpeg=Buffer.from([255,216,255,225,0,6,255,216,255,217,255,218,0,2,1,255,0,2,255,208,3,255,217])
+    const file=path.join(f.root,'sample.jpeg');await writeFile(file,Buffer.concat([jpeg,Buffer.from('parameter tail')]))
+    assert.equal(await jpegImageLength(file,jpeg.length+14),jpeg.length)
+    await writeFile(file,jpeg.subarray(0,jpeg.length-2));assert.equal(await jpegImageLength(file,jpeg.length-2),undefined)
+  }finally{await f.close()}
+})
+
+test('default ScreenShot supplements collages without duplicating native photos and updates on native changes',async()=>{
+  const f=await fixture()
+  try{
+    const screen=path.join(f.game,'X6Game/ScreenShot');await mkdir(screen)
+    await writeFile(path.join(f.native,'Source.jpeg'),nativeJpeg)
+    await writeFile(path.join(screen,'Export.jpeg'),exportedJpeg)
+    await writeFile(path.join(screen,'Collage.png'),'collage')
+    await f.scanner.stop()
+    const scanner=new ScannerService(f.database,{startingPaths:[f.game],runningExecutablePaths:[],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+    try{
+      await scanner.start();assert.equal(f.ready(),3,'original fixture + native source + collage only')
+      await writeFile(path.join(screen,'New.png'),'new screenshot');await scanner.rescanPath(path.join(screen,'New.png'));assert.equal(f.ready(),4)
+      await writeFile(path.join(f.native,'New.png'),'new screenshot');await scanner.rescanPath(path.join(f.native,'New.png'));assert.equal(f.ready(),4,'new native must replace the duplicate export in the index')
+      const manager=new ExtraScanDirectories(f.file,scanner);await assert.rejects(manager.inspect(screen),/already_covered/)
+    }finally{await scanner.stop()}
+  }finally{await f.close()}
+})
+
+test('selecting moved ScreenShot discovers hidden neighboring originals and retains unique exports',async()=>{
+  const f=await fixture()
+  try{
+    const base=path.join(f.root,'OldGame/X6Game'),screen=path.join(base,'ScreenShot'),native=path.join(base,'Saved/GamePlayPhotos/30003/NikkiPhotos_HighQuality')
+    await mkdir(screen,{recursive:true});await mkdir(native,{recursive:true})
+    await writeFile(path.join(native,'DifferentName.jpeg'),nativeJpeg);await writeFile(path.join(screen,'Export.jpeg'),exportedJpeg);await writeFile(path.join(screen,'Collage.png'),'collage')
+    const proposal=await f.extra.inspect(screen)
+    assert.ok(proposal.roots.some(root=>root.mode==='native'))
+    assert.ok(proposal.roots.some(root=>root.path===screen))
+    assert.equal(f.ready(),1,'nearby folders require confirmation')
+    await f.extra.add(proposal.id);assert.equal(f.ready(),3)
+    const metadata=f.database.connection.prepare("SELECT metadata_json FROM assets WHERE uid='30003'").get()
+    assert.match(String(metadata?.metadata_json),/nativeParamToken/,'prefer native metadata-bearing original')
+    await f.extra.remove(f.extra.state().directories.find(item=>item.mode==='native')!.id)
+    assert.equal(f.ready(),3,'removing native source makes its preserved export visible again')
+    assert.equal(await readFile(path.join(screen,'Export.jpeg')).then(value=>value.equals(exportedJpeg)),true)
+  }finally{await f.close()}
+})
 
 test('extra folders import plain exports, isolate equal filenames, persist and stop sharing without deleting originals',async()=>{
   const f=await fixture()

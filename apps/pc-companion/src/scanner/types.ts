@@ -21,6 +21,7 @@ export interface DiscoveredResource {
   height?: number
   durationMs?: number
   sha256?: string
+  imageSha256?: string
   mimeType: string
   fileExt: string
   /** Opaque 32-byte Infinity Nikki parameter token encoded as 44-char Base64 after the final JPEG EOI. */

@@ -127,6 +127,7 @@ public sealed class ProcessServiceFactory : IServiceProcessFactory
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var (key, value) in environment) info.Environment[key] = value;
+        info.Environment["NIKKISYNC_RECYCLE_HELPER"] = Environment.ProcessPath;
         return new ProcessChild(Process.Start(info) ?? throw new ServiceStartException(StartupFailure.Create("SERVICE_EXIT")));
     }
 

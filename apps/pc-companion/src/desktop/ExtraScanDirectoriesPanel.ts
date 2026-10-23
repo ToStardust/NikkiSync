@@ -1,10 +1,11 @@
 export const extraScanDirectoriesHtml=`<section class="settings-card glass" id="extra-scan-section"><h2>额外扫描目录</h2>
 <p class="page-subtitle">把游戏外的截图、搬迁的相册加入本机共享相册。可添加多个文件夹，重启后保留。确认后，已配对的手机都可访问其中的照片。</p>
+<p class="page-subtitle">游戏内拼图会从 ScreenShot 自动补收，无需重复添加。搬迁后只找到 ScreenShot 也可以选择，助手会检查同一游戏目录下的隐藏原生相册，确认后一起加入。</p>
 <div class="directory-help"><button type="button" id="scan-directory-help" class="secondary" aria-expanded="false" aria-controls="scan-directory-guide">不知道该选哪个文件夹？查看目录说明</button><div id="scan-directory-guide" class="directory-guide" hidden><p><strong>旋转吧大喵：</strong>打开它的“设置 → 输出目录”，选择实际保存照片的位置。默认通常为系统“视频”里的 <code>SpinningMomo</code>；改过位置时以软件设置为准。</p><p><strong>搬迁的游戏相册：</strong>优先选择 <code>GamePlayPhotos</code> 或下面的 UID 文件夹，可同时收录原图与 LIVE。也可选择搬迁后的游戏目录，助手会定位其中的相册。</p><p><strong>只想加入普通照片：</strong>选 <code>NikkiPhotos_HighQuality</code>（原图）或导出照片文件夹。不要选 <code>NikkiPhotos_LowQuality</code>（缩略图）。LIVE 需要封面与视频一起保留。</p><p>包含子文件夹；支持 JPG/JPEG、PNG、WebP 和原生 LIVE 配对。普通录像不会自动变成 LIVE；软件截图可能不带游戏拍摄参数。PNG/WebP 可原样保存，手机旋转保存当前请使用 JPEG。请选照片文件夹，避免选整个磁盘。</p></div></div>
 <div class="about-actions"><button id="add-scan-directory" class="primary" disabled>添加文件夹</button><button id="add-spinning-directory" class="secondary" disabled>选择旋转吧大喵输出目录</button><button id="rescan-directories" class="secondary">重新扫描</button></div>
 <p id="scan-directory-message" class="page-subtitle" role="status">添加前会显示识别结果，由你确认后开始扫描。移除只停止扫描和分享，不删除原文件。</p>
 <div id="scan-directory-preview" hidden style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:16px"><p id="scan-directory-preview-roots" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px"></p><p id="scan-directory-preview-note" class="page-subtitle"></p><div class="about-actions"><button id="confirm-scan-directory" class="primary">确认加入共享相册</button><button id="cancel-scan-directory" class="secondary">取消</button></div></div>
-<div id="scan-directory-list" aria-label="已添加的额外扫描目录"></div><p id="automatic-scan-directories" class="page-subtitle" style="overflow-wrap:anywhere"></p>
+<div id="scan-directory-list" aria-label="已添加的额外扫描目录"></div><details class="automatic-directories"><summary>默认相册 · 自动发现与同步 <span>查看目录</span></summary><p class="page-subtitle">优先读取原生照片参数，同时补收 ScreenShot 中的拼图与独有照片；导出副本不会重复展示。</p><div id="automatic-scan-directories"></div></details>
 <p class="page-subtitle">修改目录后，Android App 会自动同步变化；照片较多时请等待扫描完成。</p></section>`
 
 export const extraScanDirectoriesScript=String.raw`
@@ -26,14 +27,18 @@ export const extraScanDirectoriesScript=String.raw`
   function renderExtraState(state){
     extraLastState=state;const list=document.querySelector('#scan-directory-list');list.replaceChildren();
     for(const item of state.directories||[]){
-      const row=document.createElement('div');row.style.cssText='padding:14px 0;border-top:1px solid var(--line)';
-      const name=document.createElement('p');name.textContent=item.path;name.style.cssText='font-size:12px;overflow-wrap:anywhere';row.appendChild(name);
+      const row=document.createElement('div');row.className='scan-folder-card';
+      const title=document.createElement('strong');title.textContent=item.path.split(/[\\/]/).filter(Boolean).pop()||'照片目录';row.appendChild(title);
+      const name=document.createElement('p');name.textContent=item.path;name.className='scan-folder-path';row.appendChild(name);
       const mode=document.createElement('p');mode.className='page-subtitle';mode.textContent=item.mode==='native'?'暖暖原生相册 · 包含子文件夹':'外部图片目录 · 包含子文件夹';row.appendChild(mode);
       const remove=document.createElement('button');remove.className='secondary';remove.textContent=extraRemoval===item.id?'确认移除（保留原文件）':'移除';remove.disabled=extraBusy;
       remove.onclick=async()=>{if(extraBusy)return;if(extraRemoval!==item.id){extraRemoval=item.id;renderExtraState(extraLastState);return;}await extraOperation(async()=>{await extraRequest('remove',{id:item.id});extraRemoval=undefined;});};row.appendChild(remove);list.appendChild(row);
     }
     if(!(state.directories||[]).length){const empty=document.createElement('p');empty.className='page-subtitle';empty.textContent='尚未添加额外目录，默认游戏相册仍会自动扫描。';list.appendChild(empty);}
-    document.querySelector('#automatic-scan-directories').textContent=(state.automaticRoots||[]).length?'默认自动扫描：'+state.automaticRoots.join('；'):'尚未找到默认游戏相册，可添加照片文件夹使用。';
+    const automatic=document.querySelector('#automatic-scan-directories');automatic.replaceChildren();
+    const roots=(state.automaticRoots||[]).filter((root,index,all)=>!all.some((parent,other)=>other!==index&&root.toLowerCase().startsWith(parent.toLowerCase()+'\\')));
+    for(const root of roots){const row=document.createElement('div');row.className='scan-folder-card';const label=document.createElement('strong');label.textContent=/ScreenShot$/i.test(root)?'拼图与导出补充':'游戏原生相册';row.appendChild(label);const value=document.createElement('p');value.className='scan-folder-path';value.textContent=root;row.appendChild(value);automatic.appendChild(row);}
+    if(!roots.length)automatic.textContent='尚未找到默认游戏相册，可添加照片文件夹使用。';
     if(!extraBusy&&state.message)extraMessage.textContent=state.message;
     if(state.busy&&!extraBusy)extraMessage.textContent='正在扫描目录，照片较多时可能需要一些时间…';
   }

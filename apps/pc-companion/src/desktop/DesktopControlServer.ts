@@ -9,8 +9,10 @@ import { renderDesktopPage } from './DesktopPage.js'
 import type { WeChatGalleryStatus } from '../wechat/WeChatGalleryService.js'
 import type { MetadataRecipient } from '../metadata/MetadataOnlineConsent.js'
 import type {ExtraScanDirectories} from '../scanner/ExtraScanDirectories.js'
+import type {DeletionQueue} from '../organizer/DeletionQueue.js'
 
 export interface DesktopControlServerConfig {
+  deletions?:DeletionQueue
   scanDirectories?:ExtraScanDirectories
   metadataPrivacy?: {
     getState(): {enabled:boolean;policyVersion:string;recipients:MetadataRecipient[]}
@@ -45,13 +47,13 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
     const remote = config.remoteBridge
-    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments || config.scanDirectories) {
+    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments || config.scanDirectories || config.deletions) {
       const host = request.headers.host
       const localHosts = [`127.0.0.1:${request.socket.localPort}`, `localhost:${request.socket.localPort}`]
       if (!host || !localHosts.includes(host)) { json(response, 403, { error: 'forbidden' }); return }
     }
     if ((remote && requestUrl.pathname.startsWith('/api/remote/')) || (config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/'))
-        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))||(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories'))) {
+        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))||(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories'))||(config.deletions&&requestUrl.pathname.startsWith('/api/organizer'))) {
       const token = request.headers['x-nikkisync-desktop-token']
       const origin = request.headers.origin
       if (typeof token !== 'string' || Buffer.byteLength(token) !== Buffer.byteLength(desktopToken)
@@ -61,6 +63,23 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
         json(response, 403, { error: 'forbidden' }); return
       }
       try {
+        if(config.deletions&&requestUrl.pathname.startsWith('/api/organizer')){
+          if(request.method==='GET'&&requestUrl.pathname==='/api/organizer/preview'){
+            const file=await config.deletions.preview(requestUrl.searchParams.get('id')??'');if(!file){json(response,404,{error:'not_found'});return}
+            response.writeHead(200,{'content-type':/\.png$/i.test(file.path)?'image/png':/\.webp$/i.test(file.path)?'image/webp':'image/jpeg','content-length':file.size,'cache-control':'no-store','x-content-type-options':'nosniff'});
+            const stream=createReadStream(file.path);stream.on('error',()=>response.destroy());response.on('close',()=>stream.destroy());stream.pipe(response);return
+          }
+          if(request.method==='GET'&&requestUrl.pathname==='/api/organizer'){json(response,200,{items:config.deletions.list()});return}
+          const bulk=requestUrl.pathname==='/api/organizer/approve-many'
+          if(request.method!=='POST'||(!bulk&&requestUrl.pathname!=='/api/organizer/decide')||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+          const chunks:Buffer[]=[];let size=0
+          for await(const chunk of request){size+=chunk.length;if(size>(bulk?40960:4096)){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
+          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {id:unknown;approve:unknown;ids:unknown}
+            if(bulk){json(response,200,await config.deletions.approveMany(value.ids as string[]));return}
+            if(typeof value.id!=='string'||typeof value.approve!=='boolean')throw new Error('bad_request')
+            json(response,200,{items:await config.deletions.decide(value.id,value.approve)})
+          }catch{json(response,409,{error:'request_changed'})}return
+        }
         if(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories')){
           const directories=config.scanDirectories
           if(request.method==='GET'&&requestUrl.pathname==='/api/scan-directories'){json(response,200,directories.state());return}
@@ -181,7 +200,7 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
     }
     if (requestUrl.pathname === '/' && request.method === 'GET') {
       const qrSvg = status.firstRun ? await config.qrSvg(config.createPairingUri()) : undefined
-      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...((config.metadataPrivacy||config.scanDirectories)?{desktopToken}:{}), ...(config.metadataPrivacy?{metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
+      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...((config.metadataPrivacy||config.scanDirectories||config.deletions)?{desktopToken}:{}), ...(config.metadataPrivacy?{metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' }); response.end(page); return
     }
     response.writeHead(404); response.end()

@@ -47,4 +47,34 @@ public final class PlayerFacingDetailsTest {
         assertEquals("名称暂缺", PlayerFacingDetails.clothingName("服装+104321", "104321"));
         assertEquals("星海长裙", PlayerFacingDetails.clothingName("星海长裙", "104321"));
     }
+
+    @Test public void plainScreenshotExplainsMissingDataWithoutClaimingAFormatOrProgram() {
+        String notice=PlayerFacingDetails.metadataNotice(null);
+        assertTrue(notice.contains("穿搭和拍摄参数"));assertTrue(notice.contains("普通截图或搬迁后的相册可能"));
+        assertTrue(notice.contains("原游戏相册目录"));assertFalse(notice.contains("损坏"));
+        assertEquals(notice,PlayerFacingDetails.metadataNotice("{\"camera\":{},\"dressing\":{\"clothes\":[]}}"));
+    }
+
+    @Test public void knownNativeDataAndResolverFailureAreUnparsedRatherThanLost() {
+        for(String raw:new String[]{"{\"nativeParamToken\":\"private-token\"}","{\"sourceParametersPresent\":true}","{\"resolver\":{\"status\":\"failed\",\"error\":\"private-error\"}}"}) {
+            String notice=PlayerFacingDetails.metadataNotice("{\"raw\":"+raw+"}");
+            assertTrue(notice.contains("尚未解析完整"));assertTrue(notice.contains("在线参数解析"));
+            assertFalse(notice.contains("缺少原始数据"));assertFalse(notice.contains("private"));
+        }
+    }
+
+    @Test public void partiallyDecodedMetadataKeepsTheCorrectExplanation() {
+        String notice=PlayerFacingDetails.metadataNotice("{\"camera\":{\"focalLength\":50},\"raw\":{\"resolver\":{\"status\":\"resolved\"}}}");
+        assertTrue(notice.startsWith("穿搭数据未能完整读取"));assertFalse(notice.contains("联网"));assertFalse(notice.contains("缺少原始数据"));
+        String partial=PlayerFacingDetails.metadataNotice("{\"dressing\":{\"clothes\":[{\"id\":\"123\"}]}}");
+        assertTrue(partial.startsWith("部分拍摄参数"));
+    }
+
+    @Test public void decodedIdsWithoutNamesOrIconsAreNotMissingOutfitData() {
+        assertEquals("",PlayerFacingDetails.metadataNotice("{\"camera\":{\"exposure\":0},\"dressing\":{\"clothes\":[{\"id\":\"123\"}]}}"));
+    }
+
+    @Test public void corruptMetadataOffersResyncRatherThanAFalseMissingSourceDiagnosis() {
+        String notice=PlayerFacingDetails.metadataNotice("{broken");assertTrue(notice.contains("重新同步"));assertFalse(notice.contains("普通截图"));
+    }
 }

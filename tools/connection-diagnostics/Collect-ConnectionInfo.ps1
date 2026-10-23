@@ -45,7 +45,29 @@ function Get-DesktopStatus {
     finally { if ($null -ne $response) { $response.Dispose() } }
 }
 
+function ConvertTo-SafeProfile([string]$Value) {
+    if ($Value -in @('Public','Private','Domain','NotConnected')) { return $Value }
+    return 'Unknown'
+}
+
+function ConvertTo-InterfaceProfileMap($Connections) {
+    $result=@{}
+    foreach ($connection in $Connections) {
+        $index=0
+        if (-not [int]::TryParse([string]$connection.InterfaceIndex,[ref]$index) -or $index -lt 1) { continue }
+        $category=[string]$connection.NetworkCategory
+        if ($category -eq 'DomainAuthenticated') { $category='Domain' }
+        $category=ConvertTo-SafeProfile $category
+        if ($result.ContainsKey($index) -and $result[$index] -ne $category) { $category='Unknown' }
+        $result[$index]=$category
+    }
+    return $result
+}
+
 function Get-AdapterSnapshot {
+    # Read once; never export network names/IDs returned by this Windows cmdlet.
+    $profileMap=@{}
+    try { $profileMap=ConvertTo-InterfaceProfileMap @(Get-NetConnectionProfile -ErrorAction Stop) } catch { }
     foreach ($adapter in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
         try {
             $properties = $adapter.GetIPProperties()
@@ -54,7 +76,10 @@ function Get-AdapterSnapshot {
             })
             if ($addresses.Count -eq 0) { continue }
             $gateways = @($properties.GatewayAddresses | Where-Object { $_.Address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork } | ForEach-Object { $_.Address.ToString() })
-            @{Kind=(Get-AdapterKind $adapter.Name $adapter.Description $adapter.NetworkInterfaceType.ToString()); State=$adapter.OperationalStatus.ToString(); Addresses=$addresses; Gateways=$gateways}
+            $profile='Unknown'
+            if ($adapter.OperationalStatus.ToString() -ne 'Up') { $profile='NotConnected' }
+            else { try { $interfaceIndex=$properties.GetIPv4Properties().Index; if ($profileMap.ContainsKey($interfaceIndex)) { $profile=$profileMap[$interfaceIndex] } } catch { } }
+            @{Kind=(Get-AdapterKind $adapter.Name $adapter.Description $adapter.NetworkInterfaceType.ToString()); State=$adapter.OperationalStatus.ToString(); Addresses=$addresses; Gateways=$gateways; FirewallProfile=$profile}
         } catch { }
     }
 }
@@ -133,8 +158,29 @@ function Get-ListenerProgramPaths([int]$Port) {
     finally { if ($null -ne $process) { $process.Dispose() } }
 }
 
+function Get-AddressScope([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return 'Unknown' }
+    if ($Value -eq '*' -or $Value -eq 'Any') { return 'Any' }
+    if ($Value -eq 'LocalSubnet') { return 'LocalSubnet' }
+    return 'Restricted'
+}
+
+function Get-SafeRuleScope($Rule) {
+    $result=@{Action='Unknown';RemoteScope='Unknown';LocalScope='Unknown';InterfaceScope='Unknown';ServiceScope='Unknown';RemotePortScope='Unknown'}
+    try {
+        if ($Rule.Action -eq 0) { $result.Action='Block' } elseif ($Rule.Action -eq 1) { $result.Action='Allow' }
+        $result.RemoteScope=Get-AddressScope ([string]$Rule.RemoteAddresses)
+        $result.LocalScope=Get-AddressScope ([string]$Rule.LocalAddresses)
+        $result.RemotePortScope=Get-AddressScope ([string]$Rule.RemotePorts)
+        $result.InterfaceScope='Restricted'
+        if ([string]$Rule.InterfaceTypes -eq 'All' -and @($Rule.Interfaces | Where-Object {$null -ne $_ -and [string]$_ -ne ''}).Count -eq 0) { $result.InterfaceScope='All' }
+        $result.ServiceScope='Bound'; if ([string]::IsNullOrEmpty([string]$Rule.ServiceName)) { $result.ServiceScope='Any' }
+    } catch { }
+    return $result
+}
+
 function Get-RelatedRuleCounts($Rules, $ProgramPaths, [int]$Port, [int]$Profile) {
-    $counts = @{ApplicationAllow=0;ApplicationBlock=0;PortAllow=0;PortBlock=0;OtherBackendAllow=0}
+    $counts = @{ApplicationAllow=0;ApplicationBlock=0;PortAllow=0;PortBlock=0;OtherBackendAllow=0;ApplicationScopes=@()}
     foreach ($rule in $Rules) {
         try {
             if (-not $rule.Enabled -or $rule.Direction -ne 1 -or (($rule.Profiles -band $Profile) -eq 0)) { continue }
@@ -149,6 +195,7 @@ function Get-RelatedRuleCounts($Rules, $ProgramPaths, [int]$Port, [int]$Profile)
             if ($null -ne $scope) {
                 if ($rule.Action -eq 1) { $counts[$scope + 'Allow']++ }
                 elseif ($rule.Action -eq 0) { $counts[$scope + 'Block']++ }
+                if ($scope -eq 'Application' -and $counts.ApplicationScopes.Count -lt 16) { $counts.ApplicationScopes += @(Get-SafeRuleScope $rule) }
             }
         } catch { }
     }
@@ -179,7 +226,7 @@ function Get-FirewallSnapshot([int]$Port) {
 
 function Format-ConnectionReport($Snapshot) {
     $lines = New-Object 'Collections.Generic.List[string]'
-    $lines.Add('MomoCamera connection diagnostic report v2')
+    $lines.Add('MomoCamera connection diagnostic report v3')
     $lines.Add('Time: ' + $Snapshot.Timestamp)
     $lines.Add('OS version: ' + $Snapshot.System)
     $lines.Add('Running assistant versions: ' + (@($Snapshot.Versions) -join ', '))
@@ -193,6 +240,7 @@ function Format-ConnectionReport($Snapshot) {
     foreach ($adapter in @($Snapshot.Adapters)) {
         $index++
         $lines.Add('  Adapter #' + $index + ': ' + $adapter.Kind + ', ' + $adapter.State)
+        $lines.Add('    Windows network profile: ' + (ConvertTo-SafeProfile ([string]$adapter.FirewallProfile)))
         foreach ($ip in @($adapter.Addresses)) { $lines.Add('    IPv4: ' + $ip.Address + ' / mask: ' + $ip.Mask) }
         $lines.Add('    Gateways: ' + (@($adapter.Gateways) -join ', '))
     }
@@ -217,10 +265,16 @@ function Format-ConnectionReport($Snapshot) {
             if ($profile.RulesAvailable) {
                 $counts = $profile.Counts
                 $lines.Add('    Related enabled inbound TCP rules: application allow=' + $counts.ApplicationAllow + '; block=' + $counts.ApplicationBlock + '; port-specific allow=' + $counts.PortAllow + '; block=' + $counts.PortBlock + '; other backend paths allow=' + $counts.OtherBackendAllow)
+                $ruleIndex=0
+                foreach ($scope in @($counts.ApplicationScopes)) {
+                    if ($null -eq $scope) { continue }; $ruleIndex++
+                    $lines.Add('    Current application rule #' + $ruleIndex + ': action=' + $scope.Action + '; remote-scope=' + $scope.RemoteScope + '; local-scope=' + $scope.LocalScope + '; interface-scope=' + $scope.InterfaceScope + '; service=' + $scope.ServiceScope + '; remote-port-scope=' + $scope.RemotePortScope)
+                }
             } else { $lines.Add('    Related rules: unavailable') }
         }
         $lines.Add('Rule counts are clues, not an effective-access verdict: address/interface/service scope, policy and other security filters may apply.')
         $lines.Add('Other backend paths may belong to older or additional installs; they do not allow the current listener executable.')
+        $lines.Add('An explicit matching block can override an allow. A block on another adapter profile is not proof of a conflict on this connection.')
     }
     $lines.Add('')
     $lines.Add('A successful local TCP check does not prove the phone can reach the PC.')

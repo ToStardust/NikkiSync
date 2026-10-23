@@ -93,6 +93,9 @@ public class AssetDetailCacheTest {
         var loader=new CachedAssetDetails(store,"pc",id->json);loader.get("a");
         String cached=store.get("pc","a");assertFalse(cached.contains("secret"));assertFalse(cached.contains("nativeParamPayload"));
         assertTrue(cached.contains("providerVersion"));assertTrue(cached.contains("focalLength"));
+        assertTrue(new org.json.JSONObject(cached).getJSONObject("asset").getJSONObject("metadata").getJSONObject("raw").getBoolean("sourceParametersPresent"));
+        var restarted=new CachedAssetDetails(store,"pc",id->{throw new AssertionError("must use the cached availability marker");});
+        assertTrue(app.nikkisync.mobile.ui.PlayerFacingDetails.metadataNotice(restarted.get("a").metadataJson()).contains("尚未解析完整"));
     }
     @Test public void resyncOrUserClearCannotBeUndoneByLateFetch() throws Exception {
         final CachedAssetDetails[] loader=new CachedAssetDetails[1];

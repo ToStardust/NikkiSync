@@ -35,8 +35,10 @@ import { searchClothingLibrary } from './ClothingSearchIndex.js'
 import { buildProfileStats } from './ProfileStatsIndex.js'
 import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
+import type {DeletionQueue,DeleteIntent} from '../organizer/DeletionQueue.js'
 
 export interface LocalSyncServerConfig {
+  deletions?: DeletionQueue
   name?: string
   host?: string
   port?: number
@@ -132,6 +134,7 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 }
 
 export class LocalSyncServer {
+  private readonly deletions:DeletionQueue|undefined
   private exportBusy = false
   private readonly reads: SyncReadRepository
   private readonly assets: AssetRepository
@@ -151,6 +154,7 @@ export class LocalSyncServer {
   private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge' | 'connectionHosts'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
+    this.deletions=config.deletions
     this.reads = new SyncReadRepository(database)
     this.assets = new AssetRepository(database)
     this.dictionary = new MetadataDictionaryRepository(database)
@@ -224,6 +228,14 @@ export class LocalSyncServer {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://nikkisync.local')
+      if(req.method==='POST'&&url.pathname==='/v1/organizer/sync'){
+        const body=await readBody(req,128*1024)
+        const device=this.auth.verifyRequest(req,body)
+        if(!device)return json(res,401,errorBody('unauthorized','Request signature is missing or invalid'))
+        if(!this.deletions)return json(res,404,errorBody('not_found','Organizer requires a newer desktop'))
+        try {const value=JSON.parse(body.toString('utf8')) as {items:DeleteIntent[]};return json(res,200,{items:await this.deletions.sync(device,value.items)})}
+        catch{return json(res,400,errorBody('bad_request','Invalid organizer request'))}
+      }
       if (this.remoteRoutes && url.pathname.startsWith('/remote/')) {
         await this.remoteRoutes.handle(req, res)
         return

@@ -28,6 +28,27 @@ import java.util.concurrent.Executors;
 import javax.net.ssl.HttpsURLConnection;
 
 public final class ImageLoader {
+    private volatile boolean networkAvailable=true;
+    public void setNetworkAvailable(boolean available){networkAvailable=available;}
+    private static String assetKey(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset){
+        String resource=asset.thumbnailResourceId()!=null?asset.thumbnailResourceId():asset.previewResourceId();
+        return server.serverId()+":"+server.tlsFingerprintSha256()+":"+asset.assetId()+":"+resource+":r"+asset.revision();
+    }
+    public boolean hasCached(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset){try{String key=assetKey(server,asset);return diskFile(key).isFile()||pinnedFile(key).isFile();}catch(Exception error){return false;}}
+    private File pinnedFile(String key)throws Exception{return diskFile(new File(diskDir.getParentFile(),"organizer-thumbnails"),key);}
+    public void pinForOrganizerAsync(app.nikkisync.mobile.model.Models.PairedServer server,java.util.List<AssetSummary> photos){
+        executor.execute(()->{for(AssetSummary asset:photos)try{pinForOrganizer(server,asset);}catch(Exception ignored){/* Existing cache still remains available. */}});
+    }
+    public void pinForOrganizer(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset)throws Exception{
+        String key=assetKey(server,asset);File pin=pinnedFile(key);if(pin.isFile())return;File source=diskFile(key);if(!source.isFile())return;
+        Bitmap bitmap=decodeDisplayFile(source);if(bitmap==null)return;
+        pin.getParentFile().mkdirs();try(FileOutputStream out=new FileOutputStream(pin)){if(!bitmap.compress(Bitmap.CompressFormat.JPEG,85,out))throw new java.io.IOException("thumbnail");}finally{bitmap.recycle();}
+    }
+    public void loadOffline(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,ImageView target){
+        target.setTag(R.id.photo_source_asset_id,asset.assetId());
+        target.setTag(R.id.photo_source_identity,server.serverId()+":"+server.tlsFingerprintSha256()+":"+asset.assetId());
+        loadNetwork(assetKey(server,asset),target,()->{throw new IllegalStateException("Offline");},null);
+    }
     /** Display previews only. Original and share-card exports retain their separate full-quality paths. */
     static Bitmap decodeDisplayFile(File file){
         BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
@@ -78,15 +99,21 @@ public final class ImageLoader {
     }
 
     public void loadClothingThumbnail(NikkiSyncClient client, String assetId, String clothingId, String cacheVersion, ImageView target) {
-        String key = ClothingCacheKey.of(client==null?null:client.server(),assetId,clothingId,cacheVersion);
-        loadNetwork(key, target, () -> client.clothingThumbnail(assetId, clothingId), () -> showClothingPlaceholder(target));
+        loadClothingThumbnail(client,null,assetId,clothingId,cacheVersion,target);
+    }
+
+    public void loadClothingThumbnail(NikkiSyncClient client, app.nikkisync.mobile.model.Models.PairedServer rememberedServer, String assetId, String clothingId, String cacheVersion, ImageView target) {
+        String key = ClothingCacheKey.of(client==null?rememberedServer:client.server(),assetId,clothingId,cacheVersion);
+        loadNetwork(key, target, () -> {if(client==null)throw new IllegalStateException("Offline icon is not cached");return client.clothingThumbnail(assetId, clothingId);}, () -> showClothingPlaceholder(target));
     }
 
     private void loadNetwork(String key, ImageView target, ConnectionFactory connectionFactory, Runnable onFailure) {
+        boolean same=key.equals(target.getTag())&&target.getDrawable()!=null;
         target.setTag(key);
-        target.setImageDrawable(null);
         Bitmap cached = cache.get(key);
         if (cached != null) { target.setImageBitmap(cached); return; }
+        if(same)return;
+        target.setImageDrawable(null);
         executor.execute(() -> {
             synchronized(downloadLocks[(key.hashCode()&0x7fffffff)%downloadLocks.length]) {
             HttpsURLConnection connection = null;
@@ -95,6 +122,7 @@ public final class ImageLoader {
                 Bitmap memory=cache.get(key);
                 if(memory!=null) {main.post(()->{if(key.equals(target.getTag()))target.setImageBitmap(memory);});return;}
                 File disk = diskFile(key);
+                if(!disk.isFile()&&pinnedFile(key).isFile())disk=pinnedFile(key);
                 if (disk.isFile()) {
                     Bitmap bitmap;
                     bitmap = decodeDisplayFile(disk);
@@ -106,6 +134,7 @@ public final class ImageLoader {
                     }
                     disk.delete();
                 }
+                if(!networkAvailable)throw new IllegalStateException("Offline");
                 connection = connectionFactory.open();
                 int responseCode = connection.getResponseCode();
                 if (responseCode != 200) throw new IllegalStateException("image request HTTP " + responseCode);

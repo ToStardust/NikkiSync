@@ -84,6 +84,12 @@ public final class PairQrScannerActivity extends Activity {
         blockedContent.addView(cancel, new LinearLayout.LayoutParams(-1, -2));
         blockedContent.setVisibility(View.GONE);
         root.addView(blockedContent, new FrameLayout.LayoutParams(-1, -1));
+        Button temporaryNetwork=new Button(this);temporaryNetwork.setText("临时组网");
+        temporaryNetwork.setBackgroundResource(R.drawable.bg_glass_card);
+        FrameLayout.LayoutParams temporaryLayout=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.END);temporaryLayout.topMargin=dp(52);temporaryLayout.rightMargin=dp(16);root.addView(temporaryNetwork,temporaryLayout);
+        temporaryNetwork.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setTitle("电脑热点 · 临时组网")
+            .setMessage("适合校园网或公共 Wi-Fi 限制设备互访、同网仍连接失败的情况。需要电脑支持 Windows 移动热点。\n\n1. 电脑助手 → 同步设置 → 临时组网，点击开启临时热点。\n2. 手机 Wi-Fi 连接电脑显示的热点，输入显示的密码。提示无互联网时选择保持连接。\n3. 回到 App 扫描电脑配对码；已配对的设备会尝试自动重连。\n\n使用完在电脑点击结束临时组网。热点可能共享电脑流量；无可共享网络或网卡不支持时，请按电脑提示处理。")
+            .setPositiveButton("打开手机 Wi-Fi",(d,w)->{try{startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));}catch(Exception ignored){Toast.makeText(this,"请在系统设置打开 Wi-Fi",Toast.LENGTH_SHORT).show();}}).setNegativeButton("返回扫码",null).show());
         setContentView(root);
         scanner.decodeContinuous(new BarcodeCallback() {
             @Override public void barcodeResult(BarcodeResult result) {

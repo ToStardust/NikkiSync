@@ -12,6 +12,7 @@ import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceCo
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
 import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
 import { CachedDecodedMetadataService } from './metadata/CachedDecodedMetadataService.js'
+import {DeletionQueue} from './organizer/DeletionQueue.js'
 
 export interface PcCompanionRuntimeConfig {
   onStartupStage?: (stage: PcStartupStage) => void
@@ -48,6 +49,7 @@ export class PcCompanionRuntime {
   private readonly onStartupStage: PcCompanionRuntimeConfig['onStartupStage']
   readonly database: DatabaseManager
   readonly scanner: ScannerService
+  readonly deletions: DeletionQueue
   readonly server: LocalSyncServer
   readonly remoteBridge: RemoteBridgeService | undefined
   readonly metadataResolver?: MetadataResolverService
@@ -60,6 +62,7 @@ export class PcCompanionRuntime {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
+    this.deletions = new DeletionQueue(this.database,()=>this.scanner.getScanRoots(),()=>this.scanner.fullScan(),undefined,undefined,work=>this.scanner.withDeferredWatchEvents(work))
     if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
       this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
@@ -87,7 +90,7 @@ export class PcCompanionRuntime {
       )
     }
     this.remoteBridge = config.remoteBridge ? new RemoteBridgeService(this.database) : config.server?.remoteBridge
-    const serverConfig = { ...config.server, ...(this.remoteBridge ? { remoteBridge: this.remoteBridge } : {}) }
+    const serverConfig = { ...config.server, deletions:this.deletions, ...(this.remoteBridge ? { remoteBridge: this.remoteBridge } : {}) }
     if (serverConfig.tls) {
       this.server = new LocalSyncServer(this.database, serverConfig)
     } else {
@@ -123,6 +126,7 @@ export class PcCompanionRuntime {
     this.metadataDictionaryUpdater?.stop()
     this.metadataDictionarySupplementUpdater?.stop()
     await this.server.stop()
+    await this.deletions.stop()
     await this.scanner.stop()
     this.database.close()
   }

@@ -40,7 +40,22 @@ public class MainViewerEntryTest {
         set(activity,"imageLoader",new ImageLoader(activity));
         set(activity,"savedPhotoStore",new SavedPhotoStore(activity));
         invoke(activity,"buildUi",new Class<?>[0]);
+        Field connectionField=MainActivity.class.getDeclaredField("connectionState");connectionField.setAccessible(true);
+        var connection=(app.nikkisync.mobile.net.ConnectionState)connectionField.get(activity);connection.httpResult(connection.session(),true);
         return activity;
+    }
+    @Test public void offlinePhotoUsesSameViewerWithDisabledNetworkActions()throws Exception{
+        var activity=fixture();try{
+            Field field=MainActivity.class.getDeclaredField("connectionState");field.setAccessible(true);var state=(app.nikkisync.mobile.net.ConnectionState)field.get(activity);state.beginSession();
+            set(activity,"pairedServer",new app.nikkisync.mobile.model.Models.PairedServer("pc","PC","127.0.0.1",1,"00","","",0));
+            var asset=new AssetSummary("synthetic","photo","ready",null,null,1,100,100,false,false,"thumb","original",null,null);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            assertEquals(1,activity.navigationHost().overlayCount());
+            assertNotNull(activity.navigationHost().findViewWithTag("photo-gestures"));
+            assertFalse(findButton(activity.navigationHost(),"保存").isEnabled());assertFalse(findButton(activity.navigationHost(),"分享").isEnabled());
+            assertTrue(findButton(activity.navigationHost(),"旋转").isEnabled());
+            findButton(activity.navigationHost(),"详情").performClick();assertNotNull(findButton(activity.navigationHost(),"加入待删除"));
+        }finally{cleanup(activity);}
     }
     @Test public void openingFirstPhotoWithoutShareWorkShowsFullscreenViewer() throws Exception {
         var activity=fixture();
@@ -170,7 +185,7 @@ public class MainViewerEntryTest {
     }
     private static void cleanup(MainActivity activity) throws Exception {
         activity.navigationHost().close();
-        for(String name:new String[]{"io","shareWorker"}) {
+        for(String name:new String[]{"io","shareWorker","organizerIo"}) {
             Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);
             ((java.util.concurrent.ExecutorService)field.get(activity)).shutdownNow();
         }

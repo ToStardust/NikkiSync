@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { resolve, join, sep, relative } from 'node:path';
 import { createHash, verify } from 'node:crypto';
 import net from 'node:net';
+import { tmpdir } from 'node:os';
 
 const root=resolve(import.meta.dirname,'../..');
 const bundle=resolve(root,process.argv[2]??'release/MomoCamera-PublicBeta-1.0.1-2026-10-18');
@@ -14,7 +15,9 @@ const version=process.argv[3]??'1.0.1',build=Number(process.argv[4]??2026101801)
 const expectedApkHash=process.argv[5]??'1358c8191146370e9859e7ce41e54397f7221f634d25763061036c88c1a0e2ea';
 assert.match(version,/^\d+\.\d+\.\d+$/);assert.ok(Number.isSafeInteger(build));assert.match(expectedApkHash,/^[a-f0-9]{64}$/);
 assert.ok(bundle.startsWith(join(root,'release')+sep));
-const output=await mkdtemp(join(root,'out','public-beta-check-'));
+// A full D: workspace must not prevent isolated read-only package verification.
+const output=await mkdtemp(process.env.NIKKISYNC_VERIFICATION_TEMP==='1'
+  ? join(tmpdir(),'MomoCamera-package-check-') : join(root,'out','public-beta-check-'));
 const exe=join(bundle,`MomoCamera-PC-${version}.exe`);
 const apk=join(bundle,`MomoCamera-Android-${version}.apk`);
 const hash=async file=>createHash('sha256').update(await readFile(file)).digest('hex');

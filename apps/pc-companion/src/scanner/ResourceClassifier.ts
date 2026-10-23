@@ -4,6 +4,7 @@ import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { toPathKey } from '@nikkisync/core'
 import type { DiscoveredResource, DiscoveredResourceKind, ExtraScanRoot } from './types.js'
+import {jpegImageLength} from './JpegImageBoundary.js'
 
 function normalizeStem(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '').replace(/_cover$/i, '').replace(/\s+/g, '_').toLowerCase()
@@ -38,10 +39,10 @@ function mimeFor(ext: string): string {
   return 'application/octet-stream'
 }
 
-async function sha256File(filePath: string, onRead?: (bytes: number) => void): Promise<string> {
+async function sha256File(filePath: string, onRead?: (bytes: number) => void, endExclusive?: number): Promise<string> {
   const hash = createHash('sha256')
   await new Promise<void>((resolve, reject) => {
-    const input = createReadStream(filePath)
+    const input = createReadStream(filePath,endExclusive===undefined?{}:{end:endExclusive-1})
     input.on('data', (chunk) => { hash.update(chunk); onRead?.(Buffer.byteLength(chunk)) })
     input.on('end', resolve)
     input.on('error', reject)
@@ -131,6 +132,8 @@ export class ResourceClassifier {
     const nativeEnvelope = (kind === 'high_quality' || kind === 'motion_cover')
       ? await nativePhotoEnvelope(filePath, info.size, fileExt, onRead)
       : {}
+    const imageLength=kind==='high_quality'&&/\.jpe?g$/i.test(fileExt)?await jpegImageLength(filePath,info.size):undefined
+    const imageSha256=imageLength&&imageLength<info.size?await sha256File(filePath,onRead,imageLength):digest
     const container=path.dirname(filePath)
     const parentUid=/^(NikkiPhotos_(High|Low)Quality|Videos?)$/i.test(path.basename(container))?path.basename(path.dirname(container)):undefined
     const uid=extra?(parentUid&&/^\d{5,}$/.test(parentUid)?parentUid:extra.mode==='native'?uidFor(filePath,gamePlayRoot):undefined):uidFor(filePath,gamePlayRoot)
@@ -141,6 +144,7 @@ export class ResourceClassifier {
       absolutePath: path.resolve(filePath), pathKey: toPathKey(filePath), ...(uid ? { uid } : {}), kind,
       fileName, normalizedStem: normalizeStem(fileName), sizeBytes: info.size, mtimeMs: info.mtimeMs,
       ...(info.birthtimeMs ? { birthtimeMs: info.birthtimeMs } : {}), ...(digest ? { sha256: digest } : {}),
+      ...(imageSha256?{imageSha256}:{}),
       ...(nativeEnvelope.token ? { nativeParamToken: nativeEnvelope.token } : {}),
       ...(nativeEnvelope.payload ? { nativeParamPayload: nativeEnvelope.payload } : {}),
       ...(nativeEnvelope.nuan5Md5 ? { nativeParamNuan5Md5: nativeEnvelope.nuan5Md5 } : {}),

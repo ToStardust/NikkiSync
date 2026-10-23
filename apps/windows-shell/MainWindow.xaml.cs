@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private VerifiedUpdate? _availableUpdate;
     private UpdateWindow? _updateWindow;
     private bool _networkAuthorizationBusy;
+    private readonly TemporaryHotspot _temporaryHotspot=new();
     private bool _networkRuleAuthorized,_networkRuleOwned;
     private int _networkAuthorizationRevision;
     private bool _extraFolderPickerOpen;
@@ -259,14 +260,19 @@ public partial class MainWindow : Window
         if (_controlOrigin is null || !Uri.TryCreate(e.Source, UriKind.Absolute, out var source) || source.GetLeftPart(UriPartial.Authority) != _controlOrigin.GetLeftPart(UriPartial.Authority)) return;
         using var message = JsonDocument.Parse(e.WebMessageAsJson);
         if (!message.RootElement.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String) return;
+        if(type.GetString() is "startHotspot" or "stopHotspot")_=ChangeHotspotAsync(type.GetString()=="stopHotspot");
+        if(type.GetString()=="hotspotSettings")try{Process.Start(new ProcessStartInfo("ms-settings:network-mobilehotspot"){UseShellExecute=true});}catch{}
         if (type.GetString() == "getAutostart")
         {
             ReplyAutostart();
             ReplyPackageInfo();
             _=RefreshNetworkAuthorizationAsync();
+            _=RefreshNetworkConflictsAsync();
         }
         if (type.GetString() == "checkUpdates") OpenUpdates();
         if(type.GetString() is "authorizeNetwork" or "revokeNetwork") _=AuthorizeNetworkAsync(type.GetString()=="revokeNetwork");
+        if(type.GetString()=="checkNetworkConflicts")_=RefreshNetworkConflictsAsync();
+        if(type.GetString() is "repairNetworkConflicts" or "restoreNetworkConflicts")_=RepairNetworkConflictsAsync(type.GetString()=="restoreNetworkConflicts");
         if(type.GetString() is "chooseExtraScanDirectory" or "chooseSpinningMomoDirectory")ChooseExtraScanDirectory(type.GetString()=="chooseSpinningMomoDirectory");
         if (type.GetString() == "openProjectLink" && message.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.String
             && DesktopProjectLinks.Resolve(project.GetString()) is { } projectUrl)
@@ -284,6 +290,13 @@ public partial class MainWindow : Window
     }
 
     private void ReplyAutostart() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled = _autostart.IsEnabled() }));
+    private async Task ChangeHotspotAsync(bool stop)
+    {
+        if(_verificationDirectory is not null){ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="temporaryNetwork",busy=false,message="测试验收模式：不会改变网络。"}));return;}
+        ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="temporaryNetwork",busy=true,message="正在请求 Windows 处理热点…"}));
+        var result=await _temporaryHotspot.ChangeAsync(stop);
+        if(!_startupCancellation.IsCancellationRequested)ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="temporaryNetwork",busy=false,message=result.Message,credentials=result.Credentials}));
+    }
     private void ChooseExtraScanDirectory(bool spinningMomo)
     {
         if(_verificationDirectory is not null||_extraFolderPickerOpen)return;
@@ -302,12 +315,15 @@ public partial class MainWindow : Window
     private void ReplyNetworkAuthorization(bool busy,string message) => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {type="networkAuthorization",busy,message,authorized=_networkRuleAuthorized,canRevoke=_networkRuleOwned}));
 
     private async Task<NetworkAuthorizationPlan> GetNetworkAuthorizationPlanAsync()
+        =>(await GetNetworkConflictTargetAsync()).Plan;
+
+    private async Task<(NetworkAuthorizationPlan Plan,string Host)> GetNetworkConflictTargetAsync()
     {
         if(_runtimeDirectory is null || _controlOrigin is null) throw new InvalidOperationException();
         using var http=new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler{UseProxy=false,AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(3)};
         using var status=JsonDocument.Parse(await http.GetStringAsync(new Uri(_controlOrigin,"/api/status")));
         if(status.RootElement.GetProperty("service").GetString()!="ready") throw new InvalidOperationException();
-        return NetworkAuthorizationPlan.Create(Path.Combine(_runtimeDirectory,"runtime","NikkiSync-PC-service.exe"),status.RootElement.GetProperty("port").GetInt32());
+        return (NetworkAuthorizationPlan.Create(Path.Combine(_runtimeDirectory,"runtime","NikkiSync-PC-service.exe"),status.RootElement.GetProperty("port").GetInt32()),status.RootElement.GetProperty("host").GetString()??"");
     }
 
     private async Task RefreshNetworkAuthorizationAsync()
@@ -361,11 +377,49 @@ public partial class MainWindow : Window
         {
             _networkAuthorizationBusy=false;
             if(!_startupCancellation.IsCancellationRequested) ReplyNetworkAuthorization(false,feedback);
+            _=RefreshNetworkConflictsAsync();
         }
+    }
+    private void ReplyNetworkConflicts(bool busy,string message,bool canRepair=true)=>ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="networkConflicts",busy,message,canRepair}));
+    private async Task RefreshNetworkConflictsAsync(string prefix="")
+    {
+        if(_networkAuthorizationBusy||_startupCancellation.IsCancellationRequested)return;
+        if(_verificationDirectory is not null){ReplyNetworkConflicts(false,"测试验收模式不修改网络权限。");return;}
+        var revision=_networkAuthorizationRevision;
+        try
+        {
+            var target=await GetNetworkConflictTargetAsync();
+            var state=await Task.Run(()=>WindowsNetworkConflict.Inspect(target.Plan,target.Host));
+            if(_networkAuthorizationBusy||revision!=_networkAuthorizationRevision||_startupCancellation.IsCancellationRequested)return;
+            var profile=state.Profile switch{2=>"专用",4=>"公用",1=>"域网络",_=>"未知"};
+            var text=state.Profile is 2 or 4?$"当前连接使用{profile}网络。检测到 {state.Conflicts} 条当前后台的冲突阻止，其中 {state.Repairable} 条可自动处理。":"无法确认当前连接的网络类型，或这是受管理的域网络；未修改规则，请重新检查或反馈诊断报告。";
+            if(state.Profile is 2 or 4&&!state.PolicyAllowsChange)text+=" 电脑安全策略限制修改，请联系管理员。";
+            ReplyNetworkConflicts(false,prefix+(prefix.Length>0?" ":"")+text,state.Profile is 2 or 4&&state.PolicyAllowsChange);
+        }
+        catch{if(!_startupCancellation.IsCancellationRequested&&!_networkAuthorizationBusy&&revision==_networkAuthorizationRevision)ReplyNetworkConflicts(false,prefix+" 暂时无法读取冲突规则，可重新检查或反馈诊断报告。",true);}
+    }
+    private async Task RepairNetworkConflictsAsync(bool restore)
+    {
+        if(_networkAuthorizationBusy)return;
+        if(_verificationDirectory is not null){ReplyNetworkConflicts(false,"测试验收模式不修改网络权限。");return;}
+        _networkAuthorizationBusy=true;_networkAuthorizationRevision++;
+        ReplyNetworkAuthorization(true,"正在处理连接权限，如出现 Windows 提示请选择“是”…");
+        ReplyNetworkConflicts(true,restore?"正在恢复本次修复前的规则…":"正在检查并处理当前连接的冲突，如出现 Windows 提示请选择“是”…");
+        string feedback;
+        try
+        {
+            var target=await GetNetworkConflictTargetAsync();
+            using var helper=Process.Start(WindowsNetworkConflict.Elevation(Environment.ProcessPath??throw new InvalidOperationException(),target.Plan,target.Host,restore))??throw new InvalidOperationException();
+            await helper.WaitForExitAsync();feedback=WindowsNetworkConflict.ResultMessage(helper.ExitCode);
+        }
+        catch(System.ComponentModel.Win32Exception error) when(error.NativeErrorCode==1223){feedback="已取消 Windows 授权，冲突规则未修改。需要时可再次点击。";}
+        catch{feedback="连接权限处理未完成，请重试并反馈 NET-REPAIR-LAUNCH。";}
+        finally{_networkAuthorizationBusy=false;}
+        if(!_startupCancellation.IsCancellationRequested){await RefreshNetworkAuthorizationAsync();await RefreshNetworkConflictsAsync(feedback);}
     }
     private void ReplyPackageInfo() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {
         type = "packageInfo", version = DesktopRelease.Version, build = DesktopRelease.Build,
-        hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path), availableUpdateVersion = _availableUpdate?.Manifest.Version
+        hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path), availableUpdateVersion = _availableUpdate?.Manifest.Version, availableUpdateBuild = _availableUpdate?.Manifest.Build
     }));
 
     private string? AndroidInstallerPath => _runtimeDirectory is null ? null : Path.Combine(_runtimeDirectory, "runtime", "NikkiSync-Android.apk");
@@ -387,6 +441,7 @@ public partial class MainWindow : Window
 
     public async Task ExitAsync()
     {
+        await _temporaryHotspot.ChangeAsync(true);
         _lifecycle.OnExplicitExit();
         _startupCancellation.Cancel();
         _startupTimer.Stop();
@@ -460,7 +515,7 @@ public partial class MainWindow : Window
     public async Task<bool> VerifyFirstUseGuideAsync()
     {
         if(_verificationDirectory is null)return false;
-        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();window.scrollTo(0,0);");
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();document.querySelector('#android-first-pairing')?.setAttribute('hidden','');document.querySelector('#android-paired').hidden=false;window.scrollTo(0,0);");
         for(var attempt=0;attempt<60;attempt++)
         {
             var ready=await ControlPage.CoreWebView2.ExecuteScriptAsync("!document.querySelector('#android-installer').hidden");
@@ -510,7 +565,23 @@ public partial class MainWindow : Window
                 File.WriteAllText(Path.Combine(_verificationDirectory,"network-authorization-verification.json"),json);
                 using var image=File.Create(Path.Combine(_verificationDirectory,"network-authorization-screen.png"));
                 await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
-                return state.RootElement.GetProperty("enabled").GetBoolean() && !state.RootElement.GetProperty("revokeEnabled").GetBoolean();
+                var originalOk=state.RootElement.GetProperty("enabled").GetBoolean() && !state.RootElement.GetProperty("revokeEnabled").GetBoolean();
+                var conflictResults=new List<object>();
+                foreach(var id in new[]{"check-network-conflicts","repair-network-conflicts","restore-network-conflicts"})
+                {
+                    await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#network-conflict-note').textContent='';document.querySelector('#"+id+"').click();");
+                    var received=false;
+                    for(var poll=0;poll<40;poll++)
+                    {
+                        if(await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#network-conflict-note').textContent.includes('测试验收模式')")=="true"){received=true;break;}
+                        await Task.Delay(50);
+                    }
+                    conflictResults.Add(new{id,received});if(!received)return false;
+                }
+                File.WriteAllText(Path.Combine(_verificationDirectory,"network-conflict-verification.json"),JsonSerializer.Serialize(new{nativeBridge=true,noRuleWrites=true,actions=conflictResults}));
+                await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#repair-network-conflicts').scrollIntoView({block:'center'});");
+                using(var conflictImage=File.Create(Path.Combine(_verificationDirectory,"network-conflict-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,conflictImage);
+                return originalOk;
             }
             await Task.Delay(50);
         }
@@ -538,5 +609,48 @@ public partial class MainWindow : Window
         var removed=await UntilAsync("!document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')");
         File.WriteAllText(Path.Combine(_verificationDirectory,"extra-scan-verification.json"),JsonSerializer.Serialize(new{previewConfirmed=true,added=true,removed,originalPreserved=File.Exists(photo),privateFixture=true}));
         return removed&&File.Exists(photo);
+    }
+
+    public async Task<bool> VerifyOrganizerAsync()
+    {
+        if(_verificationDirectory is null)return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=settings]').click();document.querySelector('#start-hotspot').click();document.querySelector('#temporary-network').scrollIntoView({block:'start'});");
+        bool bridge=false;
+        for(int i=0;i<60;i++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#hotspot-note').textContent.includes('测试验收模式')")=="true"){bridge=true;break;}await Task.Delay(50);}
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"temporary-network-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        // UI-only synthetic row. The actual authorization and filesystem roundtrip have separate integration tests.
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("""
+        window.__organizerOriginalFetch=window.fetch;
+        window.__organizerFixture=Array.from({length:10},(_,index)=>({id:'synthetic-organizer-preview-'+index,assetId:'asset_fixture',state:['pending','pending','confirming','confirming','recycled','failed','queued','checking','executing','preparing'][index],online:index%2===0,message:index===5?'示例：部分处理，请检查电脑回收站':index>=6?'正在处理，结果自动更新':'等待电脑确认',count:2,files:[{name:index===4?'已回收照片占位.jpeg':'暖暖照片_cover.jpeg',folder:'Videos',size:1048576},{name:'暖暖照片.mp4',folder:'Videos',size:5242880}]}));
+        window.fetch=(url,options)=>{
+          if(url==='/api/organizer')return Promise.resolve(new Response(JSON.stringify({items:window.__organizerFixture}),{status:200}));
+          if(url==='/api/organizer/approve-many'){
+            window.__organizerBulkIds=JSON.parse(options.body).ids;
+            window.__organizerFixture=window.__organizerFixture.map(item=>window.__organizerBulkIds.includes(item.id)?{...item,state:'recycled'}:item);
+            return Promise.resolve(new Response(JSON.stringify({items:window.__organizerFixture,approved:window.__organizerBulkIds.length,skipped:0}),{status:200}));
+          }
+          return url.startsWith('/api/organizer/preview?')?window.__organizerOriginalFetch('/brand.png'):window.__organizerOriginalFetch(url,options);
+        };
+        """);
+        bool rendered=false;
+        for(int i=0;i<160;i++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#organizer-list').textContent.includes('暖暖照片_cover.jpeg')")=="true"){rendered=true;break;}await Task.Delay(50);}
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();window.scrollTo(0,0);");
+        using(var home=File.Create(Path.Combine(_verificationDirectory,"organizer-home-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,home);
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#open-organizer').click();window.scrollTo(0,0);");
+        bool previews=false;
+        for(int i=0;i<100;i++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync("Array.from(document.querySelectorAll('.organizer-picture img')).filter(image=>image.complete&&image.naturalWidth>0).length>=3")=="true"){previews=true;break;}await Task.Delay(50);}
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"organizer-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        bool guidance=await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#organizer-list').textContent.includes('等待手机连接')&&document.querySelector('#organizer-list').textContent.includes('等待手机重新连接')&&document.querySelector('#organizer-approve-all').textContent.includes('1 张')&&!document.querySelector('#organizer-list').textContent.includes('已回收照片占位')&&document.querySelectorAll('.organizer-tile').length===8")=="true";
+        bool progress=await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#organizer-list').textContent.includes('正在核对关联文件')&&document.querySelector('#organizer-list').textContent.includes('正在移入回收站')&&document.querySelector('#organizer-note').textContent.includes('3 张正在核对或移入回收站')")=="true";
+        // Explicit verification mode only: approve synthetic DOM rows through a mocked endpoint; never touch the real queue.
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("window.__organizerFixture=window.__organizerFixture.map(item=>item.state==='preparing'?{...item,state:'pending'}:item);");
+        bool prepared=false;
+        for(int i=0;i<130;i++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync("!document.querySelector('#organizer-approve-all').disabled&&document.querySelector('#organizer-approve-all').textContent.includes('1 张')")=="true"){prepared=true;break;}await Task.Delay(50);}
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("window.__organizerConfirm=window.confirm;window.confirm=()=>true;document.querySelector('#organizer-approve-all').click();window.confirm=window.__organizerConfirm;");
+        bool bulk=false;
+        for(int i=0;i<60;i++){if(await ControlPage.CoreWebView2.ExecuteScriptAsync("JSON.stringify(window.__organizerBulkIds)==='[\"synthetic-organizer-preview-0\"]'&&document.querySelectorAll('.organizer-tile').length===7&&document.querySelector('#organizer-approve-all').disabled")=="true"){bulk=true;break;}await Task.Delay(50);}
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("window.fetch=window.__organizerOriginalFetch;delete window.__organizerOriginalFetch;delete window.__organizerFixture;delete window.__organizerBulkIds;delete window.__organizerConfirm;");
+        File.WriteAllText(Path.Combine(_verificationDirectory,"organizer-verification.json"),JsonSerializer.Serialize(new{hotspotBridge=bridge,syntheticPendingUi=rendered,syntheticPreviewsLoaded=previews,connectionGuidance=guidance,syntheticProgress=progress,syntheticPreparationGate=prepared,syntheticBulkSnapshotAndCompletedRemoval=bulk,noNetworkChanges=true,noMediaDeleted=true}));
+        return bridge&&rendered&&previews&&guidance&&progress&&prepared&&bulk;
     }
 }

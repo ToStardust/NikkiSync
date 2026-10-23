@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /** Short detail copy for players; IDs and raw metadata are intentionally not rendered here. */
 public final class PlayerFacingDetails {
@@ -53,6 +55,36 @@ public final class PlayerFacingDetails {
         String visible = name.trim();
         if (visible.equals(internalId) || visible.matches("服装\\s*[+＋#＃:：-]?\\s*\\d+")) return "名称暂缺";
         return visible;
+    }
+
+    /** Describe only known availability, never infer lost metadata from the image or its folder name. */
+    public static String metadataNotice(String metadataJson) {
+        try {
+            JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
+            JSONObject dressing = metadata.optJSONObject("dressing"), camera = metadata.optJSONObject("camera");
+            JSONArray clothes = dressing == null ? null : dressing.optJSONArray("clothes");
+            boolean hasClothes = false, hasCamera = false;
+            if (clothes != null) for (int i = 0; i < clothes.length(); i++) {
+                JSONObject item = clothes.optJSONObject(i);
+                if (item != null && !item.isNull("id") && !item.optString("id", "").isBlank()) hasClothes = true;
+            }
+            if (camera != null) {
+                var keys = camera.keys();
+                while (keys.hasNext()) {String key = keys.next();if (!camera.isNull(key) && !camera.optString(key, "").isBlank()) hasCamera = true;}
+            }
+            if (hasClothes && hasCamera) return "";
+            String missing = hasClothes ? "部分拍摄参数" : hasCamera ? "穿搭数据" : "穿搭和拍摄参数";
+            JSONObject raw = metadata.optJSONObject("raw"), resolver = raw == null ? null : raw.optJSONObject("resolver");
+            String status = resolver == null ? "" : resolver.optString("status", "");
+            boolean embedded = raw != null && (raw.optBoolean("sourceParametersPresent", false)
+                    || !raw.optString("nativeParamToken", "").isBlank() || !raw.optString("nativeParamPayload", "").isBlank());
+            if (!"resolved".equals(status) && (embedded || "failed".equals(status)))
+                return missing + "尚未解析完整，请保持电脑联网，并检查“同步设置”的在线参数解析。";
+            if ("resolved".equals(status)) return missing + "未能完整读取，当前仅展示已读取的信息。";
+            return missing + "未能完整读取。普通截图或搬迁后的相册可能缺少原始数据，可在电脑“同步设置”补充原游戏相册目录。";
+        } catch (Exception ignored) {
+            return "照片参数暂不可用，请连接电脑重新同步。";
+        }
     }
 
     private static String date(String capturedAt) {

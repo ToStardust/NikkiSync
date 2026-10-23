@@ -9,7 +9,7 @@ const MAX_DIRECTORIES=16
 const key=(value:string)=>path.resolve(value).toLowerCase()
 const within=(value:string,root:string)=>key(value)===key(root)||key(value).startsWith(key(root)+path.sep)
 const overlaps=(a:string,b:string)=>within(a,b)||within(b,a)
-const idFor=(value:string)=>'dir_'+createHash('sha256').update(key(value)).digest('hex').slice(0,24)
+export const idFor=(value:string)=>'dir_'+createHash('sha256').update(key(value)).digest('hex').slice(0,24)
 
 export function loadExtraScanDirectories(file:string):ExtraScanRoot[]{
   try{
@@ -52,10 +52,17 @@ export class ExtraScanDirectories{
     if(key(canonical)===key(path.parse(canonical).root))throw new Error('choose_subfolder')
     if(/(?:^|[/\\])NikkiPhotos_LowQuality(?:[/\\]|$)/i.test(canonical))throw new Error('thumbnail_only')
     const roots:ExtraScanRoot[]=[]
+    const searchBase=/^ScreenShot$/i.test(path.basename(canonical))?path.dirname(canonical):canonical
     // Narrow game/install selections to actual media folders, avoiding Paks and engine caches.
     for(const relative of ['Saved/GamePlayPhotos','GamePlayPhotos','X6Game/Saved/GamePlayPhotos','X6Game/GamePlayPhotos']){
-      const candidate=path.join(canonical,relative)
+      const candidate=path.join(searchBase,relative)
       if(await directoryExists(candidate)){const resolved=await realpath(candidate);roots.push({id:idFor(resolved),path:resolved,mode:'native'})}
+    }
+    if(roots.length>0){
+      for(const relative of ['ScreenShot','X6Game/ScreenShot']){
+        const candidate=path.join(searchBase,relative)
+        if(await directoryExists(candidate)){const resolved=await realpath(candidate);roots.push({id:idFor(resolved),path:resolved,mode:'images'})}
+      }
     }
     if(roots.length===0){
       if(/^X6Game$/i.test(path.basename(canonical))||await directoryExists(path.join(canonical,'X6Game'))){
@@ -67,10 +74,10 @@ export class ExtraScanDirectories{
         roots.push({id:idFor(canonical),path:canonical,mode:native?'native':'images'})
       }
     }
-    const unique=roots.filter((root,index)=>!roots.some((other,otherIndex)=>otherIndex<index&&overlaps(root.path,other.path)))
-    if(this.directories.length+unique.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     const existing=await resolveScopes([...this.directories.map(item=>item.path),...this.scanner.getAutomaticRoots()])
-    if(unique.some(root=>existing.some(added=>overlaps(root.path,added))))throw new Error('already_covered')
+    const unique=roots.filter((root,index)=>!roots.some((other,otherIndex)=>otherIndex<index&&overlaps(root.path,other.path))&&!existing.some(added=>overlaps(root.path,added)))
+    if(unique.length===0)throw new Error('already_covered')
+    if(this.directories.length+unique.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     let images=0,videos=0,observed=0,folders=0,limited=false
     const visit=async(directory:string,depth:number):Promise<void>=>{
       if(depth>8||observed>=500||folders>=150){limited=true;return}folders++
@@ -83,7 +90,7 @@ export class ExtraScanDirectories{
       }
     }
     try{for(const root of unique)await visit(root.path,0)}catch{throw new Error('directory_unavailable')}
-    const hint=unique.some(root=>root.mode==='images')?'外部图片可浏览和保存；软件截图不一定包含游戏穿搭与拍摄参数。不会把普通录像当作 LIVE。':'已识别暖暖原生相册。选择 GamePlayPhotos 或 UID 文件夹可同时包含原图、缩略图和 LIVE；只选原图子目录不会加入同级 LIVE。'
+    const hint=unique.some(root=>root.mode==='native')?'已找到原生相册，优先读取其中的穿搭、拍摄参数与 LIVE。若包含 ScreenShot，会补收拼图等独有照片并排除原图的导出副本。请确认以下目录。':'外部图片可浏览和保存；附近没有找到可补充参数的原生相册。截图本身不带参数时无法还原穿搭与拍摄信息。不会把普通录像当作 LIVE。'
     const proposal={id:randomBytes(18).toString('base64url'),roots:unique,images,videos,limited,hint}
     for(const [id,item]of this.proposals)if(item.expires<Date.now())this.proposals.delete(id)
     if(this.proposals.size>=8)this.proposals.delete(this.proposals.keys().next().value!)

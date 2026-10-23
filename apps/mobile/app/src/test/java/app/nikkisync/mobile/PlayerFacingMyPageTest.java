@@ -166,7 +166,7 @@ public final class PlayerFacingMyPageTest {
         return null;
     }
 
-    @Test public void commonOutfitSearchReturnsToGalleryWithoutLeavingAnExtraProfilePage() throws Exception {
+    @Test public void commonOutfitSearchPreservesItsOriginPageForBack() throws Exception {
         MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();invoke(activity,"buildUi");
         try {
             invoke(activity,"refreshMyPage");
@@ -177,8 +177,8 @@ public final class PlayerFacingMyPageTest {
             client.set(activity,new app.nikkisync.mobile.net.NikkiSyncClient(server,null));
             Method open=MainActivity.class.getDeclaredMethod("openProfileSearch",String.class,boolean.class);open.setAccessible(true);
             open.invoke(activity,"暖暖套装",false);
-            assertEquals("Only the search page should remain above the gallery",1,activity.navigationHost().overlayCount());
-            assertNull(field(activity,"profileStatsPage"));
+            assertEquals("Search must remain above the original profile page",2,activity.navigationHost().overlayCount());
+            assertNotNull(field(activity,"profileStatsPage"));
         } finally {
             activity.navigationHost().close();
             ((java.util.concurrent.ExecutorService)field(activity,"io")).shutdownNow();

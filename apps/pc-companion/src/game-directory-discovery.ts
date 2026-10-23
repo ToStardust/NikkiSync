@@ -27,6 +27,7 @@ export interface InfinityNikkiInstallation {
   x6GameRoot: string
   photoRoots: string[]
   motionRoots: string[]
+  supplementalRoots?: string[]
   source: GameDiscoverySource
 }
 
@@ -173,7 +174,7 @@ async function childDirectories(root: string): Promise<string[]> {
   }
 }
 
-async function discoverMediaRoots(x6GameRoot: string): Promise<Pick<InfinityNikkiInstallation, 'photoRoots' | 'motionRoots'>> {
+async function discoverMediaRoots(x6GameRoot: string): Promise<Pick<InfinityNikkiInstallation, 'photoRoots' | 'motionRoots' | 'supplementalRoots'>> {
   const gamePlayPhotoCandidates = [
     path.join(x6GameRoot, 'Saved', 'GamePlayPhotos'),
     path.join(x6GameRoot, 'GamePlayPhotos')
@@ -211,6 +212,7 @@ async function discoverMediaRoots(x6GameRoot: string): Promise<Pick<InfinityNikk
     return {
       // Hidden GamePlayPhotos files retain the original trailing metadata. ScreenShot is an export.
       photoRoots: gamePlayRoots,
+      supplementalRoots: await uniqueExisting([path.join(x6GameRoot, 'ScreenShot')]),
       motionRoots: await uniqueExisting(nestedMotionCandidates)
     }
   }
