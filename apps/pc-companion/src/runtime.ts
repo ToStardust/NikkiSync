@@ -10,21 +10,34 @@ import type { MetadataResolverServiceConfig, PhotoMetadataResolver } from './met
 import { MetadataDictionaryService } from './metadata/MetadataDictionaryService.js'
 import { MetadataDictionaryUpdateService, type MetadataDictionaryUpdateServiceConfig } from './metadata/MetadataDictionaryUpdateService.js'
 import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryProvider.js'
+import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
+import { CachedDecodedMetadataService } from './metadata/CachedDecodedMetadataService.js'
+import {DeletionQueue} from './organizer/DeletionQueue.js'
 
 export interface PcCompanionRuntimeConfig {
+  onStartupStage?: (stage: PcStartupStage) => void
   databaseFile?: string
   scanner?: ScannerConfig
   server?: LocalSyncServerConfig
+  remoteBridge?: boolean
   metadataResolver?: {
     resolver: PhotoMetadataResolver
     service?: MetadataResolverServiceConfig
   }
   metadataDictionary?: MetadataDictionaryManifest
+  metadataDictionarySupplement?: MetadataDictionaryManifest
   metadataDictionaryRemote?: {
     provider: MetadataDictionaryProvider
     service?: MetadataDictionaryUpdateServiceConfig
   }
+  metadataDictionarySupplementRemote?: {
+    provider: MetadataDictionaryProvider
+    service?: MetadataDictionaryUpdateServiceConfig
+  }
 }
+
+export type PcStartupStage = 'scanner' | 'lan-listen' | 'cached-metadata'
+  | 'dictionary-enrichment' | 'background-services' | 'runtime-ready'
 
 export interface PcCompanionStartResult {
   scan: ScanResult
@@ -33,19 +46,25 @@ export interface PcCompanionStartResult {
 
 /** Owns the process-level lifecycle: scanner first, then LAN transport, sharing one SQLite source of truth. */
 export class PcCompanionRuntime {
+  private readonly onStartupStage: PcCompanionRuntimeConfig['onStartupStage']
   readonly database: DatabaseManager
   readonly scanner: ScannerService
+  readonly deletions: DeletionQueue
   readonly server: LocalSyncServer
+  readonly remoteBridge: RemoteBridgeService | undefined
   readonly metadataResolver?: MetadataResolverService
   readonly metadataDictionary?: MetadataDictionaryService
   readonly metadataDictionaryUpdater?: MetadataDictionaryUpdateService
+  readonly metadataDictionarySupplementUpdater?: MetadataDictionaryUpdateService
 
   constructor(config: PcCompanionRuntimeConfig = {}) {
+    this.onStartupStage = config.onStartupStage
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
-    if (config.metadataDictionary || config.metadataDictionaryRemote) {
-      this.metadataDictionary = new MetadataDictionaryService(this.database)
+    this.deletions = new DeletionQueue(this.database,()=>this.scanner.getScanRoots(),()=>this.scanner.fullScan(),undefined,undefined,work=>this.scanner.withDeferredWatchEvents(work))
+    if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
+      this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
       if (config.metadataDictionaryRemote) {
         this.metadataDictionaryUpdater = new MetadataDictionaryUpdateService(
@@ -53,6 +72,12 @@ export class PcCompanionRuntime {
           this.metadataDictionary,
           config.metadataDictionaryRemote.provider,
           config.metadataDictionaryRemote.service
+        )
+      }
+      if (config.metadataDictionarySupplementRemote) {
+        this.metadataDictionarySupplementUpdater = new MetadataDictionaryUpdateService(
+          this.database, this.metadataDictionary, config.metadataDictionarySupplementRemote.provider,
+          { ...config.metadataDictionarySupplementRemote.service, mode: 'supplement' }
         )
       }
     }
@@ -64,7 +89,8 @@ export class PcCompanionRuntime {
         this.metadataDictionary
       )
     }
-    const serverConfig = config.server ?? {}
+    this.remoteBridge = config.remoteBridge ? new RemoteBridgeService(this.database) : config.server?.remoteBridge
+    const serverConfig = { ...config.server, deletions:this.deletions, ...(this.remoteBridge ? { remoteBridge: this.remoteBridge } : {}) }
     if (serverConfig.tls) {
       this.server = new LocalSyncServer(this.database, serverConfig)
     } else {
@@ -74,12 +100,20 @@ export class PcCompanionRuntime {
   }
 
   async start(): Promise<PcCompanionStartResult> {
+    this.onStartupStage?.('scanner')
     const scan = await this.scanner.start()
     try {
+      this.onStartupStage?.('lan-listen')
       const server = await this.server.start()
+      this.onStartupStage?.('cached-metadata')
+      new CachedDecodedMetadataService(this.database, this.metadataDictionary).runOnce()
+      this.onStartupStage?.('dictionary-enrichment')
       this.metadataDictionary?.reenrichResolvedAssets()
+      this.onStartupStage?.('background-services')
       this.metadataDictionaryUpdater?.start()
+      this.metadataDictionarySupplementUpdater?.start()
       this.metadataResolver?.start()
+      this.onStartupStage?.('runtime-ready')
       return { scan, server }
     } catch (error) {
       await this.scanner.stop()
@@ -90,12 +124,14 @@ export class PcCompanionRuntime {
   async stop(): Promise<void> {
     this.metadataResolver?.stop()
     this.metadataDictionaryUpdater?.stop()
+    this.metadataDictionarySupplementUpdater?.stop()
     await this.server.stop()
+    await this.deletions.stop()
     await this.scanner.stop()
     this.database.close()
   }
 
-  createPairingUri(host: string, ttlMs?: number): string {
-    return buildPairingUri(this.server.createPairingPayload(host, ttlMs))
+  createPairingUri(host: string, ttlMs?: number, hosts?: readonly string[]): string {
+    return buildPairingUri({ ...this.server.createPairingPayload(host, ttlMs), ...(hosts ? { hosts } : {}) })
   }
 }

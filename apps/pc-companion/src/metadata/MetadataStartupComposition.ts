@@ -4,6 +4,7 @@ import {
   type MetadataDictionaryRemoteConfigFile
 } from './MetadataDictionaryRemoteConfigFile.js'
 import { NikkiAlbumsMetadataDictionaryProvider } from './NikkiAlbumsMetadataDictionaryProvider.js'
+import { NikkiGalleryMetadataDictionaryProvider } from './NikkiGalleryMetadataDictionaryProvider.js'
 import {
   createMetadataResolverFromConfig,
   type MetadataResolverConfigFile
@@ -31,4 +32,10 @@ export function composeMetadataDictionaryProvider(
   if (config?.enabled === false) return undefined
   if (config?.enabled === true) return createMetadataDictionaryProviderFromConfig(config)
   return new NikkiAlbumsMetadataDictionaryProvider({ locale: 'zh-CN' })
+}
+
+/** A separate cached fallback feed; an explicit remote-dictionary opt-out applies to both sources. */
+export function composeMetadataDictionarySupplementProvider(config: MetadataDictionaryRemoteConfigFile | undefined): MetadataDictionaryProvider | undefined {
+  if (config?.enabled === false || config?.gallery?.enabled === false) return undefined
+  return new NikkiGalleryMetadataDictionaryProvider()
 }

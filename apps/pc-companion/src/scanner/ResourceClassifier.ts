@@ -3,7 +3,8 @@ import { createReadStream } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { toPathKey } from '@nikkisync/core'
-import type { DiscoveredResource, DiscoveredResourceKind } from './types.js'
+import type { DiscoveredResource, DiscoveredResourceKind, ExtraScanRoot } from './types.js'
+import {jpegImageLength} from './JpegImageBoundary.js'
 
 function normalizeStem(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '').replace(/_cover$/i, '').replace(/\s+/g, '_').toLowerCase()
@@ -38,87 +39,112 @@ function mimeFor(ext: string): string {
   return 'application/octet-stream'
 }
 
-async function sha256File(filePath: string): Promise<string> {
+async function sha256File(filePath: string, onRead?: (bytes: number) => void, endExclusive?: number): Promise<string> {
   const hash = createHash('sha256')
   await new Promise<void>((resolve, reject) => {
-    const input = createReadStream(filePath)
-    input.on('data', (chunk) => hash.update(chunk))
+    const input = createReadStream(filePath,endExclusive===undefined?{}:{end:endExclusive-1})
+    input.on('data', (chunk) => { hash.update(chunk); onRead?.(Buffer.byteLength(chunk)) })
     input.on('end', resolve)
     input.on('error', reject)
   })
   return hash.digest('hex')
 }
 
-async function md5Range(filePath: string, start: number, endExclusive: number): Promise<string> {
+async function md5Range(filePath: string, start: number, endExclusive: number, onRead?: (bytes: number) => void): Promise<string> {
   const hash = createHash('md5')
   await new Promise<void>((resolve, reject) => {
     const input = createReadStream(filePath, { start, end: endExclusive - 1 })
-    input.on('data', (chunk) => hash.update(chunk))
+    input.on('data', (chunk) => { hash.update(chunk); onRead?.(Buffer.byteLength(chunk)) })
     input.on('end', resolve)
     input.on('error', reject)
   })
   return hash.digest('hex')
 }
 
-async function nativePhotoEnvelope(filePath: string, size: number, ext: string): Promise<{ token?: string; payload?: string; nuan5Md5?: string }> {
+async function nativePhotoEnvelope(filePath: string, size: number, ext: string, onRead?: (bytes: number) => void): Promise<{ token?: string; payload?: string; nuan5Md5?: string }> {
   if ((ext !== '.jpg' && ext !== '.jpeg') || size < 46) return {}
   const handle = await open(filePath, 'r')
+  let window: Buffer | undefined
   try {
     // Current Infinity Nikki photos place a printable parameter blob before the delimiter EOI
     // immediately preceding the final token. Since game 2.9 appends a versioned suffix after
     // the token, locate the final EOI inside a bounded tail window instead of assuming it is
     // exactly 46 bytes from EOF.
-    const windowSize = Math.min(size, 2 * 1024 * 1024)
-    const windowStart = size - windowSize
-    const window = Buffer.alloc(windowSize)
-    const result = await handle.read(window, 0, window.length, windowStart)
-    if (result.bytesRead !== window.length) return {}
-    const finalEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]))
-    if (finalEoi < 0) return {}
-    const trailer = window.subarray(finalEoi + 2)
-    if (trailer.length < 44) return {}
-    const token = trailer.subarray(0, 44).toString('ascii')
-    if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
-    const suffix = trailer.subarray(44).toString('ascii')
-    if (suffix !== '' && !/^\[V2\]\d{7}$/.test(suffix)) return {}
-    const boundary = windowStart + finalEoi
-    const versionedMatch = /^\[V2\](\d{7})$/.exec(suffix)
-    const hashLength = versionedMatch ? Number(versionedMatch[1]) : boundary
-    if (!Number.isSafeInteger(hashLength) || hashLength <= 0 || hashLength > boundary) return { token }
+    const maxWindowSize = Math.min(size, 2 * 1024 * 1024)
+    let windowSize = Math.min(maxWindowSize, 64 * 1024)
+    // Most envelopes are small. Grow only if a valid trailer needs a larger envelope.
+    for (;;) {
+      const windowStart = size - windowSize
+      window = Buffer.alloc(windowSize)
+      const result = await handle.read(window, 0, window.length, windowStart)
+      onRead?.(result.bytesRead)
+      if (result.bytesRead !== window.length) return {}
+      const finalEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]))
+      if (finalEoi < 0) return {}
+      const trailer = window.subarray(finalEoi + 2)
+      if (trailer.length < 44) return {}
+      const token = trailer.subarray(0, 44).toString('ascii')
+      if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
+      const suffix = trailer.subarray(44).toString('ascii')
+      if (suffix !== '' && !/^\[V2\]\d{7}$/.test(suffix)) return {}
+      const boundary = windowStart + finalEoi
+      const versionedMatch = /^\[V2\](\d{7})$/.exec(suffix)
+      const hashLength = versionedMatch ? Number(versionedMatch[1]) : boundary
+      if (!Number.isSafeInteger(hashLength) || hashLength <= 0 || hashLength > boundary) return { token }
 
-    const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), finalEoi - 1)
-    if (previousEoi < 0) return { token }
-    const payloadBytes = window.subarray(previousEoi + 2, finalEoi)
-    if (payloadBytes.length === 0 || payloadBytes.length > 2 * 1024 * 1024) return { token }
-    const payload = payloadBytes.toString('ascii')
-    const printable = /^[\x20-\x7e]+$/.test(payload)
-    if (!printable) return { token }
-    // NUAN5's current decode-photo2 contract hashes every source byte before the final EOI.
-    // [V2]N changes that boundary to the final N bytes before the delimiter EOI. The bytes
-    // remain local; only this 32-character digest is retained for the resolver.
-    const hashStart = versionedMatch ? boundary - hashLength : 0
-    return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary) }
-  } finally { await handle.close() }
+      const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), finalEoi - 1)
+      if (previousEoi < 0) {
+        if (windowSize >= maxWindowSize) return { token }
+        window.fill(0)
+        windowSize = Math.min(maxWindowSize, windowSize * 2)
+        continue
+      }
+      const payloadBytes = window.subarray(previousEoi + 2, finalEoi)
+      if (payloadBytes.length === 0 || payloadBytes.length > 2 * 1024 * 1024) return { token }
+      const payload = payloadBytes.toString('ascii')
+      const printable = /^[\x20-\x7e]+$/.test(payload)
+      if (!printable) return { token }
+      // NUAN5's current decode-photo2 contract hashes every source byte before the final EOI.
+      // [V2]N changes that boundary to the final N bytes before the delimiter EOI. The bytes
+      // remain local; only this 32-character digest is retained for the resolver.
+      const hashStart = versionedMatch ? boundary - hashLength : 0
+      return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary, onRead) }
+    }
+  } finally { window?.fill(0); await handle.close() }
 }
 
 export class ResourceClassifier {
-  classifyPath(filePath: string): DiscoveredResourceKind { return classifyKind(filePath) }
+  classifyPath(filePath: string, extra?: ExtraScanRoot): DiscoveredResourceKind {
+    const original=classifyKind(filePath)
+    if(extra?.mode!=='images')return original
+    if(original==='unknown_image')return /_cover\.(jpe?g|png|webp)$/i.test(filePath)?'motion_cover':'high_quality'
+    if(path.extname(filePath).toLowerCase()==='.mp4'&&!/[/\\]pendingup[/\\]/i.test(filePath))return 'motion_video'
+    return original
+  }
 
-  async classify(filePath: string, gamePlayRoot: string): Promise<DiscoveredResource> {
+  async classify(filePath: string, gamePlayRoot: string, onRead?: (bytes: number) => void, extra?: ExtraScanRoot): Promise<DiscoveredResource> {
     const info = await stat(filePath)
     const fileExt = path.extname(filePath).toLowerCase()
-    const kind = classifyKind(filePath)
+    const kind = this.classifyPath(filePath,extra)
     const fileName = path.basename(filePath)
     const shouldHash = !['ignored', 'unknown_image', 'binary_companion'].includes(kind)
-    const digest = shouldHash ? await sha256File(filePath) : undefined
+    const digest = shouldHash ? await sha256File(filePath, onRead) : undefined
     const nativeEnvelope = (kind === 'high_quality' || kind === 'motion_cover')
-      ? await nativePhotoEnvelope(filePath, info.size, fileExt)
+      ? await nativePhotoEnvelope(filePath, info.size, fileExt, onRead)
       : {}
-    const uid = uidFor(filePath, gamePlayRoot)
+    const imageLength=kind==='high_quality'&&/\.jpe?g$/i.test(fileExt)?await jpegImageLength(filePath,info.size):undefined
+    const imageSha256=imageLength&&imageLength<info.size?await sha256File(filePath,onRead,imageLength):digest
+    const container=path.dirname(filePath)
+    const parentUid=/^(NikkiPhotos_(High|Low)Quality|Videos?)$/i.test(path.basename(container))?path.basename(path.dirname(container)):undefined
+    const uid=extra?(parentUid&&/^\d{5,}$/.test(parentUid)?parentUid:extra.mode==='native'?uidFor(filePath,gamePlayRoot):undefined):uidFor(filePath,gamePlayRoot)
+    let groupDirectory=path.dirname(filePath)
+    if(/^NikkiPhotos_(High|Low)Quality$/i.test(path.basename(groupDirectory)))groupDirectory=path.dirname(groupDirectory)
     return {
+      ...(extra?{extraNamespace:`extra:${extra.id}:${toPathKey(groupDirectory)}${extra.mode==='images'&&classifyKind(filePath)==='unknown_image'&&kind==='high_quality'?'|'+fileName.toLowerCase():''}`} : {}),
       absolutePath: path.resolve(filePath), pathKey: toPathKey(filePath), ...(uid ? { uid } : {}), kind,
       fileName, normalizedStem: normalizeStem(fileName), sizeBytes: info.size, mtimeMs: info.mtimeMs,
       ...(info.birthtimeMs ? { birthtimeMs: info.birthtimeMs } : {}), ...(digest ? { sha256: digest } : {}),
+      ...(imageSha256?{imageSha256}:{}),
       ...(nativeEnvelope.token ? { nativeParamToken: nativeEnvelope.token } : {}),
       ...(nativeEnvelope.payload ? { nativeParamPayload: nativeEnvelope.payload } : {}),
       ...(nativeEnvelope.nuan5Md5 ? { nativeParamNuan5Md5: nativeEnvelope.nuan5Md5 } : {}),

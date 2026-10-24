@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile,readFile } from 'node:fs/promises'
 import net from 'node:net'
+import tls from 'node:tls'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -13,6 +14,83 @@ import { searchSuitLibrary } from '../src/server/SuitSearchIndex.js'
 import { LocalTlsIdentityService } from '../src/server/LocalTlsIdentityService.js'
 
 function sha256(data: Buffer): string { return createHash('sha256').update(data).digest('hex') }
+
+test('server connection candidates refresh without changing identity or consuming a pairing token',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize();let hosts=['192.168.1.5','10.1.2.3'];
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,connectionHosts:()=>hosts});
+  try{
+    const address=await server.start(),base=`http://127.0.0.1:${address.port}`;
+    const first=await (await fetch(`${base}/v1/server`)).json() as {serverId:string;connectionHosts:string[]};
+    assert.deepEqual(first.connectionHosts,hosts);hosts=['192.168.43.12'];
+    const second=await (await fetch(`${base}/v1/server`)).json() as typeof first;
+    assert.equal(second.serverId,first.serverId);assert.deepEqual(second.connectionHosts,hosts);
+    const pairing=new PairingService(db);const qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'00'.repeat(32)});
+    await fetch(`${base}/v1/server`);
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+    assert.equal(pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'multi_endpoint',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC').serverId,first.serverId);
+  }finally{await server.stop();db.close();}
+})
+
+test('paired realtime handshake and hello work over the production TLS transport',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize(await readFile(path.resolve('packages/database/migrations/0001_initial.sql'),'utf8'));
+  const identity=new LocalTlsIdentityService(db).getOrCreate();
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,tls:{key:identity.keyPem,cert:identity.certPem}});
+  let socket:tls.TLSSocket|undefined;
+  try{
+    const address=await server.start();
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+    const pairing=new PairingService(db),qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:identity.fingerprintSha256});
+    pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'tls_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC');
+    socket=tls.connect({host:'127.0.0.1',port:address.port,rejectUnauthorized:false});
+    await new Promise<void>((resolve,reject)=>{socket!.once('secureConnect',resolve);socket!.once('error',reject)});
+    let wire=Buffer.alloc(0);socket.on('data',chunk=>{wire=Buffer.concat([wire,chunk])});
+    const hello=readWsText(socket,1500).catch(error=>{throw new Error(`${error.message}; subscribers=${server['sockets'].size}; bytes=${wire.length}; status=${wire.subarray(0,32).toString()}`)});
+    socket.write(['GET /ws/v1 HTTP/1.1',`Host: 127.0.0.1:${address.port}`,'Upgrade: websocket','Connection: Upgrade',
+      `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,'Sec-WebSocket-Version: 13',
+      ...Object.entries(signedHeaders(keys.privateKey,'tls_phone','GET','/ws/v1')).map(([k,v])=>`${k}: ${v}`),'',''].join('\r\n'));
+    assert.equal((JSON.parse(await hello) as {event:string}).event,'server.hello');
+  }finally{socket?.destroy();await server.stop();db.close()}
+})
+
+test('idle server does not query the change journal when no phone subscribes', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const server = new LocalSyncServer(db, { host: '127.0.0.1', port: 0, mdns: false, journalPollMs: 5 })
+  let queries = 0
+  const reads = server['reads'], original = reads.listChangesAfter.bind(reads)
+  reads.listChangesAfter = (...args) => { queries++; return original(...args) }
+  try {
+    await server.start()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(queries, 0, 'without subscribers there is no journal broadcast work')
+  } finally { await server.stop(); db.close() }
+})
+
+test('ordinary JPEG export is authenticated, source-verified, non-destructive and rejects malformed options or changed bytes',async()=>{
+  const temp=await mkdtemp(path.join(os.tmpdir(),'nikki-exif-route-')),mediaPath=path.join(temp,'photo.jpg');
+  const media=Buffer.from('ffd8ffe200084943435f5f5fffc0000b080040003001011100ffda0008010100003f000908ff0007ffd9','hex');await writeFile(mediaPath,media);
+  const db=new DatabaseManager(':memory:');db.initialize();const assets=new AssetRepository(db);
+  assets.reconcile({assetId:'exif_asset',assetType:'photo',assetState:'ready',discoveredAt:'2026-09-05T00:00:00.000Z',capturedAt:'2026-09-05T00:00:00.000Z',metadataSchemaVersion:1,
+    metadata:{schemaVersion:1,identity:{uid:'PRIVATE'},capture:{},camera:{focalLength:35,apertureSection:1.2},raw:{secret:'PRIVATE'}},
+    resources:[{resourceId:'exif_resource',assetId:'exif_asset',role:'source_primary',fileName:'photo.jpg',sourcePath:mediaPath,pathKey:mediaPath.toLowerCase(),mimeType:'image/jpeg',fileExt:'.jpg',sizeBytes:media.length,sha256:sha256(media),stableState:'stable',isDerived:false}]});
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false}),address=await server.start(),base=`http://127.0.0.1:${address.port}`;
+  const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+  const pair=new PairingService(db),qr=pair.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'0'.repeat(64)});
+  pair.pair({pairingToken:qr.pairingToken,device:{deviceId:'exif_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC');
+  const route='/v1/assets/exif_asset/resources/exif_resource/export?exif=true&rotation=90';
+  const get=(p:string)=>fetch(base+p,{headers:signedHeaders(keys.privateKey,'exif_phone','GET',p)});
+  try{
+    assert.equal((await fetch(base+route)).status,401);
+    const result=await get(route);assert.equal(result.status,200);const output=Buffer.from(await result.arrayBuffer());
+    assert.equal(result.headers.get('X-NikkiSync-SHA256'),sha256(output));assert.notEqual(sha256(output),sha256(media));assert.equal(result.headers.get('X-NikkiSync-Rotation'),'90');assert.equal(result.headers.get('X-NikkiSync-Exif'),'1');
+    assert.ok(output.includes(Buffer.from('MomoCamera')));assert.ok(output.includes(Buffer.from('Bloom Beneath Bright Skies')));assert.equal(output.includes(Buffer.from('PRIVATE')),false);assert.deepEqual(await readFile(mediaPath),media);
+    const personalized=await get(route+'&cameraName='+encodeURIComponent('晚星的大喵相机'));
+    assert.equal(personalized.status,200);assert.ok(!Buffer.from(await personalized.arrayBuffer()).includes(Buffer.from('晚星的大喵相机','utf8')));
+    for(const suffix of ['&cameraName=','&cameraName=x&cameraName=y','&cameraName=x%00y','&cameraName='+encodeURIComponent('暖'.repeat(100))])assert.equal((await get(route+suffix)).status,400);
+    assert.equal((await get(route.replace('exif=true','exif=false')+'&cameraName=x')).status,400);
+    for(const p of [route.replace('90','91'),route+'&path=PRIVATE',route+'&exif=false'])assert.equal((await get(p)).status,400);
+    await writeFile(mediaPath,Buffer.alloc(media.length));assert.equal((await get(route)).status,409);
+  }finally{await server.stop();db.close();await rm(temp,{recursive:true,force:true});}
+})
 
 function signedHeaders(privateKey: string, deviceId: string, method: string, requestPath: string, body = Buffer.alloc(0)): Record<string, string> {
   const timestamp = String(Date.now())

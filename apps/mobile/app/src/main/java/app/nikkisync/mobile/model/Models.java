@@ -6,14 +6,20 @@ public final class Models {
     private Models() {}
 
     public static final class PairingPayload {
+        private final List<String> hosts;
         private final String serverId, host, token, expiresAt, tlsFingerprintSha256;
         private final int port, protocolVersion;
         public PairingPayload(String serverId, String host, int port, String token, int protocolVersion, String expiresAt, String tlsFingerprintSha256) {
+            this(serverId,host,port,token,protocolVersion,expiresAt,tlsFingerprintSha256,List.of(host));
+        }
+        public PairingPayload(String serverId,String host,int port,String token,int protocolVersion,String expiresAt,String tlsFingerprintSha256,List<String> hosts){
+            this.hosts=app.nikkisync.mobile.net.EndpointCandidates.normalize(host,hosts);
             this.serverId = serverId; this.host = host; this.port = port; this.token = token;
             this.protocolVersion = protocolVersion; this.expiresAt = expiresAt; this.tlsFingerprintSha256 = tlsFingerprintSha256;
         }
         public String serverId() { return serverId; }
         public String host() { return host; }
+        public List<String> hosts() { return hosts; }
         public int port() { return port; }
         public String token() { return token; }
         public int protocolVersion() { return protocolVersion; }
@@ -22,11 +28,17 @@ public final class Models {
     }
 
     public static final class PairedServer {
+        private final List<String> hosts;
         private final String serverId, serverName, host, tlsFingerprintSha256, serverPublicKey, deviceCredential;
         private final int port;
         private final long lastRevision;
         public PairedServer(String serverId, String serverName, String host, int port, String tlsFingerprintSha256,
                             String serverPublicKey, String deviceCredential, long lastRevision) {
+            this(serverId,serverName,host,port,tlsFingerprintSha256,serverPublicKey,deviceCredential,lastRevision,List.of(host));
+        }
+        private PairedServer(String serverId,String serverName,String host,int port,String tlsFingerprintSha256,
+                             String serverPublicKey,String deviceCredential,long lastRevision,List<String> hosts){
+            this.hosts=app.nikkisync.mobile.net.EndpointCandidates.normalize(host,hosts);
             this.serverId = serverId; this.serverName = serverName; this.host = host; this.port = port;
             this.tlsFingerprintSha256 = tlsFingerprintSha256; this.serverPublicKey = serverPublicKey;
             this.deviceCredential = deviceCredential; this.lastRevision = lastRevision;
@@ -34,17 +46,19 @@ public final class Models {
         public String serverId() { return serverId; }
         public String serverName() { return serverName; }
         public String host() { return host; }
+        public List<String> hosts() { return hosts; }
         public int port() { return port; }
         public String tlsFingerprintSha256() { return tlsFingerprintSha256; }
         public String serverPublicKey() { return serverPublicKey; }
         public String deviceCredential() { return deviceCredential; }
         public long lastRevision() { return lastRevision; }
         public PairedServer withEndpoint(String newHost, int newPort) {
-            return new PairedServer(serverId, serverName, newHost, newPort, tlsFingerprintSha256, serverPublicKey, deviceCredential, lastRevision);
+            return new PairedServer(serverId, serverName, newHost, newPort, tlsFingerprintSha256, serverPublicKey, deviceCredential, lastRevision,hosts);
         }
         public PairedServer withRevision(long revision) {
-            return new PairedServer(serverId, serverName, host, port, tlsFingerprintSha256, serverPublicKey, deviceCredential, revision);
+            return new PairedServer(serverId, serverName, host, port, tlsFingerprintSha256, serverPublicKey, deviceCredential, revision,hosts);
         }
+        public PairedServer withHosts(List<String> values){return new PairedServer(serverId,serverName,host,port,tlsFingerprintSha256,serverPublicKey,deviceCredential,lastRevision,values);}
     }
 
     public static final class AssetSummary {

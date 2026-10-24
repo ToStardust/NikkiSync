@@ -77,6 +77,7 @@ export interface CursorPage<T> {
 }
 
 export interface ServerInfoResponse {
+  connectionHosts?: readonly string[]
   protocolVersion: ProtocolVersion
   serverId: ServerId
   name: string
@@ -224,6 +225,8 @@ export interface PairingQrPayload {
   action: 'pair'
   serverId: ServerId
   host: string
+  /** Optional IPv4 alternatives; old clients keep using host. */
+  hosts?: readonly string[]
   port: number
   pairingToken: string
   protocolVersion: ProtocolVersion
@@ -325,6 +328,13 @@ export function buildChangesRoute(after: Revision): string {
 
 export function buildPairingUri(payload: PairingQrPayload): string {
   const expiresEpochSeconds = Math.floor(Date.parse(payload.expiresAt) / 1000)
+  const hosts = [...new Set([payload.host, ...(payload.hosts ?? [])])].slice(0, 8)
+  if (hosts.length > 1) {
+    const query = new URLSearchParams({ serverId: payload.serverId, host: payload.host,
+      port: String(payload.port), token: payload.pairingToken, protocol: String(payload.protocolVersion),
+      expiresAt: payload.expiresAt, tls: payload.tlsFingerprintSha256, hosts: hosts.join(',') })
+    return `nikki-sync://pair?${query}`
+  }
   return `NS1|${payload.serverId}|${payload.host}|${payload.port}|${payload.pairingToken}|${expiresEpochSeconds}|${payload.tlsFingerprintSha256}`
 }
 

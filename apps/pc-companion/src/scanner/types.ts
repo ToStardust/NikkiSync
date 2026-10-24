@@ -1,4 +1,4 @@
-import type { InfinityNikkiInstallation } from '../game-directory-discovery.js'
+import type { GameDiscoveryOptions, InfinityNikkiInstallation } from '../game-directory-discovery.js'
 import type { ResourceRole } from '@nikkisync/core'
 import type { ResolverCandidateInput } from '@nikkisync/database'
 import type { AssetReconcileResult, DatabaseManager } from '@nikkisync/database'
@@ -7,6 +7,7 @@ export type ScannerStatus = 'stopped' | 'discovering' | 'scanning' | 'reconcilin
 export type DiscoveredResourceKind = 'high_quality' | 'low_quality' | 'motion_cover' | 'motion_video' | 'unknown_image' | 'binary_companion' | 'ignored'
 
 export interface DiscoveredResource {
+  extraNamespace?: string
   absolutePath: string
   pathKey: string
   uid?: string
@@ -20,6 +21,7 @@ export interface DiscoveredResource {
   height?: number
   durationMs?: number
   sha256?: string
+  imageSha256?: string
   mimeType: string
   fileExt: string
   /** Opaque 32-byte Infinity Nikki parameter token encoded as 44-char Base64 after the final JPEG EOI. */
@@ -38,14 +40,27 @@ export interface StabilityConfig {
   assumeStableIfOlderMs: number
 }
 
-export interface ScannerConfig {
-  cachedInstallRoot?: string
-  startingPaths?: string[]
-  runningExecutablePaths?: string[]
+export interface ScannerConfig extends GameDiscoveryOptions {
+  extraDirectories?: ExtraScanRoot[]
+  retiredExtraDirectories?: string[]
+  allowMissingInstallation?: boolean
   stability?: Partial<StabilityConfig>
   watcher?: boolean
   debounceMs?: number
   motionAssemblyGraceMs?: number
+  onSettled?(): void
+  onProgress?(progress: ScannerProgress): void
+}
+
+export interface ExtraScanRoot { id: string; path: string; mode: 'native' | 'images' }
+
+/** Aggregate work only: never include paths, UIDs, filenames or photo parameters. */
+export interface ScannerProgress {
+  stage: 'scan-files' | 'scan-index' | 'scan-watch'
+  filesObserved: number
+  filesCompleted: number
+  bytesRead: number
+  assetsProcessed: number
 }
 
 export interface ScanResult {

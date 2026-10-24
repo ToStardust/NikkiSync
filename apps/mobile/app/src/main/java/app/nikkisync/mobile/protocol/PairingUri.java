@@ -27,7 +27,9 @@ public final class PairingUri {
         if (port < 1 || port > 65535) throw new IllegalArgumentException("端口无效");
         if (!tls.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("TLS 指纹无效");
         if (Instant.parse(expiresAt).isBefore(Instant.now())) throw new IllegalArgumentException("配对二维码已经过期");
-        return new PairingPayload(serverId, host, port, token, protocol, expiresAt, tls);
+        String alternatives=uri.getQueryParameter("hosts");
+        java.util.List<String> hosts=alternatives==null?java.util.List.of(host):java.util.Arrays.asList(alternatives.substring(0,Math.min(256,alternatives.length())).split(","));
+        return new PairingPayload(serverId, host, port, token, protocol, expiresAt, tls,hosts);
     }
 
     private static PairingPayload parseCompact(String raw) {

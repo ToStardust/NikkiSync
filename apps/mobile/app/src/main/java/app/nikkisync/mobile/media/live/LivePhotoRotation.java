@@ -2,11 +2,10 @@ package app.nikkisync.mobile.media.live;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.ImageDecoder;
+import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -46,12 +45,28 @@ public final class LivePhotoRotation {
     public record Output(File image,File video,VideoFacts videoFacts){}
     private LivePhotoRotation(){}
 
+    /** Standalone MP4 uses the same physical rotation and track validation as LIVE, without downloading a cover. */
+    public static File rotateVideoOnly(Context context,File video,int clockwise,File directory,
+                                      AtomicBoolean cleanupSafe,IntConsumer progress)throws IOException{
+        int degrees=QuarterTurn.normalize(clockwise);
+        if(degrees==0)return video;
+        if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("视频旋转不能阻塞 UI 线程");
+        VideoFacts before=VideoFacts.read(video);
+        if(before.hdr())throw new IOException("HDR/BT.2020 视频暂不执行旋转，避免降低色彩质量");
+        RotationVideoSupport.requireSupported(before,degrees);
+        File output=new File(directory,"rotated.mp4");
+        rotateVideo(context,video,output,degrees,cleanupSafe,progress);
+        before.verifyRotated(VideoFacts.read(output),degrees);
+        return output;
+    }
+
     public static Output rotate(Context context,File image,File video,int clockwise,File directory,
                                 AtomicBoolean cleanupSafe,IntConsumer progress)throws IOException{
         int degrees=QuarterTurn.normalize(clockwise);VideoFacts before=VideoFacts.read(video);
         if(degrees==0)return new Output(image,video,before); // No re-encode or metadata rewrite.
         if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("Live 旋转不能阻塞 UI 线程");
         if(before.hdr())throw new IOException("HDR/BT.2020 Live 暂不执行旋转，避免静默变为 SDR");
+        RotationVideoSupport.requireSupported(before,degrees);
         File rotatedImage=new File(directory,"rotated.jpg"),rotatedVideo=new File(directory,"rotated.mp4");
         rotateJpeg(image,rotatedImage,degrees);
         rotateVideo(context,video,rotatedVideo,degrees,cleanupSafe,progress);
@@ -60,22 +75,17 @@ public final class LivePhotoRotation {
     }
 
     static void rotateJpeg(File input,File output,int clockwise)throws IOException{
-        Bitmap decoded=null,rotated=null;
+        Bitmap rotated=null;
         try{
-            // ImageDecoder applies all EXIF orientations (including mirrored variants) once.
-            decoded=ImageDecoder.decodeBitmap(ImageDecoder.createSource(input),(decoder,info,source)->{
-                long pixels=(long)info.getSize().getWidth()*info.getSize().getHeight();
+            if(!LosslessJpegRotation.tryRotate(input,output,clockwise)){
                 Runtime runtime=Runtime.getRuntime();long available=runtime.maxMemory()-(runtime.totalMemory()-runtime.freeMemory());
-                if(pixels*12+32L*1024*1024>available)throw new IllegalArgumentException("原图过大，当前内存不足以全分辨率旋转；未降采样");
-                if(info.getColorSpace()!=null&&info.getColorSpace().isWideGamut())throw new IllegalArgumentException("宽色域 JPEG 旋转尚未验收，未改变色彩");
-                decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
-            });
-            if(Build.VERSION.SDK_INT>=34&&decoded.hasGainmap())throw new IOException("GainMap 图片需同步旋转 HDR 层，当前不降级处理");
-            Matrix matrix=new Matrix();matrix.postRotate(QuarterTurn.normalize(clockwise));
-            rotated=Bitmap.createBitmap(decoded,0,0,decoded.getWidth(),decoded.getHeight(),matrix,false);
-            try(OutputStream out=Files.newOutputStream(output.toPath(),StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)){
-                if(!rotated.compress(Bitmap.CompressFormat.JPEG,100,out))throw new IOException("Live 封面 JPEG 编码失败");
+                rotated=TiledJpegRotation.decode(input,clockwise,available);
+                try(OutputStream out=Files.newOutputStream(output.toPath(),StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)){
+                    if(!rotated.compress(Bitmap.CompressFormat.JPEG,100,out))throw new IOException("Live 封面 JPEG 编码失败");
+                }
             }
+            BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(output.getAbsolutePath(),bounds);
+            if(bounds.outWidth<=0||bounds.outHeight<=0)throw new IOException("Live 旋转封面尺寸校验失败");
             ExifInterface old=new ExifInterface(input),fresh=new ExifInterface(output);
             for(String tag:new String[]{ExifInterface.TAG_DATETIME,ExifInterface.TAG_DATETIME_ORIGINAL,ExifInterface.TAG_DATETIME_DIGITIZED,
                 ExifInterface.TAG_MAKE,ExifInterface.TAG_MODEL,ExifInterface.TAG_IMAGE_DESCRIPTION,ExifInterface.TAG_ARTIST,
@@ -83,12 +93,12 @@ public final class LivePhotoRotation {
                 String value=old.getAttribute(tag);if(value!=null)fresh.setAttribute(tag,value);
             }
             fresh.setAttribute(ExifInterface.TAG_ORIENTATION,Integer.toString(ExifInterface.ORIENTATION_NORMAL));
-            fresh.setAttribute(ExifInterface.TAG_IMAGE_WIDTH,Integer.toString(rotated.getWidth()));
-            fresh.setAttribute(ExifInterface.TAG_IMAGE_LENGTH,Integer.toString(rotated.getHeight()));
-            fresh.setAttribute("PixelXDimension",Integer.toString(rotated.getWidth()));fresh.setAttribute("PixelYDimension",Integer.toString(rotated.getHeight()));
+            fresh.setAttribute(ExifInterface.TAG_IMAGE_WIDTH,Integer.toString(bounds.outWidth));
+            fresh.setAttribute(ExifInterface.TAG_IMAGE_LENGTH,Integer.toString(bounds.outHeight));
+            fresh.setAttribute("PixelXDimension",Integer.toString(bounds.outWidth));fresh.setAttribute("PixelYDimension",Integer.toString(bounds.outHeight));
             fresh.setAttribute(ExifInterface.TAG_SOFTWARE,"NikkiSync Live rotation");fresh.saveAttributes();
         }catch(IOException e){throw e;}catch(RuntimeException e){throw new IOException("Live 封面旋转失败："+e.getMessage(),e);}
-        finally{if(rotated!=null&&rotated!=decoded)rotated.recycle();if(decoded!=null)decoded.recycle();}
+        finally{if(rotated!=null)rotated.recycle();}
     }
 
     /** Avoid Media3 1.8.0's ScaleAndRotateTransformation -> muxer-metadata-only optimization. */
@@ -126,9 +136,11 @@ public final class LivePhotoRotation {
                     if(stopping.get()||complete.isDone())return;
                     try{ProgressHolder holder=new ProgressHolder();if(active[0].getProgress(holder)==Transformer.PROGRESS_STATE_AVAILABLE)progress.accept(holder.progress);
                         handler.postDelayed(this,200);
-                    }catch(RuntimeException e){complete.completeExceptionally(e);}
+                    }catch(OutOfMemoryError e){complete.completeExceptionally(LiveExportGuard.memoryFailure(e));}
+                    catch(RuntimeException e){complete.completeExceptionally(e);}
                 }};handler.post(poll);
-            }catch(Exception e){complete.completeExceptionally(e);}
+            }catch(OutOfMemoryError e){complete.completeExceptionally(LiveExportGuard.memoryFailure(e));}
+            catch(Exception e){complete.completeExceptionally(e);}
         });
         boolean interrupted=false;
         try{

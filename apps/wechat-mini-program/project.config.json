@@ -1,0 +1,12 @@
+{
+  "description": "NikkiSync Remote Bridge：大喵相机助手开发工程",
+  "appid": "wx1bfaa26659e0401b",
+  "projectname": "大喵相机助手",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "miniprogram/",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "minified": true
+  }
+}

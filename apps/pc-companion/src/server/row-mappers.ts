@@ -7,6 +7,7 @@ import type {
   NikkiAsset
 } from '@nikkisync/protocol'
 import { inferInfinityNikkiGameVersion } from './GameVersionCalendar.js'
+import {gameVersionEnglishName} from '../wechat/GalleryRuntime.mjs'
 
 function optionalString(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value)
@@ -18,6 +19,8 @@ function optionalNumber(value: unknown): number | undefined {
 
 function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhotoMetadata | undefined {
   if (!value) return undefined
+  const title=gameVersionEnglishName(value.identity?.gameVersion)
+  if(title)value={...value,identity:{...value.identity,gameVersionEnglishName:title}}
   const raw = value.raw && typeof value.raw === 'object'
     ? { ...(value.raw as Record<string, unknown>) }
     : undefined
@@ -70,9 +73,12 @@ export function mapAssetRow(row: Record<string, unknown>, resourceRows: Record<s
   const resources = resourceRows.map(mapResourceRow)
   const still = resources.find((resource) => resource.role === 'source_primary' || resource.role === 'source_high_quality')
   const motion = resources.find((resource) => resource.role === 'source_motion')
-  const metadata = publicMetadata(optionalString(row.metadata_json)
+  let metadata = publicMetadata(optionalString(row.metadata_json)
     ? JSON.parse(String(row.metadata_json)) as InfinityPhotoMetadata
     : undefined)
+  const inferred=summaryGameVersion(row).gameVersion
+  const title=gameVersionEnglishName(inferred)
+  if(metadata&&title)metadata={...metadata,identity:{...metadata.identity,...(!metadata.identity?.gameVersion&&inferred?{gameVersion:inferred}:{}),gameVersionEnglishName:title}}
   return {
     schemaVersion: 1,
     assetId: String(row.asset_id),

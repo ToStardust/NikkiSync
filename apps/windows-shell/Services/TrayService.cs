@@ -14,7 +14,7 @@ public sealed class TrayService : IDisposable
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("显示 NikkiSync", null, (_, _) => ShowRequested?.Invoke(this, EventArgs.Empty));
         menu.Items.Add("退出 NikkiSync", null, (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty));
-        _icon = new Forms.NotifyIcon { Icon = Drawing.SystemIcons.Application, Text = "NikkiSync PC", ContextMenuStrip = menu, Visible = true };
+        _icon = new Forms.NotifyIcon { Icon = Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? Drawing.SystemIcons.Application, Text = "NikkiSync PC", ContextMenuStrip = menu, Visible = true };
         _icon.DoubleClick += (_, _) => ShowRequested?.Invoke(this, EventArgs.Empty);
     }
 

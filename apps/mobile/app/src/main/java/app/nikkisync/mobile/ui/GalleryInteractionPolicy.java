@@ -10,7 +10,7 @@ public final class GalleryInteractionPolicy {
     private GalleryInteractionPolicy() {}
 
     public static Action onClick(boolean selectionActive) {
-        return selectionActive ? Action.TOGGLE_SELECTION : Action.OPEN_VIEWER;
+        return Action.OPEN_VIEWER;
     }
 
     public static Action onLongPress(boolean selectionActive) {

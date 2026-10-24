@@ -1,7 +1,8 @@
 import type { AssetState } from '@nikkisync/core'
+import {toPathKey} from '@nikkisync/core'
 import { ChangeJournalRepository } from './change-journal-repository.js'
 import type { DatabaseManager } from './database-manager.js'
-import type { AssetReconcileInput, AssetReconcileResult, CreateAssetInput } from './models.js'
+import type { AssetReconcileInput, AssetReconcileResult, AssetReconcileScanContext, CreateAssetInput } from './models.js'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -57,7 +58,7 @@ export class AssetRepository {
   }
 
   /** Idempotently reconcile an asset and all currently observed source resources. */
-  reconcile(input: AssetReconcileInput): AssetReconcileResult {
+  reconcile(input: AssetReconcileInput, scan?: AssetReconcileScanContext): AssetReconcileResult {
     return this.database.transaction(() => {
       const now = input.createdAt ?? new Date().toISOString()
       const existing = this.getById(input.assetId)
@@ -92,6 +93,29 @@ export class AssetRepository {
       }) || existingResources.some((row) => !expectedIds.has(String(row.resource_id)) && String(row.stable_state) !== 'missing')
 
       if (existing && !assetChanged && !resourcesChanged) return { kind: 'unchanged' }
+
+      // Old fuzzy LIVE matching could commit a video to an orphan cover before
+      // failing on its real pair. Release only that obsolete, same-byte motion
+      // association within a completed scan, in this target asset's transaction.
+      const supersededChanges: Array<{ assetId: string; revision: number }> = []
+      if (scan && input.assetType === 'motion_photo') for (const resource of input.resources) {
+        if (resource.role !== 'source_motion' || resourceById.has(resource.resourceId)) continue
+        if (toPathKey(resource.sourcePath) !== resource.pathKey || !scan.completedRoots.some(root => resource.pathKey.startsWith(toPathKey(root) + '/'))) continue
+        const old = this.database.connection.prepare(`SELECT r.resource_id,r.asset_id,r.role,r.sha256,r.size_bytes,r.source_path,a.asset_type,a.uid,a.asset_state
+          FROM resources r JOIN assets a ON a.asset_id=r.asset_id WHERE r.path_key=? AND r.asset_id<>?`).get(resource.pathKey,input.assetId)
+        if (!old || old.asset_type !== 'motion_photo' || old.role !== 'source_motion' || scan.activeAssetIds.has(String(old.asset_id))
+          || String(old.uid ?? '') !== String(input.uid ?? '') || old.sha256 !== resource.sha256 || Number(old.size_bytes) !== resource.sizeBytes
+          || toPathKey(String(old.source_path)) !== resource.pathKey) continue
+        // FK cascade removes candidates referring to the obsolete resource only.
+        // Source files, old asset metadata, pairings and organizer records remain.
+        this.database.connection.prepare('DELETE FROM resources WHERE resource_id=?').run(old.resource_id)
+        if (old.asset_state !== 'deleted') {
+          const revision=this.journal.record('asset.deleted',String(old.asset_id),{reason:'obsolete_motion_association'},now)
+          this.database.connection.prepare("UPDATE assets SET asset_state='deleted',deleted_at=?,revision=?,updated_at=? WHERE asset_id=?").run(now,revision,now,old.asset_id)
+          this.database.connection.prepare("UPDATE resources SET stable_state='missing',updated_at=? WHERE asset_id=?").run(now,old.asset_id)
+          supersededChanges.push({assetId:String(old.asset_id),revision})
+        }
+      }
 
       const event = existing ? 'asset.updated' : 'asset.created'
       const revision = this.journal.record(event, input.assetId, {
@@ -169,7 +193,7 @@ export class AssetRepository {
       this.database.connection.prepare(
         `UPDATE resources SET stable_state = 'missing', updated_at = ? WHERE asset_id = ? AND resource_id NOT IN (${input.resources.length ? input.resources.map(() => '?').join(',') : "''"})`
       ).run(now, input.assetId, ...input.resources.map((resource) => resource.resourceId))
-      return { kind: existing ? 'updated' : 'created', revision }
+      return { kind: existing ? 'updated' : 'created', revision, ...(supersededChanges.length ? {supersededChanges} : {}) }
     })
   }
 
@@ -179,8 +203,8 @@ export class AssetRepository {
     return this.database.transaction(() => {
       const rows = this.database.connection.prepare(
         `SELECT DISTINCT a.asset_id FROM assets a JOIN resources r ON r.asset_id = a.asset_id
-         WHERE a.asset_state <> 'deleted' AND (${roots.map(() => 'r.path_key LIKE ?').join(' OR ') || '0'})`
-      ).all(...roots.map((root) => `${root.replaceAll('\\', '/').toLowerCase().replace(/%/g, '%%')}%`)) as Array<Record<string, unknown>>
+         WHERE a.asset_state <> 'deleted' AND (${roots.map(() => 'instr(r.path_key, ?) = 1').join(' OR ') || '0'})`
+      ).all(...roots.map((root) => toPathKey(root)+'/')) as Array<Record<string, unknown>>
       const result: Array<{ assetId: string; revision: number }> = []
       for (const row of rows) {
         const assetId = String(row.asset_id)
@@ -207,6 +231,13 @@ export class AssetRepository {
       'SELECT * FROM assets ORDER BY captured_at DESC, asset_id ASC'
     ).all() as Record<string, unknown>[]
   }
+
+  /** Return the indexed asset count without materializing metadata or resource rows. */
+  count(): number {
+    return Number(this.database.connection.prepare('SELECT COUNT(*) AS count FROM assets').get()?.count ?? 0)
+  }
+
+  countVisible():number{return Number(this.database.connection.prepare("SELECT COUNT(*) AS count FROM assets WHERE asset_state<>'deleted'").get()?.count??0)}
 
   updateState(assetId: string, state: AssetState, updatedAt = new Date().toISOString()): number {
     return this.database.transaction(() => {
@@ -235,16 +266,17 @@ export class AssetRepository {
   }
 
   /** Assets that contain a native Infinity Nikki token. Resolver service decides whether cached enrichment is current. */
-  listMetadataResolutionCandidates(limit = 50): Array<Record<string, unknown>> {
+  listMetadataResolutionCandidates(limit = 50, after?: { discoveredAt: string; assetId: string }): Array<Record<string, unknown>> {
     return this.database.connection.prepare(`
       SELECT * FROM assets
       WHERE asset_state <> 'deleted'
         AND uid IS NOT NULL
         AND metadata_json IS NOT NULL
         AND json_extract(metadata_json, '$.raw.nativeParamToken') IS NOT NULL
+        ${after ? 'AND (discovered_at > ? OR (discovered_at = ? AND asset_id > ?))' : ''}
       ORDER BY discovered_at ASC, asset_id ASC
       LIMIT ?
-    `).all(limit) as Array<Record<string, unknown>>
+    `).all(...(after ? [after.discoveredAt, after.discoveredAt, after.assetId, limit] : [limit])) as Array<Record<string, unknown>>
   }
 
   softDelete(assetId: string, deletedAt = new Date().toISOString()): number {

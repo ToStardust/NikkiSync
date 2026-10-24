@@ -48,14 +48,14 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
     private final Handler main = new Handler(Looper.getMainLooper());
     private Map<String, SavedPhotoHealthStore.Entry> health = Map.of();
 
-    public SavedPhotoAdapter(Activity activity, Listener listener) {
-        this.activity = activity;
-        this.listener = listener;
-    }
-
     public void setHealth(Map<String, SavedPhotoHealthStore.Entry> entries) {
         health = Map.copyOf(entries);
         notifyDataSetChanged();
+    }
+
+    public SavedPhotoAdapter(Activity activity, Listener listener) {
+        this.activity = activity;
+        this.listener = listener;
     }
 
     public void setGroups(List<SavedPhotoGroups.Group> groups) {
@@ -69,6 +69,9 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
 
     public boolean isHeader(int position) {
         return position >= 0 && position < rows.size() && rows.get(position).member == null;
+    }
+    public List<SavedPhotoGroups.Member> visiblePhotos(){
+        List<SavedPhotoGroups.Member> result=new ArrayList<>();for(Row row:rows)if(row.member!=null)result.add(row.member);return result;
     }
 
     public void shutdown() {
@@ -134,27 +137,30 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         HeaderView(Activity context) {
             super(context);
             setGravity(Gravity.CENTER_VERTICAL);
-            setPadding(dp(10), dp(10), dp(10), dp(8));
+            setPadding(dp(10), dp(6), dp(10), dp(4));
+            setMinimumHeight(dp(38));
 
             title = new TextView(context);
-            title.setTextSize(15);
+            title.setTextSize(16);
+            title.setIncludeFontPadding(false);
             title.setTextColor(context.getColor(R.color.text_primary));
             title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setSingleLine(true);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
             addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
             count = new TextView(context);
             count.setTextSize(11);
+            count.setIncludeFontPadding(false);
             count.setTextColor(context.getColor(R.color.text_secondary));
+            count.setSingleLine(true);
             addView(count);
         }
 
         void bind(SavedPhotoGroups.Group group) {
-            String label = groupDate(group);
-            if (group.gameVersion() != null && !group.gameVersion().isBlank()) {
-                label += " · " + group.gameVersion() + "版本";
-            }
-            title.setText(label);
-            count.setText(group.members().size() + "张");
+            title.setText(groupDate(group));
+            String version=group.gameVersion();
+            count.setText((version==null||version.isBlank()?"":version+" 版本 · ")+group.members().size()+" 张");
         }
     }
 
@@ -234,6 +240,15 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
                     });
                 }
             });
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            int width = MeasureSpec.getSize(widthSpec);
+            if (width > 0) {
+                image.getLayoutParams().height = Math.max(1, width - getPaddingLeft() - getPaddingRight());
+                heightSpec = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
+            }
+            super.onMeasure(widthSpec, heightSpec);
         }
 
         private TextView chip(String value) {

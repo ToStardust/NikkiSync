@@ -108,4 +108,17 @@ public final class InspirationStoreTest {
         assertEquals("pending", imageOnly.code().parsedState());
         assertEquals("截图待整理", imageOnly.title());
     }
+
+    @Test public void titlelessCodeAndSelfMadeStatusSurviveReopen() {
+        var entry=store.create(new InspirationStore.Draft("","CODE","outfit","",null,"",List.of(),List.of("日常"),"self"),1);
+        store.close();store=new InspirationStore(context);
+        assertEquals("",store.get(entry.id()).title());assertEquals("self",store.get(entry.id()).status());
+    }
+
+    @Test public void classificationChoicesReuseLiveRecordsWithoutDuplicateOrDeletedCategories() {
+        var first=store.create(new InspirationStore.Draft("","a","outfit","",null,"",List.of(),List.of("日常","舞会"),"want"),1);
+        var second=store.create(new InspirationStore.Draft("","b","dye","",null,"",List.of(),List.of("日常","已删分类"),"self"),2);
+        assertEquals(3,store.categoryNames().size());store.delete(second.id(),3);
+        assertEquals(List.of("日常","舞会"),store.categoryNames());
+    }
 }

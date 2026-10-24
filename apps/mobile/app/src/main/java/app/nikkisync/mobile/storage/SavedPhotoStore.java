@@ -59,7 +59,11 @@ public final class SavedPhotoStore {
     }
 
     private final SharedPreferences prefs;
-    public SavedPhotoStore(Context context) { prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE); }
+    private final Context context;
+    public SavedPhotoStore(Context context) {
+        this.context=context.getApplicationContext();
+        prefs=this.context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
+    }
 
     public synchronized void record(AssetSummary asset,Uri uri,int rotationDegrees,String format) {
         recordInternal(new Record(asset.assetId(),uri.toString(),System.currentTimeMillis(),asset.hasMotion(),rotationDegrees,
@@ -111,6 +115,7 @@ public final class SavedPhotoStore {
         }catch(Exception error){if(durable)throw new IllegalStateException("Live 媒体已写入，但保存记录编码失败",error);}}
         SharedPreferences.Editor editor=prefs.edit().putString(KEY_RECORDS,rows.toString());
         if(durable){if(!editor.commit())throw new IllegalStateException("Live 媒体已写入，但保存记录持久化失败");}else editor.apply();
+        app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.refreshAll(context);
     }
     private static String optional(JSONObject row,String key){if(!row.has(key)||row.isNull(key))return null;String value=row.optString(key,"").trim();return value.isEmpty()?null:value;}
 }

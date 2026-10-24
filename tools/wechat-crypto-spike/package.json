@@ -1,0 +1,13 @@
+{
+  "name": "@nikkisync/wechat-crypto-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Developer Noise compatibility evaluation; not production security approval",
+  "dependencies": {
+    "noise-handshake": "4.2.0",
+    "sodium-javascript": "0.8.0",
+    "buffer": "6.0.3"
+  },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

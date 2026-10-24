@@ -1,6 +1,7 @@
 import type { MetadataDictionaryManifest } from '@nikkisync/core'
 
 export interface MetadataDictionaryFetchState {
+  contentVersion?: string
   etag?: string
   lastModified?: string
 }
