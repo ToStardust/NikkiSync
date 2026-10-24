@@ -48,7 +48,7 @@ $rsa = [Security.Cryptography.RSA]::Create()
 try {
   $secret = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($keyPath), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
   $read = 0; $rsa.ImportPkcs8PrivateKey($secret, [ref]$read)
-  if ($rsa.ExportSubjectPublicKeyInfoPem().Trim() -ne [IO.File]::ReadAllText($publicPath).Trim()) { throw 'Update signing key does not match the embedded public key.' }
+  if ($rsa.ExportSubjectPublicKeyInfoPem().Replace("`r`n","`n").Trim() -ne [IO.File]::ReadAllText($publicPath).Replace("`r`n","`n").Trim()) { throw 'Update signing key does not match the embedded public key.' }
   $signature = $rsa.SignData($bytes, [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
   [IO.File]::WriteAllBytes((Join-Path $output 'MomoCamera-Windows-update.json'), $bytes)
   [IO.File]::WriteAllBytes((Join-Path $output 'MomoCamera-Windows-update.json.sig'), $signature)

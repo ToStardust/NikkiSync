@@ -91,6 +91,7 @@ ${organizerScript}
         document.querySelector('#network-home-note').textContent=networkAuthorized?'本助手已添加本地网络权限。电脑和手机仍需连接同一 Wi-Fi，或让电脑连接这台手机的热点；若仍连接超时，可到同步设置查看授权状态。':'电脑和手机连接同一 Wi-Fi，或让电脑连接这台手机的热点。扫码后连接超时，可到同步设置点击“允许手机连接”，在 Windows 弹窗中选择“是”；已能连接时无需操作。';
       }
     }
+    if(event.data?.type==='syncServiceRestart'){document.querySelector('#restart-sync-service').disabled=!!event.data.busy||!bridge;if(typeof event.data.message==='string')document.querySelector('#sync-service-note').textContent=event.data.message;}
     if(event.data?.type==='autostart'){autostart.checked=!!event.data.enabled;autostart.disabled=false;document.querySelector('#autostart-note').textContent=event.data.message||'登录 Windows 后，自动准备照片同步。更新或移动程序后，首次打开会自动同步自启动路径。';}
     if(event.data?.type==='packageInfo'){
       installer.hidden=installerNote.hidden=!event.data.hasAndroidInstaller;
@@ -128,6 +129,9 @@ ${organizerScript}
   modal.onclick=event=>{if(event.target===modal)dismiss();};
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)dismiss();});
 
+  const restartService=document.querySelector('#restart-sync-service'),serviceNote=document.querySelector('#sync-service-note');
+  restartService.hidden=true;serviceNote.hidden=true;
+  restartService.onclick=()=>{if(!bridge||restartService.disabled)return;restartService.disabled=true;serviceNote.textContent='正在重新启动同步服务，配对与照片记录会保留…';bridge.postMessage({type:'restartSyncService'});};
   let polling=false,disposed=false;
   const updateStatus=async()=>{
     if(polling||disposed||document.hidden)return;polling=true;
@@ -139,11 +143,15 @@ ${organizerScript}
       document.querySelector('#desktop-address').textContent=status.host+':'+status.port;
       document.querySelector('#desktop-status-text').textContent='同步服务运行中';
       document.querySelector('#desktop-status').dataset.state='ready';
+      restartService.hidden=true;serviceNote.hidden=true;restartService.disabled=false;renew.disabled=false;
       const first=document.querySelector('#android-first-pairing'),paired=document.querySelector('#android-paired');
       if(status.pairedDevices>0){if(first){first.hidden=true;first.querySelector('.qr')?.replaceChildren();}paired.hidden=false;}
       else if(!first||first.hidden)paired.hidden=true;
     }catch{
-      if(!disposed){document.querySelector('#desktop-status-text').textContent='同步服务暂不可用';document.querySelector('#desktop-status').dataset.state='offline';}
+      if(!disposed){document.querySelector('#desktop-status-text').textContent='同步服务暂不可用';document.querySelector('#desktop-status').dataset.state='offline';
+        document.querySelector('#android-paired').hidden=true;const first=document.querySelector('#android-first-pairing');if(first){first.hidden=true;first.querySelector('.qr')?.replaceChildren();}
+        generation++;qr.replaceChildren();renew.disabled=true;restartService.hidden=false;restartService.disabled=!bridge;serviceNote.hidden=false;
+      }
     }finally{polling=false;}
   };
   const timer=setInterval(async()=>{await updateStatus();if(desktopView==='settings'&&!document.hidden&&!disposed)await loadExtraDirectories();},2000);

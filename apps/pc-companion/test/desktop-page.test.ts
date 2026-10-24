@@ -369,6 +369,25 @@ test('desktop status preserves the library when unavailable and recovers without
   assert.match(ui.element('#desktop-status-text').textContent, /运行中/)
 })
 
+test('service loss hides stale paired and QR success and offers a native restart',async()=>{
+  let available=true;const messages:unknown[]=[];
+  const ui=mount(async()=>available?{ok:true,json:async()=>({assets:12,pairedDevices:1,host:'192.168.1.9',port:28080})}:{ok:false},
+    {postMessage:(message:unknown)=>messages.push(message),addEventListener(){}});
+  await ui.poll();assert.equal(ui.element('#android-paired').hidden,false);
+  available=false;await ui.poll();
+  assert.equal(ui.element('#android-paired').hidden,true);
+  assert.equal(ui.element('#android-first-pairing').hidden,true);
+  assert.equal(ui.element('#restart-sync-service').hidden,false);
+  assert.equal(ui.element('#renew').disabled,true);
+  assert.equal(ui.element('#desktop-assets').textContent,'12');
+  ui.element('#restart-sync-service').onclick!();
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'restartSyncService'});
+  available=true;await ui.poll();
+  assert.equal(ui.element('#restart-sync-service').hidden,true);
+  assert.equal(ui.element('#renew').disabled,false);
+  assert.equal(ui.element('#android-paired').hidden,false);
+});
+
 test('settings navigation changes the active view and autostart waits for the native preference', () => {
   const messages: unknown[] = []
   let reply!: (event: unknown) => void

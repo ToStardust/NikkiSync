@@ -6,6 +6,40 @@ namespace NikkiSync.WindowsShell.Tests;
 public sealed class ServiceProcessHostTests
 {
     [Fact]
+    public async Task Exit_after_ready_is_captured_without_restarting_or_losing_the_safe_exit_reason()
+    {
+        var child=new LaterExitChild();var host=new ServiceProcessHost(new FakeProcessFactory(child),new ReadyHealthClient());
+        Assert.Null(host.IsChildRunning);Assert.Null(await host.ReadExitedFailureAsync(CancellationToken.None));
+        await host.StartAsync(@"C:\Release",CancellationToken.None);
+        Assert.True(host.IsChildRunning);Assert.Null(await host.ReadExitedFailureAsync(CancellationToken.None));Assert.False(child.Read);
+        child.HasExited=true;
+        Assert.False(host.IsChildRunning);
+        var failure=await host.ReadExitedFailureAsync(CancellationToken.None);
+        Assert.NotNull(failure);Assert.Equal("FILE_ACCESS",failure.Code);Assert.Equal(7,failure.ExitCode);
+        Assert.DoesNotContain("private-photo-path",failure.Message);Assert.True(child.Read);Assert.False(child.Killed);
+        await host.StopAsync();Assert.Null(await host.ReadExitedFailureAsync(CancellationToken.None));
+    }
+    private sealed class LaterExitChild:IChildProcess
+    {
+        public bool HasExited{get;set;} public int? ExitCode=>HasExited?7:null;public bool Read,Killed;
+        public Task<string> ReadOutputAsync(CancellationToken token){Read=true;return Task.FromResult("EPERM private-photo-path");}
+        public void Kill(){Killed=true;HasExited=true;}public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
+    }
+    [Fact]
+    public async Task Real_child_exit_after_ready_retains_exit_code_and_only_safe_classification()
+    {
+        var executable=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),@"WindowsPowerShell\v1.0\powershell.exe");
+        var child=new ProcessServiceFactory().Start(executable,"-NoProfile -NonInteractive -Command \"Start-Sleep -Milliseconds 700; [Console]::Error.Write('EPERM private-photo-path'); exit 7\"",new Dictionary<string,string>());
+        var host=new ServiceProcessHost(new FakeProcessFactory(child),new ReadyHealthClient());
+        using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try{
+            await host.StartAsync(@"C:\Synthetic",deadline.Token);
+            StartupFailure? failure=null;
+            while(failure is null){await Task.Delay(50,deadline.Token);failure=await host.ReadExitedFailureAsync(deadline.Token);}
+            Assert.Equal(7,failure.ExitCode);Assert.Equal("FILE_ACCESS",failure.Code);Assert.DoesNotContain("private-photo-path",failure.Message);
+        }finally{await host.StopAsync();}
+    }
+    [Fact]
     public async Task StartAsync_launches_background_service_from_runtime_and_stops_it_on_exit()
     {
         var child = new FakeChildProcess();

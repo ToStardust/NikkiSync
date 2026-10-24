@@ -12,6 +12,7 @@ public partial class MainWindow : Window
 {
     private readonly DesktopWindowLifecycle _lifecycle = new();
     private readonly ServiceProcessHost _service;
+    private readonly int _desktopPort;
     private readonly HttpHealthClient _health = HttpHealthClient.CreateLoopback();
     private readonly AutostartService _autostart = new(new RegistryRunEntryStore());
     private readonly TrayService _tray = new();
@@ -39,6 +40,8 @@ public partial class MainWindow : Window
     private int _networkAuthorizationRevision;
     private bool _extraFolderPickerOpen;
     private bool _diagnosticExportBusy;
+    private bool _serviceRestartBusy;
+    private bool _startupInProgress=true;
     private string? _autostartMessage;
     private int? _lastNetworkRepairCode;
     private string? _lastNetworkRepairOperation;
@@ -46,9 +49,15 @@ public partial class MainWindow : Window
 
     public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
     {
+        _desktopPort = desktopPort;
         _service = new(new ProcessServiceFactory(), _health, desktopPort: desktopPort);
         _verificationDirectory = verificationDirectory;
         InitializeComponent();
+        var workArea=SystemParameters.WorkArea;
+        MinHeight=Math.Min(MinHeight,workArea.Height);Height=Math.Min(Height,workArea.Height);
+        MinWidth=Math.Min(MinWidth,workArea.Width);Width=Math.Min(Width,workArea.Width);
+        NativeBuildText.Text=$"电脑端 {DesktopRelease.Version} · 构建 {DesktopRelease.Build}";
+        UpdateNativeRecoveryActions();
         _startupContent = MainSurface.Content;
         _startupTimer.Tick += (_, _) => StartupElapsed.Text = $"已等待 {(int)_startupWatch.Elapsed.TotalSeconds} 秒";
         ControlPage.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 248, 240);
@@ -75,6 +84,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _startupInProgress=true;NativeRecoveryStatus.Text="正在准备同步服务…";UpdateNativeRecoveryActions();
         Loaded -= OnLoaded;
         // Verification and short-lived update/network helpers must never change
         // the real user's startup entry. Helpers do not create this window.
@@ -147,6 +157,8 @@ public partial class MainWindow : Window
                 },
                 active => ControlPage.Visibility = _pageGate.ShouldShowBrowser(active) ? Visibility.Visible : Visibility.Collapsed,
                 () => ControlPage.CoreWebView2.Resume());
+            ControlPage.CoreWebView2.NavigationStarting -= OnNavigationStarting;
+            ControlPage.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
             ControlPage.CoreWebView2.NavigationStarting += OnNavigationStarting;
             ControlPage.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
             StartupText.Text = "4 / 4 · 正在打开电脑相册…";
@@ -201,6 +213,10 @@ public partial class MainWindow : Window
             var updates = new System.Windows.Controls.Button { Content = "检查更新", Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(14, 8, 14, 8) };
             updates.Click += (_, _) => OpenUpdates();
             panel.Children.Add(updates);
+            var exportStartup = new System.Windows.Controls.Button { Name="StartupDiagnosticsExportButton", Content="导出启动诊断包", Margin=new Thickness(0,12,0,0), Padding=new Thickness(14,8,14,8) };
+            var exportStatus = new TextBlock { TextWrapping=TextWrapping.Wrap, Margin=new Thickness(0,8,0,0) };
+            exportStartup.Click += async (_, _) => await ExportConnectionDiagnosticsAsync((busy,message)=>{exportStartup.IsEnabled=!busy;retry.IsEnabled=!busy;if(choose is not null)choose.IsEnabled=!busy;exportStatus.Text=message;});
+            panel.Children.Add(exportStartup);panel.Children.Add(exportStatus);
             if (choose is not null) panel.Children.Add(choose);
             if (log is not null)
             {
@@ -224,10 +240,15 @@ public partial class MainWindow : Window
             }
             _startupCompleted.TrySetResult(false);
         }
+        finally{
+            _serviceRestartBusy=false;_startupInProgress=false;UpdateNativeRecoveryActions();
+            if(NativeRecoveryStatus.Text is "正在准备同步服务…" or "正在重启同步服务…")NativeRecoveryStatus.Text=StartupPanel.Visibility==Visibility.Collapsed?"服务恢复入口始终在此，无需切换页面。":"启动未完成，可导出诊断包反馈。";
+        }
     }
 
     private void RetryStartup()
     {
+        if(_diagnosticExportBusy||_startupInProgress||_startupCancellation.IsCancellationRequested)return;
         MainSurface.Content = _startupContent;
         StartupPanel.Visibility = Visibility.Visible;
         OnLoaded(this, new RoutedEventArgs());
@@ -256,7 +277,8 @@ public partial class MainWindow : Window
         ControlPage.CoreWebView2.NavigationCompleted += Completed;
         try
         {
-            ControlPage.Source = new Uri(_controlOrigin!, "/");
+            // Source assignment can suppress navigation when a restarted service keeps the same URL.
+            ControlPage.CoreWebView2.Navigate(new Uri(_controlOrigin!, "/").AbsoluteUri);
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
         }
         finally { ControlPage.CoreWebView2.NavigationCompleted -= Completed; }
@@ -285,6 +307,7 @@ public partial class MainWindow : Window
         if(type.GetString() is "authorizeNetwork" or "revokeNetwork") _=AuthorizeNetworkAsync(type.GetString()=="revokeNetwork");
         if(type.GetString()=="checkNetworkConflicts")_=RefreshNetworkConflictsAsync();
         if(type.GetString()=="exportConnectionDiagnostics")_=ExportConnectionDiagnosticsAsync();
+        if(type.GetString()=="restartSyncService")_=RestartSyncServiceAsync();
         if(type.GetString() is "repairNetworkConflicts" or "restoreNetworkConflicts")_=RepairNetworkConflictsAsync(type.GetString()=="restoreNetworkConflicts");
         if(type.GetString() is "chooseExtraScanDirectory" or "chooseSpinningMomoDirectory")ChooseExtraScanDirectory(type.GetString()=="chooseSpinningMomoDirectory");
         if (type.GetString() == "openProjectLink" && message.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.String
@@ -315,29 +338,60 @@ public partial class MainWindow : Window
         catch { _autostartMessage = "暂时无法读取自启动设置，请稍后重试。"; }
         ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled, message = _autostartMessage }));
     }
-    private async Task ExportConnectionDiagnosticsAsync()
+    private void UpdateNativeRecoveryActions()
+    {
+        NativeRestartButton.IsEnabled=!_startupInProgress&&!_serviceRestartBusy&&!_diagnosticExportBusy&&!_startupCancellation.IsCancellationRequested;
+        NativeExportButton.IsEnabled=!_diagnosticExportBusy&&!_serviceRestartBusy&&!_startupCancellation.IsCancellationRequested;
+    }
+    private async void OnNativeRestartClick(object sender,RoutedEventArgs e)=>await RestartSyncServiceAsync();
+    private async void OnNativeExportClick(object sender,RoutedEventArgs e)=>await ExportConnectionDiagnosticsAsync();
+    private async Task CaptureStoppedServiceAsync()
+    {
+        var failure=await _service.ReadExitedFailureAsync(_startupCancellation.Token);
+        if(failure is not null)StartupDiagnostics.Write(_verificationDirectory is null?RuntimePayload.UserDirectory:Path.Combine(_verificationDirectory,"localdata","NikkiSync"),"service",failure);
+    }
+    private async Task RestartSyncServiceAsync()
+    {
+        if(_serviceRestartBusy||_diagnosticExportBusy||_startupCancellation.IsCancellationRequested)return;
+        if(_startupInProgress)return;
+        _serviceRestartBusy=true;
+        NativeRecoveryStatus.Text="正在重启同步服务…";UpdateNativeRecoveryActions();
+        try{await CaptureStoppedServiceAsync();_viewPower?.Stop();await _service.StopAsync();RetryStartup();}
+        catch(Exception){
+            _serviceRestartBusy=false;UpdateNativeRecoveryActions();NativeRecoveryStatus.Text="服务重启未完成，请导出诊断包反馈。";
+            if(!_startupCancellation.IsCancellationRequested)try{ControlPage.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="syncServiceRestart",busy=false,message=NativeRecoveryStatus.Text}));}catch(InvalidOperationException){}
+        }
+    }
+    private async Task ExportConnectionDiagnosticsAsync(Action<bool,string>? feedback=null)
     {
         if(_diagnosticExportBusy||_startupCancellation.IsCancellationRequested)return;
         _diagnosticExportBusy=true;
-        void Reply(bool busy,string message){if(!_startupCancellation.IsCancellationRequested)ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="connectionDiagnostics",busy,message}));}
+        UpdateNativeRecoveryActions();
+        void Reply(bool busy,string message){
+            if(_startupCancellation.IsCancellationRequested)return;
+            NativeRecoveryStatus.Text=message;
+            feedback?.Invoke(busy,message);
+            try{ControlPage.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="connectionDiagnostics",busy,message}));}catch(InvalidOperationException){}
+        }
         try
         {
             string destination;
             if(_verificationDirectory is not null)destination=Path.Combine(_verificationDirectory,"ConnectionDiagnostics.zip");
             else
             {
-                var dialog=new Microsoft.Win32.SaveFileDialog{FileName="MomoCamera-连接诊断-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".zip",DefaultExt=".zip",AddExtension=true,Filter="连接诊断压缩包 (*.zip)|*.zip",Title="导出连接诊断包"};
+                var dialog=new Microsoft.Win32.SaveFileDialog{FileName="MomoCamera-诊断-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".zip",DefaultExt=".zip",AddExtension=true,Filter="诊断压缩包 (*.zip)|*.zip",Title="导出诊断包"};
                 if(dialog.ShowDialog(this)!=true){Reply(false,"已取消导出，需要时可再次点击。");return;}
                 destination=dialog.FileName;
             }
             Reply(true,"正在检查电脑连接并整理诊断包，请稍候…");
             var data=_verificationDirectory is null?RuntimePayload.UserDirectory:Path.Combine(_verificationDirectory,"localdata","NikkiSync");
-            await ConnectionDiagnosticsPackage.ExportAsync(destination,data,_controlOrigin?.Port??28950,new(DesktopRelease.Version,DesktopRelease.Build,_lastNetworkRepairCode,_lastNetworkRepairOperation,_lastNetworkRepairState),new ConnectionDiagnosticsCollector(),_startupCancellation.Token);
-            Reply(false,"诊断包已保存。请将压缩包发给开发者，并附手机端的报错截图。");
+            await CaptureStoppedServiceAsync();
+            await ConnectionDiagnosticsPackage.ExportAsync(destination,data,_controlOrigin?.Port??_desktopPort,new(DesktopRelease.Version,DesktopRelease.Build,_lastNetworkRepairCode,_lastNetworkRepairOperation,_lastNetworkRepairState,_service.IsChildRunning),new ConnectionDiagnosticsCollector(),_startupCancellation.Token);
+            Reply(false,"诊断包已保存。请将压缩包发给开发者，并附问题截图。");
         }
         catch(OperationCanceledException){Reply(false,"导出已取消。");}
         catch(Exception error) when(error is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Security.SecurityException){Reply(false,"诊断包未能保存，请换一个可写文件夹重试（DIAG-EXPORT）。");}
-        finally{_diagnosticExportBusy=false;}
+        finally{_diagnosticExportBusy=false;UpdateNativeRecoveryActions();}
     }
     private async Task ChangeHotspotAsync(bool stop)
     {
@@ -661,6 +715,66 @@ public partial class MainWindow : Window
         return removed&&File.Exists(photo);
     }
 
+    public async Task<bool> VerifyStartupFailureDiagnosticsAsync()
+    {
+        if(_verificationDirectory is null||MainSurface.Content is not StackPanel panel)return false;
+        if(!NativeExportButton.IsVisible||!NativeRestartButton.IsVisible)return false;
+        var button=panel.Children.OfType<System.Windows.Controls.Button>().SingleOrDefault(item=>item.Name=="StartupDiagnosticsExportButton");
+        if(button is null)return false;
+        button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        var watch=Stopwatch.StartNew();var file=Path.Combine(_verificationDirectory,"ConnectionDiagnostics.zip");
+        while(watch.Elapsed<TimeSpan.FromSeconds(60)&&_diagnosticExportBusy)await Task.Delay(200);
+        return File.Exists(file)&&button.IsEnabled&&NativeExportButton.IsEnabled;
+    }
+
+
+    public async Task<bool> VerifyServiceLossAsync()
+    {
+        if(_verificationDirectory is null||_runtimeDirectory is null)return false;
+        var expected=Path.GetFullPath(Path.Combine(_runtimeDirectory,"runtime","NikkiSync-PC-service.exe"));
+        if(!expected.StartsWith(Path.GetFullPath(_verificationDirectory)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))return false;
+        if(!NativeRecoveryPanel.IsVisible||!NativeRestartButton.IsVisible||!NativeExportButton.IsVisible||!NativeRestartButton.IsEnabled)return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=settings]').click();");
+        ControlPage.Visibility=Visibility.Collapsed;
+        // Only this isolated verification checkout's backend can match this private runtime path.
+        Process? owned=null;
+        foreach(var process in Process.GetProcessesByName("NikkiSync-PC-service")){
+            try{if(string.Equals(process.MainModule?.FileName,expected,StringComparison.OrdinalIgnoreCase)){if(owned is not null){owned.Dispose();process.Dispose();return false;}owned=process;continue;}}
+            catch(System.ComponentModel.Win32Exception){}
+            process.Dispose();
+        }
+        if(owned is null)return false;
+        using(owned){owned.Kill();await owned.WaitForExitAsync();}
+        if(_service.IsChildRunning!=false||!NativeExportButton.IsVisible||!NativeRestartButton.IsVisible)return false;
+        var oldWidth=Width;var oldHeight=Height;Width=600;Height=600;UpdateLayout();
+        NativeRecoveryStatus.Text="模拟后台失联：网页不可用，底部按钮仍可操作。";
+        await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+        var surface=(FrameworkElement)Content;
+        bool inside(System.Windows.Controls.Button button){var bounds=button.TransformToAncestor(surface).TransformBounds(new Rect(button.RenderSize));return bounds.Left>=0&&bounds.Top>=0&&bounds.Right<=surface.ActualWidth+1&&bounds.Bottom<=surface.ActualHeight+1;}
+        var minWindowControlsVisible=inside(NativeRestartButton)&&inside(NativeExportButton);
+        var image=new System.Windows.Media.Imaging.RenderTargetBitmap((int)surface.ActualWidth,(int)surface.ActualHeight,96,96,System.Windows.Media.PixelFormats.Pbgra32);image.Render(surface);
+        var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
+        using(var file=File.Create(Path.Combine(_verificationDirectory,"native-recovery-offline.png")))encoder.Save(file);
+        Width=oldWidth;Height=oldHeight;UpdateLayout();if(!minWindowControlsVisible)return false;
+        var watch=Stopwatch.StartNew();
+        var oldZip=Path.Combine(_verificationDirectory,"ConnectionDiagnostics.zip");if(File.Exists(oldZip))File.Delete(oldZip);
+        NativeExportButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        while(watch.Elapsed<TimeSpan.FromSeconds(60)&&(_diagnosticExportBusy||!File.Exists(oldZip)))await Task.Delay(100);
+        if(!File.Exists(oldZip)||_diagnosticExportBusy)return false;
+        var log=Path.Combine(_verificationDirectory,"localdata","NikkiSync","startup-diagnostics.log");
+        if(!File.Exists(log))return false;
+        using var error=JsonDocument.Parse(await File.ReadAllTextAsync(log));
+        if(!error.RootElement.TryGetProperty("exitCode",out var exit)||exit.ValueKind!=JsonValueKind.Number)return false;
+        NativeRestartButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        watch.Restart();while(watch.Elapsed<TimeSpan.FromSeconds(45)){
+            await Task.Delay(200);
+            if(!_serviceRestartBusy&&StartupPanel.Visibility==Visibility.Collapsed&&await _health.IsReadyAsync(new Uri(_controlOrigin!,"/api/status"),CancellationToken.None)){
+                File.WriteAllText(Path.Combine(_verificationDirectory,"service-loss-verification.json"),JsonSerializer.Serialize(new{offlineStateVerified=true,nativeControlsVisible=true,nativeExportWhileWebViewHidden=true,minWindowControlsVisible,nativeRestartUsed=true,postReadyExitLogged=true,restartedWithoutReset=true,exitCode=exit.GetInt32()}));
+                return true;
+            }
+        }
+        return false;
+    }
     public async Task<bool> VerifyConnectionDiagnosticsAsync()
     {
         if(_verificationDirectory is null)return false;
@@ -673,7 +787,7 @@ public partial class MainWindow : Window
         using var zip=System.IO.Compression.ZipFile.OpenRead(path);
         var names=zip.Entries.Select(entry=>entry.FullName).ToArray();
         var hasReport=names.Contains("ConnectionReport.txt");var hasSummary=names.Contains("DiagnosticSummary.json");
-        var allowed=names.All(name=>name is "ConnectionReport.txt" or "DiagnosticSummary.json" or "反馈说明.txt"||new[]{"startup-timings.json","startup-service-timings.json","startup-error.log","startup-diagnostics.log","game-discovery.log"}.Any(log=>name=="logs/"+log));
+        var allowed=names.All(name=>name is "ConnectionReport.txt" or "DiagnosticSummary.json" or "反馈说明.txt"||new[]{"startup-timings.json","startup-service-timings.json","startup-error.log","startup-diagnostics.log","game-discovery.log","scan-status.json"}.Any(log=>name=="logs/"+log));
         File.WriteAllText(Path.Combine(_verificationDirectory,"connection-diagnostics-verification.json"),JsonSerializer.Serialize(new{hasReport,hasSummary,allowlistedEntries=allowed,actualNativeExport=true,privateFixture=true}));
         using(var image=File.Create(Path.Combine(_verificationDirectory,"connection-diagnostics-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
         await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#close').click();");

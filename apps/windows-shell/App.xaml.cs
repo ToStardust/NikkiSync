@@ -56,15 +56,17 @@ public partial class App : System.Windows.Application
             MainWindow = verificationWindow;
             verificationWindow.Show();
             var ok = await verificationWindow.StartupCompleted;
+            var startupFailureDiagnosticExportVerified = !ok && await verificationWindow.VerifyStartupFailureDiagnosticsAsync();
             if(ok)ok=await verificationWindow.VerifyFirstUseGuideAsync();
             if(ok)ok=await verificationWindow.VerifyExtraScanDirectoriesAsync();
             if(ok) ok=await verificationWindow.VerifyNetworkAuthorizationAsync();
             if(ok) ok=await verificationWindow.VerifyOrganizerAsync();
             if(ok) ok=await verificationWindow.VerifyConnectionDiagnosticsAsync();
             if (ok) ok = await verificationWindow.VerifyAboutAsync();
+            if(ok&&Environment.GetEnvironmentVariable("NIKKISYNC_VERIFY_SERVICE_LOSS")=="1")ok=await verificationWindow.VerifyServiceLossAsync();
             File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
             {
-                ok,
+                ok, startupFailureDiagnosticExportVerified,
                 stages = verificationWindow.StartupTimings,
                 browserVisible = verificationWindow.ControlPage.Visibility == Visibility.Visible,
                 loaderHidden = verificationWindow.StartupPanel.Visibility == Visibility.Collapsed,

@@ -79,6 +79,7 @@ export class ScannerService {
     const uid = relative.find((part) => /^\d{5,}$/.test(part))
     return this.enqueueScan([uid ? path.join(sourceRoot, uid) : sourceRoot,...this.screenRoots()])
   }
+  getExtraDirectoryCount():number{return this.extraDirectories.length}
   getAutomaticRoots():string[]{return [...(this.installation?.photoRoots??[]),...(this.installation?.motionRoots??[]),...(this.installation?.supplementalRoots??[])]}
   private screenRoots():string[]{return this.getScanRoots().filter(root=>/^ScreenShot$/i.test(path.basename(root)))}
   getScanRoots():string[]{

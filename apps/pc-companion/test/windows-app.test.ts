@@ -1,11 +1,59 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import { DesktopStatusService } from '../src/desktop/DesktopStatusService.js'
 import { createDesktopControlServer } from '../src/desktop/DesktopControlServer.js'
 import { remotePanelScript } from '../src/desktop/RemoteBridgePanel.js'
 import { startupFailureRecord } from '../src/desktop/StartupFailure.js'
+import { ScanReconciler } from '../src/scanner/ScanReconciler.js'
+
+test('database startup failures keep SQLite result categories and discard arbitrary error text', () => {
+  for (const [native, number, category] of [
+    ['SQLITE_BUSY',5,'busy'],['SQLITE_LOCKED',6,'locked'],['SQLITE_READONLY',8,'read-only'],
+    ['SQLITE_IOERR',10,'io'],['SQLITE_CORRUPT',11,'corrupt'],['SQLITE_FULL',13,'full'],
+    ['SQLITE_CANTOPEN',14,'cannot-open'],['SQLITE_CONSTRAINT_UNIQUE',2067,'constraint'],['SQLITE_NOTADB',26,'not-database']
+  ] as const) {
+    const error=Object.assign(new Error('private-photo-path token=secret'),{code:native,errno:number})
+    const report=startupFailureRecord(error,'scanner-and-lan')
+    assert.equal(report.code,'DATABASE_ERROR')
+    assert.equal(report.database?.category,category)
+    assert.equal(report.database?.resultCode,number&255)
+    assert.equal(report.database?.extendedCode,number)
+    assert.ok(!JSON.stringify(report).includes('private-photo-path'))
+    assert.ok(!JSON.stringify(report).includes('secret'))
+  }
+  const error=Object.assign(new Error('UNIQUE constraint failed: resources.path_key private-path'),{code:'ERR_SQLITE_ERROR',errcode:2067})
+  assert.equal(startupFailureRecord(error,'scanner-and-lan').database?.constraint,'resource-path-unique')
+  const suspicious=Object.assign(new Error('SQLITE_CONSTRAINT private-secret'),{code:'SQLITE_PRIVATE_SECRET',errno:Infinity})
+  const safe=startupFailureRecord(suspicious,'scanner-and-lan')
+  assert.ok(!JSON.stringify(safe).includes('PRIVATE_SECRET'))
+  assert.equal(safe.database?.category,'constraint')
+  assert.equal(safe.database?.extendedCode,undefined)
+})
+
+test('actual SQLite index failures retain the operation and counters without photo identities', async () => {
+  const db=new DatabaseManager(':memory:')
+  try {
+    db.initialize(readFileSync(path.resolve('packages/database/migrations/0001_initial.sql'),'utf8'))
+    db.connection.exec("CREATE TRIGGER fixture_abort BEFORE INSERT ON resources BEGIN SELECT RAISE(ABORT,'private-index-fixture'); END;")
+    const reconciler=new ScanReconciler(new AssetRepository(db))
+    let failure:unknown
+    try {
+      await reconciler.reconcile([{absolutePath:path.resolve('synthetic-private/10001/NikkiPhotos_HighQuality/one.jpeg'),pathKey:'synthetic-private/one.jpeg',uid:'10001',kind:'high_quality',fileName:'one.jpeg',normalizedStem:'one',sizeBytes:10,mtimeMs:Date.now()-10000,sha256:'a'.repeat(64),mimeType:'image/jpeg',fileExt:'.jpeg'}],[])
+    } catch(error) {failure=error}
+    assert.ok(failure)
+    const report=startupFailureRecord(failure,'scanner-and-lan')
+    assert.equal(report.code,'DATABASE_ERROR')
+    assert.equal(report.database?.category,'constraint')
+    assert.deepEqual(report.index,{operation:'write-asset',processedAssets:0,observedResources:1})
+    assert.ok(!JSON.stringify(report).includes('private'))
+    assert.ok(!JSON.stringify(report).includes('one.jpeg'))
+    assert.equal(db.connection.prepare('SELECT COUNT(*) AS count FROM assets').get()?.count,0,'failed transaction rolls back; no repair/reset is performed')
+  } finally {db.close()}
+})
 
 test('startup report identifies common failures without logging source, paths or secrets', () => {
   const privateText = ' C:\\Users\\PrivateUser\\photo.jpg token=private-token https://private.example uid=123456789'

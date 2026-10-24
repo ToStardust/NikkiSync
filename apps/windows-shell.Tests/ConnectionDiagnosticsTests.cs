@@ -8,6 +8,13 @@ namespace NikkiSync.WindowsShell.Tests;
 
 public sealed class ConnectionDiagnosticsTests:IDisposable
 {
+    [Fact] public void ScanStatusKeepsZeroCountsAndDropsPathsAndErrorText()
+    {
+        var input=Encoding.UTF8.GetBytes("{\"timestamp\":\"2026-10-24T06:50:30Z\",\"status\":\"running\",\"installationFound\":true,\"scanRootCount\":0,\"automaticRootCount\":0,\"extraRootCount\":0,\"roots\":[\"private-photo-path\"],\"lastScan\":{\"filesObserved\":0,\"resourcesAccepted\":0,\"resourcesIgnored\":0,\"errorCount\":1,\"errors\":[\"private-token\"]}}");
+        var output=Encoding.UTF8.GetString(ConnectionDiagnosticsPackage.SanitizeLog("scan-status.json",input));
+        Assert.Contains("scanRootCount",output);Assert.Contains("errorCount",output);Assert.DoesNotContain("private-",output);
+        using var parsed=JsonDocument.Parse(output);Assert.Equal(0,parsed.RootElement.GetProperty("scanRootCount").GetInt32());
+    }
     private readonly string _root=Path.Combine(Path.GetTempPath(),"MomoDiagTests-"+Guid.NewGuid().ToString("N"));
     private sealed class Collector(string status="ok"):IConnectionDiagnosticCollector
     {
@@ -19,6 +26,20 @@ public sealed class ConnectionDiagnosticsTests:IDisposable
     public ConnectionDiagnosticsTests()=>Directory.CreateDirectory(_root);
     public void Dispose(){var full=Path.GetFullPath(_root);Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()),full);Assert.StartsWith("MomoDiagTests-",Path.GetFileName(full));Directory.Delete(full,true);}
     private string FileAt(string name)=>Path.Combine(_root,name);
+    [Fact] public void DatabaseDiagnosticsKeepOnlyKnownCategoriesAndSafeCounters()
+    {
+        var input=Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{
+            code="DATABASE_ERROR",database=new{category="constraint",resultCode=19,extendedCode=2067,constraint="resource-path-unique",message="private-token",path="private-path"},
+            index=new{operation="write-asset",processedAssets=12,observedResources=17636,assetId="private-id"}}));
+        var safe=ConnectionDiagnosticsPackage.SanitizeLog("startup-error.log",input);
+        using var json=JsonDocument.Parse(safe);
+        Assert.Equal("constraint",json.RootElement.GetProperty("database").GetProperty("category").GetString());
+        Assert.Equal(2067,json.RootElement.GetProperty("database").GetProperty("extendedCode").GetInt32());
+        Assert.Equal(12,json.RootElement.GetProperty("index").GetProperty("processedAssets").GetInt32());
+        Assert.DoesNotContain("private-",Encoding.UTF8.GetString(safe));
+        var malicious=ConnectionDiagnosticsPackage.SanitizeLog("startup-error.log",Encoding.UTF8.GetBytes("{\"database\":{\"category\":\"private-secret\",\"extendedCode\":-99},\"index\":{\"operation\":\"private-file\"}}"));
+        var text=Encoding.UTF8.GetString(malicious);Assert.DoesNotContain("private-",text);Assert.DoesNotContain("-99",text);
+    }
     [Fact] public async Task ExportIncludesUsefulStagesButNeverRawLogsSecretsOrUnrelatedFiles()
     {
         const string secret="PRIVATE_DIAGNOSTIC_FIXTURE_SECRET_8492";

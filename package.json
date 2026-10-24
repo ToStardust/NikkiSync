@@ -12,7 +12,7 @@
     "tools/*"
   ],
   "scripts": {
-    "test:decoded-metadata": "node --test --test-isolation=none packages/core/dist/test/decoded-metadata.test.js apps/pc-companion/dist/test/cached-decoded-metadata.test.js apps/pc-companion/dist/test/scanner-progress.test.js tools/releases/source-privacy.test.mjs",
+    "test:decoded-metadata": "node --test --test-isolation=none packages/core/dist/test/decoded-metadata.test.js apps/pc-companion/dist/test/cached-decoded-metadata.test.js apps/pc-companion/dist/test/scanner-progress.test.js apps/pc-companion/dist/test/scanner-diagnostics.test.js tools/releases/source-privacy.test.mjs",
     "test:wechat-resume": "node --test --test-isolation=none tools/wechat-gallery/resume.test.mjs",
     "test:wechat-share-card": "node --test --test-isolation=none tools/wechat-gallery/share-card.test.mjs",
     "test:performance": "npm run build && node --test --test-isolation=none apps/pc-companion/dist/test/runtime-memory.test.js apps/pc-companion/dist/test/scanner.test.js apps/pc-companion/dist/test/local-sync-server.test.js apps/pc-companion/dist/test/metadata-resolver.test.js apps/pc-companion/dist/test/desktop-page.test.js apps/pc-companion/dist/test/windows-app.test.js tools/branding.test.mjs tools/windows-performance/sqlite-cache.test.mjs && bun test tools/windows-performance/sqlite-cache.test.mjs",

@@ -41,6 +41,7 @@ export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: stri
     <h2 id="android-title">Android App</h2><p class="channel-description">使用手机 App，浏览照片、查看穿搭与参数。</p>
     ${qrSvg ? `<div id="android-first-pairing" class="first-pairing"><div class="qr">${qrSvg}</div><p>首次配对 · 用 大喵相机助手 App 扫码</p></div>` : ''}
     <div id="android-paired" class="paired-note" ${status.pairedDevices === 0 ? 'hidden' : ''}>${icon('check')}<div><strong>设备已配对</strong><span>在同一 Wi-Fi 下打开 App 即可浏览</span></div></div>
+    <button id="restart-sync-service" class="primary channel-action" hidden>重启同步服务</button><p id="sync-service-note" class="channel-note" hidden role="status">本机同步服务暂不可用。已配对记录仍保留，请重启服务后再扫描照片。</p>
     <button id="renew" class="secondary channel-action" aria-haspopup="dialog">生成新二维码 ${icon('arrow')}</button><p class="channel-note">添加新设备 · 配对码 5 分钟内有效</p><button id="open-organizer" class="secondary channel-action organizer-indicator" disabled>暂无待删除照片</button>
     <button id="export-connection-diagnostics" class="secondary channel-action" disabled>连接失败？导出诊断包 ${icon('arrow')}</button><p class="channel-note" data-diagnostics-status role="status">自动整理连接检查和排障日志，保存后发给开发者。</p>
   </section>`

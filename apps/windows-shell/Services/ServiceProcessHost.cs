@@ -88,6 +88,15 @@ public sealed class ServiceProcessHost(
         }
     }
 
+    public bool? IsChildRunning => _child is null?null:!_child.HasExited;
+    public async Task<StartupFailure?> ReadExitedFailureAsync(CancellationToken cancellationToken)
+    {
+        var child=_child;
+        if(child is null||!child.HasExited)return null;
+        var exitCode=child.ExitCode;
+        return StartupFailure.FromServiceExit(exitCode,await child.ReadOutputAsync(cancellationToken));
+    }
+
     public async Task StopAsync()
     {
         var child = Interlocked.Exchange(ref _child, null);

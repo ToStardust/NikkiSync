@@ -2,7 +2,7 @@ import type { AssetState } from '@nikkisync/core'
 import {toPathKey} from '@nikkisync/core'
 import { ChangeJournalRepository } from './change-journal-repository.js'
 import type { DatabaseManager } from './database-manager.js'
-import type { AssetReconcileInput, AssetReconcileResult, CreateAssetInput } from './models.js'
+import type { AssetReconcileInput, AssetReconcileResult, AssetReconcileScanContext, CreateAssetInput } from './models.js'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -58,7 +58,7 @@ export class AssetRepository {
   }
 
   /** Idempotently reconcile an asset and all currently observed source resources. */
-  reconcile(input: AssetReconcileInput): AssetReconcileResult {
+  reconcile(input: AssetReconcileInput, scan?: AssetReconcileScanContext): AssetReconcileResult {
     return this.database.transaction(() => {
       const now = input.createdAt ?? new Date().toISOString()
       const existing = this.getById(input.assetId)
@@ -93,6 +93,29 @@ export class AssetRepository {
       }) || existingResources.some((row) => !expectedIds.has(String(row.resource_id)) && String(row.stable_state) !== 'missing')
 
       if (existing && !assetChanged && !resourcesChanged) return { kind: 'unchanged' }
+
+      // Old fuzzy LIVE matching could commit a video to an orphan cover before
+      // failing on its real pair. Release only that obsolete, same-byte motion
+      // association within a completed scan, in this target asset's transaction.
+      const supersededChanges: Array<{ assetId: string; revision: number }> = []
+      if (scan && input.assetType === 'motion_photo') for (const resource of input.resources) {
+        if (resource.role !== 'source_motion' || resourceById.has(resource.resourceId)) continue
+        if (toPathKey(resource.sourcePath) !== resource.pathKey || !scan.completedRoots.some(root => resource.pathKey.startsWith(toPathKey(root) + '/'))) continue
+        const old = this.database.connection.prepare(`SELECT r.resource_id,r.asset_id,r.role,r.sha256,r.size_bytes,r.source_path,a.asset_type,a.uid,a.asset_state
+          FROM resources r JOIN assets a ON a.asset_id=r.asset_id WHERE r.path_key=? AND r.asset_id<>?`).get(resource.pathKey,input.assetId)
+        if (!old || old.asset_type !== 'motion_photo' || old.role !== 'source_motion' || scan.activeAssetIds.has(String(old.asset_id))
+          || String(old.uid ?? '') !== String(input.uid ?? '') || old.sha256 !== resource.sha256 || Number(old.size_bytes) !== resource.sizeBytes
+          || toPathKey(String(old.source_path)) !== resource.pathKey) continue
+        // FK cascade removes candidates referring to the obsolete resource only.
+        // Source files, old asset metadata, pairings and organizer records remain.
+        this.database.connection.prepare('DELETE FROM resources WHERE resource_id=?').run(old.resource_id)
+        if (old.asset_state !== 'deleted') {
+          const revision=this.journal.record('asset.deleted',String(old.asset_id),{reason:'obsolete_motion_association'},now)
+          this.database.connection.prepare("UPDATE assets SET asset_state='deleted',deleted_at=?,revision=?,updated_at=? WHERE asset_id=?").run(now,revision,now,old.asset_id)
+          this.database.connection.prepare("UPDATE resources SET stable_state='missing',updated_at=? WHERE asset_id=?").run(now,old.asset_id)
+          supersededChanges.push({assetId:String(old.asset_id),revision})
+        }
+      }
 
       const event = existing ? 'asset.updated' : 'asset.created'
       const revision = this.journal.record(event, input.assetId, {
@@ -170,7 +193,7 @@ export class AssetRepository {
       this.database.connection.prepare(
         `UPDATE resources SET stable_state = 'missing', updated_at = ? WHERE asset_id = ? AND resource_id NOT IN (${input.resources.length ? input.resources.map(() => '?').join(',') : "''"})`
       ).run(now, input.assetId, ...input.resources.map((resource) => resource.resourceId))
-      return { kind: existing ? 'updated' : 'created', revision }
+      return { kind: existing ? 'updated' : 'created', revision, ...(supersededChanges.length ? {supersededChanges} : {}) }
     })
   }
 

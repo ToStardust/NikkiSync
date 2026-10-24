@@ -27,6 +27,7 @@ import { setRemoteGameVersionReleases as setGalleryGameVersionReleases } from '.
 import { selectLanIpv4, listLanIpv4 } from './server/LanAddress.js'
 import type { ScannerProgress } from './scanner/types.js'
 import {ExtraScanDirectories,loadExtraScanDirectories,loadRetiredExtraDirectories} from './scanner/ExtraScanDirectories.js'
+import {scanDiagnosticSummary} from './scanner/ScanDiagnostics.js'
 
 let startupPhase: Parameters<typeof startupFailureRecord>[1] = 'configuration'
 
@@ -127,7 +128,7 @@ async function main(): Promise<void> {
         process.stdout.write(JSON.stringify({ type: 'nikkisync-startup-progress', ...progress }) + '\n')
         writeStartupTimings()
       },
-      onSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() },
+      onSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus();writeScanStatus() },
       ...(cachedGameRoot ? { cachedInstallRoot: cachedGameRoot } : {}),
       onDiscoveryComplete: report => {
         try { writeFileSync(path.join(APP_DATA, 'game-discovery.log'), JSON.stringify({ build: '2026.10.11-auto-discovery', ...report }, null, 2), 'utf8') } catch { /* best-effort diagnostics */ }
@@ -176,8 +177,13 @@ async function main(): Promise<void> {
     } catch { /* best-effort aggregate diagnostics; never include raw data in a fallback */ }
   }
   const versionUpdates = new GameVersionUpdateService(runtime.database, { onCalendarChanged: setGalleryGameVersionReleases })
+  function writeScanStatus():void{
+    try{writeFileSync(path.join(APP_DATA,'scan-status.json'),JSON.stringify(scanDiagnosticSummary(runtime.scanner)), 'utf8')}
+    catch{/* Diagnostics must never interrupt scanning or expose an error path. */}
+  }
   startupPhase = 'scanner-and-lan'
   const started = await runtime.start()
+  writeScanStatus()
   startupScanning = false
   writeMetadataStatus()
   const installRoot = runtime.scanner.getStatus().installation?.installRoot
