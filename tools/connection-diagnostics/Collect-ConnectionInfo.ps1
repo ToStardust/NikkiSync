@@ -1,4 +1,4 @@
-param([switch]$LibraryOnly, [string]$OutputDirectory = $PSScriptRoot)
+param([switch]$LibraryOnly, [string]$OutputDirectory = $PSScriptRoot, [ValidateRange(1,65535)][int]$DesktopPort=28950)
 $ErrorActionPreference = 'Stop'
 
 function Test-Ipv4([string]$Address) {
@@ -30,7 +30,7 @@ function ConvertTo-SafeStatus([string]$Json) {
 function Get-DesktopStatus {
     $response = $null
     try {
-        $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:28950/api/status')
+        $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:' + $DesktopPort + '/api/status')
         $request.Proxy = $null; $request.AllowAutoRedirect = $false
         $request.Timeout = 1500; $request.ReadWriteTimeout = 1500
         $response = $request.GetResponse()
@@ -179,6 +179,86 @@ function Get-SafeRuleScope($Rule) {
     return $result
 }
 
+function Read-RuleField($Rule, [string]$Name) {
+    try {
+        if ($Rule -is [Collections.IDictionary]) {
+            if (-not $Rule.Contains($Name)) { return @{Available=$false} }
+            return @{Available=$true;Value=$Rule[$Name]}
+        }
+        $property=$Rule.PSObject.Properties[$Name]
+        if ($null -eq $property) { return @{Available=$false} }
+        return @{Available=$true;Value=$property.get_Value()}
+    } catch { return @{Available=$false} }
+}
+
+function Get-SafeRepairAssessment($Rule, $Rules) {
+    # Fixed categories only. Names, grouping text, security descriptors and paths
+    # are used in memory for comparisons and must never enter the report.
+    $reasons=New-Object 'Collections.Generic.List[string]'
+    $fields=@{}
+    foreach ($name in @('Name','Protocol','LocalAddresses','RemoteAddresses','RemotePorts','InterfaceTypes','Interfaces','ServiceName','Grouping','EdgeTraversal','LocalAppPackageId','LocalUserAuthorizedList','RemoteUserAuthorizedList','RemoteMachineAuthorizedList','EdgeTraversalOptions')) {
+        $read=Read-RuleField $Rule $name
+        if (-not $read.Available) { if (-not $reasons.Contains('UnreadableRepairFields')) { $reasons.Add('UnreadableRepairFields') } }
+        else { $fields[$name]=$read.Value }
+    }
+    $protocol='Unknown'
+    if ($fields.ContainsKey('Protocol')) {
+        if ([int]$fields.Protocol -eq 6) { $protocol='TCP' }
+        elseif ([int]$fields.Protocol -eq 256) { $protocol='Any';$reasons.Add('ProtocolNotTcp') }
+        else { $protocol='Other';$reasons.Add('ProtocolNotTcp') }
+    }
+    foreach ($item in @(@{Field='LocalAddresses';Reason='RestrictedLocalAddresses'},@{Field='RemoteAddresses';Reason='RestrictedRemoteAddresses'},@{Field='RemotePorts';Reason='RestrictedRemotePorts'})) {
+        if ($fields.ContainsKey($item.Field) -and [string]$fields[$item.Field] -cnotin @('*','Any')) { $reasons.Add($item.Reason) }
+    }
+    if ($fields.ContainsKey('InterfaceTypes') -and [string]$fields.InterfaceTypes -cne 'All') { $reasons.Add('RestrictedInterfaces') }
+    if ($fields.ContainsKey('Interfaces')) {
+        $value=$fields.Interfaces
+        $restricted=if ($value -is [Array]) { $value.Length -gt 0 } else { $null -ne $value -and $value -isnot [DBNull] -and [string]$value -ne '' }
+        if ($restricted -and -not $reasons.Contains('RestrictedInterfaces')) { $reasons.Add('RestrictedInterfaces') }
+    }
+    if ($fields.ContainsKey('ServiceName') -and [string]$fields.ServiceName -ne '') { $reasons.Add('BoundService') }
+    $grouping='Unknown'
+    if ($fields.ContainsKey('Grouping')) { $grouping='None';if ([string]$fields.Grouping -ne '') { $grouping='Present';$reasons.Add('GroupedRule') } }
+    foreach ($name in @('LocalAppPackageId','LocalUserAuthorizedList','RemoteUserAuthorizedList','RemoteMachineAuthorizedList')) {
+        if ($fields.ContainsKey($name) -and [string]$fields[$name] -ne '' -and -not $reasons.Contains('SecurityRestriction')) { $reasons.Add('SecurityRestriction') }
+    }
+    if (($fields.ContainsKey('EdgeTraversal') -and [bool]$fields.EdgeTraversal) -or ($fields.ContainsKey('EdgeTraversalOptions') -and [int]$fields.EdgeTraversalOptions -ne 0)) { $reasons.Add('EdgeTraversal') }
+    if ($fields.ContainsKey('Name')) {
+        $identity=Get-RepairIdentity $Rule
+        if ($null -eq $identity) { if (-not $reasons.Contains('UnreadableRepairFields')) { $reasons.Add('UnreadableRepairFields') } }
+        else {
+            $duplicates=0
+            foreach ($candidate in $Rules) {
+                $read=Read-RuleField $candidate 'Name'
+                if ($read.Available -and [string]$read.Value -ceq [string]$fields.Name -and (Get-RepairIdentity $candidate) -ceq $identity) { $duplicates++ }
+            }
+            if ($duplicates -ne 1) { $reasons.Add('AmbiguousRuleIdentity') }
+        }
+    }
+    $reasons=@($reasons | Select-Object -Unique)
+    $eligibility='Candidate'
+    if ($reasons.Count -gt 0) { $eligibility='Skipped' }
+    return @{Protocol=$protocol;Grouping=$grouping;Eligibility=$eligibility;Reasons=$reasons}
+}
+
+function Get-RepairIdentity($Rule) {
+    # Internal comparison only; mirrors the Windows repair's captured identity.
+    $fields=@{}
+    foreach ($name in @('Name','ApplicationName','Protocol','LocalPorts','RemotePorts','LocalAddresses','RemoteAddresses','InterfaceTypes','ServiceName','Direction','Action','Grouping','Description','EdgeTraversal','Interfaces','LocalAppPackageId','LocalUserAuthorizedList','RemoteUserAuthorizedList','RemoteMachineAuthorizedList','EdgeTraversalOptions')) {
+        $read=Read-RuleField $Rule $name;if (-not $read.Available) { return $null };$fields[$name]=$read.Value
+    }
+    try {
+        $program=[Environment]::ExpandEnvironmentVariables([string]$fields.ApplicationName)
+        if ($program -match '^(?:[A-Za-z]:[\\/]|\\\\)') { $program=[IO.Path]::GetFullPath($program).ToLowerInvariant() }
+        $interfaces=$fields.Interfaces
+        $restricted=if ($interfaces -is [Array]) { $interfaces.Length -gt 0 } else { $null -ne $interfaces -and $interfaces -isnot [DBNull] -and [string]$interfaces -ne '' }
+        foreach ($name in @('LocalAppPackageId','LocalUserAuthorizedList','RemoteUserAuthorizedList','RemoteMachineAuthorizedList')) { $restricted=$restricted -or [string]$fields[$name] -ne '' }
+        $restricted=$restricted -or [int]$fields.EdgeTraversalOptions -ne 0
+        $localPorts='*';$remotePorts='*';if ([int]$fields.Protocol -eq 6) { $localPorts=[string]$fields.LocalPorts;$remotePorts=[string]$fields.RemotePorts }
+        return (ConvertTo-Json -Compress -InputObject @([string]$fields.Name,$program,[int]$fields.Protocol,$localPorts,$remotePorts,[string]$fields.LocalAddresses,[string]$fields.RemoteAddresses,[string]$fields.InterfaceTypes,[bool]$restricted,[string]$fields.ServiceName,[int]$fields.Direction,[int]$fields.Action,[string]$fields.Grouping,[string]$fields.Description,[bool]$fields.EdgeTraversal))
+    } catch { return $null }
+}
+
 function Get-RelatedRuleCounts($Rules, $ProgramPaths, [int]$Port, [int]$Profile) {
     $counts = @{ApplicationAllow=0;ApplicationBlock=0;PortAllow=0;PortBlock=0;OtherBackendAllow=0;ApplicationScopes=@()}
     foreach ($rule in $Rules) {
@@ -195,7 +275,11 @@ function Get-RelatedRuleCounts($Rules, $ProgramPaths, [int]$Port, [int]$Profile)
             if ($null -ne $scope) {
                 if ($rule.Action -eq 1) { $counts[$scope + 'Allow']++ }
                 elseif ($rule.Action -eq 0) { $counts[$scope + 'Block']++ }
-                if ($scope -eq 'Application' -and $counts.ApplicationScopes.Count -lt 16) { $counts.ApplicationScopes += @(Get-SafeRuleScope $rule) }
+                if ($scope -eq 'Application' -and $counts.ApplicationScopes.Count -lt 16) {
+                    $safe=Get-SafeRuleScope $rule
+                    if ($rule.Action -eq 0) { $safe.Repair=Get-SafeRepairAssessment $rule $Rules }
+                    $counts.ApplicationScopes += @($safe)
+                }
             }
         } catch { }
     }
@@ -219,14 +303,16 @@ function Get-FirewallSnapshot([int]$Port) {
             $profiles += @{Kind=$profile.Kind;Enabled=[bool]$policy.FirewallEnabled($profile.Flag);BlockAll=[bool]$policy.BlockAllInboundTraffic($profile.Flag);DefaultInbound=$inbound;RulesAvailable=$rulesAvailable;Counts=(Get-RelatedRuleCounts $rules $paths $Port $profile.Flag)}
         }
         if ($profiles.Count -eq 0) { return @{Available=$false} }
-        return @{Available=$true;OwnerKnown=($paths.Count -gt 0);Profiles=$profiles}
+        $modify='Unknown'
+        try { $state=[int]$policy.LocalPolicyModifyState;$modify=switch($state){0{'OK'}1{'GroupPolicyOverride'}2{'InboundBlocked'}default{'Unknown'}} } catch { }
+        return @{Available=$true;OwnerKnown=($paths.Count -gt 0);Profiles=$profiles;ModifyState=$modify}
     } catch { return @{Available=$false} }
     finally { if ($null -ne $policy) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($policy) } }
 }
 
 function Format-ConnectionReport($Snapshot) {
     $lines = New-Object 'Collections.Generic.List[string]'
-    $lines.Add('MomoCamera connection diagnostic report v3')
+    $lines.Add('MomoCamera connection diagnostic report v5')
     $lines.Add('Time: ' + $Snapshot.Timestamp)
     $lines.Add('OS version: ' + $Snapshot.System)
     $lines.Add('Running assistant versions: ' + (@($Snapshot.Versions) -join ', '))
@@ -258,6 +344,8 @@ function Format-ConnectionReport($Snapshot) {
         $lines.Add('Windows firewall active profiles (read-only):')
         $ownerState = 'unavailable'; if ($Snapshot.Firewall.OwnerKnown) { $ownerState = 'identified locally; path omitted' }
         $lines.Add('  TCP listener executable: ' + $ownerState)
+        $modify='Unknown';if ($Snapshot.Firewall.ModifyState -in @('OK','GroupPolicyOverride','InboundBlocked')) { $modify=$Snapshot.Firewall.ModifyState }
+        $lines.Add('  Local rule modification policy: ' + $modify)
         foreach ($profile in $Snapshot.Firewall.Profiles) {
             $enabled = 'no'; if ($profile.Enabled) { $enabled = 'yes' }
             $blockAll = 'no'; if ($profile.BlockAll) { $blockAll = 'yes' }
@@ -269,12 +357,17 @@ function Format-ConnectionReport($Snapshot) {
                 foreach ($scope in @($counts.ApplicationScopes)) {
                     if ($null -eq $scope) { continue }; $ruleIndex++
                     $lines.Add('    Current application rule #' + $ruleIndex + ': action=' + $scope.Action + '; remote-scope=' + $scope.RemoteScope + '; local-scope=' + $scope.LocalScope + '; interface-scope=' + $scope.InterfaceScope + '; service=' + $scope.ServiceScope + '; remote-port-scope=' + $scope.RemotePortScope)
+                    if ($null -ne $scope.Repair) {
+                        $assessment=$scope.Repair
+                        $lines.Add('      Repair check: protocol=' + $assessment.Protocol + '; grouping=' + $assessment.Grouping + '; eligibility=' + $assessment.Eligibility + '; reasons=' + (@($assessment.Reasons) -join ','))
+                    }
                 }
             } else { $lines.Add('    Related rules: unavailable') }
         }
         $lines.Add('Rule counts are clues, not an effective-access verdict: address/interface/service scope, policy and other security filters may apply.')
         $lines.Add('Other backend paths may belong to older or additional installs; they do not allow the current listener executable.')
         $lines.Add('An explicit matching block can override an allow. A block on another adapter profile is not proof of a conflict on this connection.')
+        $lines.Add('Repair candidates still require the desktop helper to validate its backend, current profile, permissions and encrypted backup. Candidate does not mean a repair was performed.')
     }
     $lines.Add('')
     $lines.Add('A successful local TCP check does not prove the phone can reach the PC.')

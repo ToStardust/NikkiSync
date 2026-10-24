@@ -60,6 +60,7 @@ public partial class App : System.Windows.Application
             if(ok)ok=await verificationWindow.VerifyExtraScanDirectoriesAsync();
             if(ok) ok=await verificationWindow.VerifyNetworkAuthorizationAsync();
             if(ok) ok=await verificationWindow.VerifyOrganizerAsync();
+            if(ok) ok=await verificationWindow.VerifyConnectionDiagnosticsAsync();
             if (ok) ok = await verificationWindow.VerifyAboutAsync();
             File.WriteAllText(Path.Combine(directory, "startup-verification.json"), JsonSerializer.Serialize(new
             {

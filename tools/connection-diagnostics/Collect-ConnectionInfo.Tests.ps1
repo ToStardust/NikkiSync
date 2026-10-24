@@ -67,4 +67,50 @@ $snapshot.Adapters[0].FirewallProfile='secret-network'
 Assert-True ((Format-ConnectionReport $snapshot).Contains('Windows network profile: Unknown')) 'Profile output uses a fixed allowlist'
 $collectorSource=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Collect-ConnectionInfo.ps1') -Raw
 Assert-True ($collectorSource -notmatch '(?i)\b(Set|Remove|Disable|Enable|New)-Net(Firewall|Connection|Adapter|Route)|\.Rules\.(Add|Remove)\s*\(') 'Diagnostics must not mutate network or firewall rules'
-Write-Output 'PASS: address validation, safe status, listener owners, adapter profiles, sanitized rule scopes and read-only privacy'
+function New-RepairFixture {
+    return @{Enabled=$true;Direction=1;Protocol=6;Profiles=4;Action=0;ApplicationName=$program;LocalPorts='*';RemoteAddresses='*';LocalAddresses='*';RemotePorts='*';InterfaceTypes='All';Interfaces=$null;ServiceName='';Name='private-rule-name';Description='';Grouping='';EdgeTraversal=$false;LocalAppPackageId='';LocalUserAuthorizedList='';RemoteUserAuthorizedList='';RemoteMachineAuthorizedList='';EdgeTraversalOptions=0}
+}
+$simple=New-RepairFixture
+$assessment=Get-SafeRepairAssessment $simple @($simple)
+Assert-True ($assessment.Eligibility -eq 'Candidate' -and $assessment.Reasons.Count -eq 0) 'Ordinary TCP block is a candidate, without claiming repair happened'
+$allProtocol=New-RepairFixture;$allProtocol.Protocol=256
+$assessment=Get-SafeRepairAssessment $allProtocol @($allProtocol)
+Assert-True ($assessment.Protocol -eq 'Any' -and $assessment.Reasons -contains 'ProtocolNotTcp') 'Explain why all-protocol rules are not repaired as TCP-only blocks'
+$grouped=New-RepairFixture;$grouped.Grouping='secret-network'
+$assessment=Get-SafeRepairAssessment $grouped @($grouped)
+Assert-True ($assessment.Grouping -eq 'Present' -and $assessment.Reasons -contains 'GroupedRule') 'Explain grouped rule without exposing its group name'
+$secured=New-RepairFixture;$secured.RemoteMachineAuthorizedList='private-security-descriptor'
+$assessment=Get-SafeRepairAssessment $secured @($secured)
+Assert-True ($assessment.Reasons -contains 'SecurityRestriction') 'Surface advanced restrictions hidden from v3'
+$unreadable=New-RepairFixture;$unreadable.Remove('LocalAppPackageId')
+$assessment=Get-SafeRepairAssessment $unreadable @($unreadable)
+Assert-True ($assessment.Reasons -contains 'UnreadableRepairFields') 'Unreadable fields cannot be reported as safe empty settings'
+$duplicate=New-RepairFixture
+$assessment=Get-SafeRepairAssessment $simple @($simple,$duplicate)
+Assert-True ($assessment.Reasons -contains 'AmbiguousRuleIdentity') 'Identical rules remain ambiguous'
+$udp=New-RepairFixture;$udp.Protocol=17
+$otherProgram=New-RepairFixture;$otherProgram.ApplicationName='C:\other\tool.exe'
+$assessment=Get-SafeRepairAssessment $simple @($simple,$udp,$otherProgram)
+Assert-True ($assessment.Eligibility -eq 'Candidate') 'Same friendly name with different protocol/program matches the corrected production filter'
+$otherProfile=New-RepairFixture;$otherProfile.Profiles=2
+Assert-True ((Get-SafeRepairAssessment $simple @($simple,$otherProfile)).Reasons -contains 'AmbiguousRuleIdentity') 'Profiles are mutable and cannot disambiguate otherwise identical rules'
+$differentCase=New-RepairFixture;$differentCase.Name='PRIVATE-RULE-NAME'
+$assessment=Get-SafeRepairAssessment $simple @($simple,$differentCase)
+Assert-True ($assessment.Eligibility -eq 'Candidate') 'Duplicate name comparison matches production ordinal case-sensitive behavior'
+$edge=New-RepairFixture;$edge.EdgeTraversalOptions=1
+Assert-True ((Get-SafeRepairAssessment $edge @($edge)).Reasons -contains 'EdgeTraversal') 'Explain edge traversal restriction'
+$interfaces=New-RepairFixture;$interfaces.Interfaces=@($null)
+Assert-True ((Get-SafeRepairAssessment $interfaces @($interfaces)).Reasons -contains 'RestrictedInterfaces') 'Any nonempty interface array matches the production conservative filter'
+$unreadableObject=[PSCustomObject](New-RepairFixture)
+$unreadableObject.PSObject.Properties.Remove('LocalUserAuthorizedList')
+$unreadableObject | Add-Member ScriptProperty LocalUserAuthorizedList {throw 'private-getter-error'}
+Assert-True ((Get-SafeRepairAssessment $unreadableObject @($unreadableObject)).Reasons -contains 'UnreadableRepairFields') 'Actual throwing getters stay private and uncertain'
+$scopeCounts=Get-RelatedRuleCounts @($allProtocol,$grouped,$secured,$unreadable,$edge) @($program) 28080 4
+Assert-True ($scopeCounts.ApplicationBlock -eq 5 -and $scopeCounts.ApplicationScopes.Count -eq 5) 'Retain all detected conflicts and explain each separately'
+$snapshot.Firewall=@{Available=$true;OwnerKnown=$true;ModifyState='OK';Profiles=@(@{Kind='Public';Enabled=$true;BlockAll=$false;DefaultInbound='Block';RulesAvailable=$true;Counts=$scopeCounts})}
+$report=Format-ConnectionReport $snapshot
+Assert-True ($report.Contains('diagnostic report v5') -and $report.Contains('Local rule modification policy: OK') -and $report.Contains('ProtocolNotTcp') -and $report.Contains('GroupedRule') -and $report.Contains('SecurityRestriction') -and $report.Contains('UnreadableRepairFields')) 'v5 exports actionable fixed skip categories'
+foreach ($private in @('private-rule-name','private-security-descriptor','private-getter-error','Private Person','secret-network',$program)) {Assert-True (-not $report.Contains($private)) 'Repair assessment must not leak rule identities or raw errors'}
+$snapshot.Firewall.ModifyState='private-policy-error'
+Assert-True ((Format-ConnectionReport $snapshot).Contains('Local rule modification policy: Unknown')) 'Policy state output is allowlisted'
+Write-Output 'PASS: address validation, safe status, listener owners, adapter profiles, repair skip categories and read-only privacy'

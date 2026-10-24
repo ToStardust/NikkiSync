@@ -7,12 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.0.21</Version>
-    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026102308</DesktopBuild>
+    <Version>1.0.22</Version>
+    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026102403</DesktopBuild>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="DesktopBuild" Value="$(DesktopBuild)" />
     <EmbeddedResource Include="Assets\update-public-key.pem" LogicalName="MomoCamera.UpdatePublicKey" />
+    <EmbeddedResource Include="..\..\tools\connection-diagnostics\Collect-ConnectionInfo.ps1" LogicalName="MomoCamera.ConnectionDiagnostics" />
     <Resource Include="Assets\app.ico" />
     <Resource Include="..\..\assets\branding\momo-camera.png" Link="Assets\brand.png" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />

@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Executable,[Parameter(Mandatory)][string]$Backend)
+param([Parameter(Mandatory)][string]$Executable,[Parameter(Mandatory)][string]$Backend,[switch]$SameNameFixture)
 $ErrorActionPreference='Stop'
 $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Use an already elevated acceptance token; do not display a test UAC prompt.'}
@@ -21,11 +21,21 @@ $allowName='MomoCamera-LAN-TCP-'+$identity
 $journalPath=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('MomoCamera-NetworkRepair-v1/'+$allowName+'.bin')
 if(Test-Path -LiteralPath $journalPath){throw 'Unexpected journal collision.'}
 $prefix='MomoConflictAcceptance-'+[Guid]::NewGuid().ToString('N')
-$primary=$prefix+'-block';$sentinel=$prefix+'-other-app';$otherPort=$prefix+'-other-port';$complex=$prefix+'-complex'
+$primary=$prefix+'-block';$sentinel=$prefix+'-other-app';$otherPort=$prefix+'-other-port';$complex=$prefix+'-complex';$udpId=$prefix+'-same-name-udp'
 $policy=New-Object -ComObject HNetCfg.FwPolicy2
 $created=[Collections.Generic.List[string]]::new()
-function Find-Rule([string]$Name){try{return $policy.Rules.Item($Name)}catch{if($_.Exception.HResult -eq -2147024894){return $null};throw}}
+function Find-Rule([string]$Name){
+    $matches=@($policy.Rules | Where-Object {$_.Name -ceq $Name -and $_.Protocol -eq 6})
+    if($matches.Count -gt 1){throw 'Ambiguous test TCP rule.'};if($matches.Count -eq 1){return $matches[0]};return $null
+}
 foreach($name in @($primary,$sentinel,$otherPort,$complex,$allowName)){if($null -ne (Find-Rule $name)){throw 'Unexpected rule collision.'}}
+$udpCreated=$false
+function Snapshot-Udp {
+    $r=Get-NetFirewallRule -Name $udpId -ErrorAction Stop
+    $app=$r | Get-NetFirewallApplicationFilter
+    $port=$r | Get-NetFirewallPortFilter
+    return (@{Name=$r.Name;DisplayName=$r.DisplayName;Enabled=[string]$r.Enabled;Profiles=[string]$r.Profile;Action=[string]$r.Action;Direction=[string]$r.Direction;Program=$app.Program;Protocol=$port.Protocol;LocalPort=$port.LocalPort;RemotePort=$port.RemotePort}|ConvertTo-Json -Compress)
+}
 function Add-Fixture([string]$Name,[string]$Program,[string]$Ports='*',[string]$Remote='*'){
     $rule=New-Object -ComObject HNetCfg.FWRule
     $rule.Name=$Name;$rule.ApplicationName=$Program;$rule.Direction=1;$rule.Action=0;$rule.Protocol=6
@@ -48,6 +58,13 @@ try{
     Add-Fixture $primary $canonical
     Add-Fixture $sentinel ($canonical+'.other')
     Add-Fixture $otherPort $canonical '443'
+    if($SameNameFixture){
+        if(Get-NetFirewallRule -Name $udpId -ErrorAction SilentlyContinue){throw 'Unexpected UDP fixture collision.'}
+        New-NetFirewallRule -Name $udpId -DisplayName $primary -Program $canonical -Direction Inbound -Action Block -Protocol UDP -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+        $udpCreated=$true
+        $udpBefore=Snapshot-Udp
+        if(@($policy.Rules | Where-Object {$_.Name -ceq $primary}).Count -ne 2){throw 'Native same-friendly-name fixture was not created.'}
+    }
     $original=Snapshot $primary;$otherBefore=Snapshot $sentinel;$portBefore=Snapshot $otherPort
     $badOperation=Invoke-Helper @('--repair-network',$fixture,'28080',$hostAddress,'arbitrary')
     $badPort=Invoke-Helper @('--repair-network',$fixture,'0',$hostAddress,'repair')
@@ -59,10 +76,12 @@ try{
     $allow=Find-Rule $allowName
     if($null -eq $allow -or $allow.Action -ne 1 -or $allow.RemoteAddresses -ne 'LocalSubnet' -or $allow.ApplicationName -ne $canonical -or $allow.LocalPorts -ne '28080' -or $allow.Profiles -ne 6){throw 'Narrow Allow rule did not match.'}
     if((Snapshot $sentinel) -ne $otherBefore -or (Snapshot $otherPort) -ne $portBefore){throw 'Unrelated fixture was changed.'}
+    if($SameNameFixture -and (Snapshot-Udp) -ne $udpBefore){throw 'Same-name UDP rule was changed.'}
     $bytes=[IO.File]::ReadAllBytes($journalPath)
     if([Text.Encoding]::UTF8.GetString($bytes).Contains($canonical)){throw 'Repair backup was not encrypted.'}
     $second=Repair 'repair';if($second -ne 417){throw ('Repeat was not idempotent: '+$second)}
     $restored=Repair 'restore';if($restored -ne 414 -or (Snapshot $primary) -ne $original){throw ('Original not restored exactly: '+$restored)}
+    if($SameNameFixture -and (Snapshot-Udp) -ne $udpBefore){throw 'Undo changed the same-name UDP rule.'}
     $none=Repair 'restore';if($none -ne 416){throw 'Empty recovery was not safe.'}
     # The complicated rule must survive both repair and undo unchanged.
     Add-Fixture $complex $canonical '*' '10.0.0.0/8'
@@ -70,12 +89,19 @@ try{
     $skipped=Repair 'repair';if($skipped -ne 413 -or (Snapshot $complex) -ne $complexBefore){throw 'Complex rule was not skipped.'}
     $undo=Repair 'restore';if($undo -ne 414 -or (Snapshot $primary) -ne $original -or (Snapshot $complex) -ne $complexBefore){throw 'Complex-rule case failed undo.'}
     if((Snapshot $sentinel) -ne $otherBefore -or (Snapshot $otherPort) -ne $portBefore){throw 'Unrelated rules changed after undo.'}
-    $report=@{actualDeliveredHelper=$true;actualLocalProfileVerified=$true;allProfilesSentinelSupported=$true;domainPreserved=$true;exactBackendPortOnly=$true;otherProgramAndPortUntouched=$true;encryptedJournal=$true;idempotent=$true;restoreExact=$true;complexRuleSkipped=$true;invalidArgumentsRejected=$true;alreadyElevatedToken=$true;userUacPromptTested=$false;remotePhoneTestPending=$true;exitCodes=@($badOperation,$badPort,$badHost,$first,$second,$restored,$none,$skipped,$undo)}
+    if($SameNameFixture -and (Snapshot-Udp) -ne $udpBefore){throw 'Same-name UDP rule changed during a later case.'}
+    $report=@{actualDeliveredHelper=$true;actualLocalProfileVerified=$true;allProfilesSentinelSupported=$true;domainPreserved=$true;exactBackendPortOnly=$true;otherProgramAndPortUntouched=$true;sameFriendlyNameTcpUdpVerified=[bool]$SameNameFixture;encryptedJournal=$true;idempotent=$true;restoreExact=$true;complexRuleSkipped=$true;invalidArgumentsRejected=$true;alreadyElevatedToken=$true;userUacPromptTested=$false;remotePhoneTestPending=$true;exitCodes=@($badOperation,$badPort,$badHost,$first,$second,$restored,$none,$skipped,$undo)}
     [IO.File]::WriteAllText((Join-Path $directory 'verification.json'),($report|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
     Write-Output ($report|ConvertTo-Json -Compress)
     Write-Output ('Report: '+[IO.Path]::GetRelativePath($workspace,(Join-Path $directory 'verification.json')))
 }finally{
     # Random targets were checked absent before testing. Never remove any other rule.
+    if($udpCreated){
+        $udp=Get-NetFirewallRule -Name $udpId -ErrorAction Stop
+        if($udp.DisplayName -cne $primary -or ($udp | Get-NetFirewallApplicationFilter).Program -ine $canonical -or ($udp | Get-NetFirewallPortFilter).Protocol -ne 'UDP'){throw 'Unexpected UDP fixture state; no broad cleanup.'}
+        Remove-NetFirewallRule -Name $udpId -ErrorAction Stop
+        if(Get-NetFirewallRule -Name $udpId -ErrorAction SilentlyContinue){throw 'UDP fixture cleanup failed.'}
+    }
     foreach($name in $created){$policy.Rules.Remove($name);if($null -ne (Find-Rule $name)){throw 'Fixture cleanup failed.'}}
     $owned=Find-Rule $allowName
     if($null -ne $owned -and $owned.ApplicationName -eq $canonical -and $owned.Grouping -eq 'MomoCamera LAN Authorization v1'){$policy.Rules.Remove($allowName)}

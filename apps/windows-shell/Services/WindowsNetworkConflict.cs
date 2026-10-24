@@ -49,7 +49,11 @@ public sealed class WindowsConflictRules(object policy):IConflictRules
             foreach(var item in (System.Collections.IEnumerable)collection)
             {
                 bool keep=false;
-                try{if(Text(((dynamic)item).Name)==expected.Name){count++;if(selected is null){selected=item;keep=true;}}}
+                try
+                {
+                    if(Text(((dynamic)item).Name)==expected.Name&&NetworkConflictRepair.SameIdentity(Snapshot((dynamic)item),expected))
+                    {count++;if(selected is null){selected=item;keep=true;}}
+                }
                 finally{if(!keep)WindowsNetworkConflict.Release(item);}
             }
             if(count!=1||selected is null||Snapshot((dynamic)selected)!=expected)throw new IOException("Rule changed; no overwrite.");

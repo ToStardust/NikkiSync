@@ -21,6 +21,11 @@ public interface IConflictJournal
 /// <summary>Only state/profile edits to exact-backend TCP blocks. Never deletes or recreates rules.</summary>
 public static class NetworkConflictRepair
 {
+    // INetFwRule.Name is a friendly name, shared by e.g. a TCP/UDP pair.
+    // Profile and enabled are our only mutable fields. All other captured fields
+    // must identify one rule uniquely, including throughout repair and restore.
+    public static bool SameIdentity(ConflictRule left,ConflictRule right)=>
+        left with{Profiles=right.Profiles,Enabled=right.Enabled}==right;
     public static bool MatchesPort(string text,int port)
     {
         if(text is "*" or "Any" or "")return true;
@@ -43,11 +48,11 @@ public static class NetworkConflictRepair
     {
         CheckProfile(profile);
         var candidates=rules.Where(rule=>Target(rule,plan)&&rule.Enabled&&(rule.Profiles&profile)!=0).ToArray();
-        return new(candidates.Length,candidates.Count(rule=>Simple(rule)&&rules.Count(other=>other.Name==rule.Name)==1));
+        return new(candidates.Length,candidates.Count(rule=>Simple(rule)&&rules.Count(other=>SameIdentity(other,rule))==1));
     }
     private static void ValidateJournal(IReadOnlyList<ConflictChange> changes,NetworkAuthorizationPlan plan)
     {
-        if(changes.Count>32||changes.Select(change=>change.Before.Name).Distinct(StringComparer.Ordinal).Count()!=changes.Count)throw new InvalidDataException("Invalid repair journal.");
+        if(changes.Count>32||changes.Any(change=>changes.Count(other=>SameIdentity(other.Before,change.Before))!=1))throw new InvalidDataException("Invalid repair journal.");
         foreach(var change in changes)
         {
             var a=change.Before;var b=change.After;
@@ -61,14 +66,14 @@ public static class NetworkConflictRepair
     {
         CheckProfile(profile);
         var before=rules.Read();var previous=journal.Load().ToList();ValidateJournal(previous,plan);
-        var changes=before.Where(rule=>Target(rule,plan)&&rule.Enabled&&(rule.Profiles&profile)!=0&&Simple(rule)&&before.Count(other=>other.Name==rule.Name)==1)
+        var changes=before.Where(rule=>Target(rule,plan)&&rule.Enabled&&(rule.Profiles&profile)!=0&&Simple(rule)&&before.Count(other=>SameIdentity(other,rule))==1)
             .Select(rule=>{var remaining=(rule.Profiles&7)&~profile;return new ConflictChange(rule,remaining==0?rule with{Enabled=false}:rule with{Profiles=remaining});}).ToArray();
         if(changes.Length==0)return 0;
         if(changes.Length>16)throw new InvalidDataException("Too many conflicts.");
         var pending=previous.ToList();
         foreach(var change in changes)
         {
-            var index=pending.FindIndex(item=>item.Before.Name==change.Before.Name);
+            var index=pending.FindIndex(item=>SameIdentity(item.Before,change.Before));
             if(index<0)pending.Add(change);
             else if(pending[index].After==change.Before)pending[index]=pending[index] with{After=change.After};
             else throw new InvalidDataException("Rule changed since previous repair.");
@@ -84,9 +89,9 @@ public static class NetworkConflictRepair
         {
             // Also consider a setter that took effect before reporting an error.
             foreach(var change in changes.Reverse())
-                try{if(rules.Read().Count(rule=>rule.Name==change.After.Name)==1&&rules.Read().Contains(change.After))rules.Change(change.After,change.Before.Enabled,change.Before.Profiles);}catch{}
+                try{if(rules.Read().Count(rule=>SameIdentity(rule,change.After))==1&&rules.Read().Contains(change.After))rules.Change(change.After,change.Before.Enabled,change.Before.Profiles);}catch{}
             var unresolved=pending.Where(change=>!rules.Read().Contains(change.Before)).ToList();
-            foreach(var old in previous){unresolved.RemoveAll(change=>change.Before.Name==old.Before.Name);unresolved.Add(old);}
+            foreach(var old in previous){unresolved.RemoveAll(change=>SameIdentity(change.Before,old.Before));unresolved.Add(old);}
             journal.Save(unresolved);throw;
         }
     }
@@ -95,7 +100,7 @@ public static class NetworkConflictRepair
         var saved=journal.Load();ValidateJournal(saved,plan);var pending=saved.ToList();var restored=0;
         foreach(var change in saved)
         {
-            var current=rules.Read().Where(rule=>rule.Name==change.Before.Name).ToArray();
+            var current=rules.Read().Where(rule=>SameIdentity(rule,change.Before)).ToArray();
             if(current.Length!=1)continue;
             if(current[0]==change.Before){pending.Remove(change);journal.Save(pending);continue;}
             if(current[0]!=change.After)continue; // An administrator's later edit wins.

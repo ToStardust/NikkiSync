@@ -106,11 +106,30 @@ public sealed class AutostartService(IRunEntryStore store)
 {
     public bool IsEnabled() => !string.IsNullOrWhiteSpace(store.Value);
 
+    public bool IsEnabledFor(string executablePath) =>
+        string.Equals(store.Value, Command(executablePath), StringComparison.OrdinalIgnoreCase);
+
+    public void RefreshEnabledPath(string executablePath)
+    {
+        // An existing Run value is the user's opt-in. A new portable release may
+        // have a different filename/location; never opt in when the value is absent.
+        if (!IsEnabled()) return;
+        var command = Command(executablePath);
+        if (!string.Equals(store.Value, command, StringComparison.OrdinalIgnoreCase)) store.Value = command;
+    }
+
     public void SetEnabled(bool enabled, string executablePath)
     {
         if (!enabled) { store.Value = null; return; }
-        if (string.IsNullOrWhiteSpace(executablePath)) throw new ArgumentException("Executable path is required.", nameof(executablePath));
-        store.Value = $"\"{executablePath}\"";
+        store.Value = Command(executablePath);
+    }
+
+    private static string Command(string executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath) || !Path.IsPathFullyQualified(executablePath)
+            || executablePath.IndexOfAny(['"', '\r', '\n']) >= 0)
+            throw new ArgumentException("An absolute executable path is required.", nameof(executablePath));
+        return $"\"{executablePath}\"";
     }
 }
 

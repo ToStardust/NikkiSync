@@ -39,6 +39,9 @@ ${organizerScript}
   document.querySelector('#open-scan-settings').onclick=()=>{showDesktopView('settings');showDirectoryGuide(true);document.querySelector('#extra-scan-section').scrollIntoView?.({block:'start'});document.querySelector('#scan-directory-help').focus();};
 
   const bridge=window.chrome?.webview,autostart=document.querySelector('#autostart');
+  const diagnosticButtons=[document.querySelector('#export-connection-diagnostics'),document.querySelector('#pairing-export-diagnostics')];
+  let diagnosticBusy=false;
+  for(const button of diagnosticButtons){button.disabled=!bridge;button.onclick=()=>{if(!bridge||diagnosticBusy)return;diagnosticBusy=true;for(const item of diagnosticButtons)item.disabled=true;bridge.postMessage({type:'exportConnectionDiagnostics'});};}
   const authorize=document.querySelector('#authorize-network'),revoke=document.querySelector('#revoke-network');
   let networkAuthorized=false,networkCanRevoke=false;
   authorize.disabled=!bridge;revoke.disabled=true;
@@ -67,6 +70,10 @@ ${organizerScript}
   autostart.disabled=true;
   bridge?.addEventListener('message',event=>{
     void handleExtraDirectoryMessage(event);
+    if(event.data?.type==='connectionDiagnostics'){
+      diagnosticBusy=!!event.data.busy;for(const button of diagnosticButtons)button.disabled=!bridge||diagnosticBusy;
+      if(typeof event.data.message==='string')for(const note of document.querySelectorAll('[data-diagnostics-status]'))note.textContent=event.data.message;
+    }
     if(event.data?.type==='networkConflicts'){
       conflictBusy=!!event.data.busy;if(typeof event.data.canRepair==='boolean')conflictAllowed=event.data.canRepair;
       conflictButtons();
@@ -84,7 +91,7 @@ ${organizerScript}
         document.querySelector('#network-home-note').textContent=networkAuthorized?'本助手已添加本地网络权限。电脑和手机仍需连接同一 Wi-Fi，或让电脑连接这台手机的热点；若仍连接超时，可到同步设置查看授权状态。':'电脑和手机连接同一 Wi-Fi，或让电脑连接这台手机的热点。扫码后连接超时，可到同步设置点击“允许手机连接”，在 Windows 弹窗中选择“是”；已能连接时无需操作。';
       }
     }
-    if(event.data?.type==='autostart'){autostart.checked=!!event.data.enabled;autostart.disabled=false;}
+    if(event.data?.type==='autostart'){autostart.checked=!!event.data.enabled;autostart.disabled=false;document.querySelector('#autostart-note').textContent=event.data.message||'登录 Windows 后，自动准备照片同步。更新或移动程序后，首次打开会自动同步自启动路径。';}
     if(event.data?.type==='packageInfo'){
       installer.hidden=installerNote.hidden=!event.data.hasAndroidInstaller;
       installerUnavailable.hidden=!!event.data.hasAndroidInstaller;

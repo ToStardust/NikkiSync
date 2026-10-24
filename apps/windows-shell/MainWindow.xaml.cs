@@ -38,6 +38,11 @@ public partial class MainWindow : Window
     private bool _networkRuleAuthorized,_networkRuleOwned;
     private int _networkAuthorizationRevision;
     private bool _extraFolderPickerOpen;
+    private bool _diagnosticExportBusy;
+    private string? _autostartMessage;
+    private int? _lastNetworkRepairCode;
+    private string? _lastNetworkRepairOperation;
+    private string? _lastNetworkRepairState;
 
     public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
     {
@@ -71,6 +76,13 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoaded;
+        // Verification and short-lived update/network helpers must never change
+        // the real user's startup entry. Helpers do not create this window.
+        if (_verificationDirectory is null)
+        {
+            try { _autostart.RefreshEnabledPath(Environment.ProcessPath ?? throw new InvalidOperationException()); }
+            catch { _autostartMessage = "自启动路径未能更新，请在启动偏好中重新开启；若仍失败，请检查 Windows 启动应用设置。"; }
+        }
         _startupWatch.Restart();
         StartupTimings.Clear();
         _runtimeStep = PayloadPreparationStep.ReadManifest;
@@ -272,6 +284,7 @@ public partial class MainWindow : Window
         if (type.GetString() == "checkUpdates") OpenUpdates();
         if(type.GetString() is "authorizeNetwork" or "revokeNetwork") _=AuthorizeNetworkAsync(type.GetString()=="revokeNetwork");
         if(type.GetString()=="checkNetworkConflicts")_=RefreshNetworkConflictsAsync();
+        if(type.GetString()=="exportConnectionDiagnostics")_=ExportConnectionDiagnosticsAsync();
         if(type.GetString() is "repairNetworkConflicts" or "restoreNetworkConflicts")_=RepairNetworkConflictsAsync(type.GetString()=="restoreNetworkConflicts");
         if(type.GetString() is "chooseExtraScanDirectory" or "chooseSpinningMomoDirectory")ChooseExtraScanDirectory(type.GetString()=="chooseSpinningMomoDirectory");
         if (type.GetString() == "openProjectLink" && message.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.String
@@ -284,12 +297,48 @@ public partial class MainWindow : Window
         if (type.GetString() == "saveAndroidInstaller") SaveAndroidInstaller();
         if (type.GetString() == "setAutostart" && message.RootElement.TryGetProperty("enabled", out var enabled) && (enabled.ValueKind is JsonValueKind.True or JsonValueKind.False))
         {
-            _autostart.SetEnabled(enabled.GetBoolean(), Environment.ProcessPath ?? throw new InvalidOperationException("Current executable path is unavailable."));
+            try
+            {
+                if (_verificationDirectory is null)
+                    _autostart.SetEnabled(enabled.GetBoolean(), Environment.ProcessPath ?? throw new InvalidOperationException());
+                _autostartMessage = null;
+            }
+            catch { _autostartMessage = "未能保存自启动设置，请检查 Windows 启动应用设置后重试。"; }
             ReplyAutostart();
         }
     }
 
-    private void ReplyAutostart() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled = _autostart.IsEnabled() }));
+    private void ReplyAutostart()
+    {
+        var enabled = false;
+        try { enabled = _verificationDirectory is null && Environment.ProcessPath is { } path && _autostart.IsEnabledFor(path); }
+        catch { _autostartMessage = "暂时无法读取自启动设置，请稍后重试。"; }
+        ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "autostart", enabled, message = _autostartMessage }));
+    }
+    private async Task ExportConnectionDiagnosticsAsync()
+    {
+        if(_diagnosticExportBusy||_startupCancellation.IsCancellationRequested)return;
+        _diagnosticExportBusy=true;
+        void Reply(bool busy,string message){if(!_startupCancellation.IsCancellationRequested)ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="connectionDiagnostics",busy,message}));}
+        try
+        {
+            string destination;
+            if(_verificationDirectory is not null)destination=Path.Combine(_verificationDirectory,"ConnectionDiagnostics.zip");
+            else
+            {
+                var dialog=new Microsoft.Win32.SaveFileDialog{FileName="MomoCamera-连接诊断-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".zip",DefaultExt=".zip",AddExtension=true,Filter="连接诊断压缩包 (*.zip)|*.zip",Title="导出连接诊断包"};
+                if(dialog.ShowDialog(this)!=true){Reply(false,"已取消导出，需要时可再次点击。");return;}
+                destination=dialog.FileName;
+            }
+            Reply(true,"正在检查电脑连接并整理诊断包，请稍候…");
+            var data=_verificationDirectory is null?RuntimePayload.UserDirectory:Path.Combine(_verificationDirectory,"localdata","NikkiSync");
+            await ConnectionDiagnosticsPackage.ExportAsync(destination,data,_controlOrigin?.Port??28950,new(DesktopRelease.Version,DesktopRelease.Build,_lastNetworkRepairCode,_lastNetworkRepairOperation,_lastNetworkRepairState),new ConnectionDiagnosticsCollector(),_startupCancellation.Token);
+            Reply(false,"诊断包已保存。请将压缩包发给开发者，并附手机端的报错截图。");
+        }
+        catch(OperationCanceledException){Reply(false,"导出已取消。");}
+        catch(Exception error) when(error is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Security.SecurityException){Reply(false,"诊断包未能保存，请换一个可写文件夹重试（DIAG-EXPORT）。");}
+        finally{_diagnosticExportBusy=false;}
+    }
     private async Task ChangeHotspotAsync(bool stop)
     {
         if(_verificationDirectory is not null){ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="temporaryNetwork",busy=false,message="测试验收模式：不会改变网络。"}));return;}
@@ -403,6 +452,7 @@ public partial class MainWindow : Window
         if(_networkAuthorizationBusy)return;
         if(_verificationDirectory is not null){ReplyNetworkConflicts(false,"测试验收模式不修改网络权限。");return;}
         _networkAuthorizationBusy=true;_networkAuthorizationRevision++;
+        _lastNetworkRepairOperation=restore?"restore":"repair";_lastNetworkRepairCode=null;_lastNetworkRepairState="running";
         ReplyNetworkAuthorization(true,"正在处理连接权限，如出现 Windows 提示请选择“是”…");
         ReplyNetworkConflicts(true,restore?"正在恢复本次修复前的规则…":"正在检查并处理当前连接的冲突，如出现 Windows 提示请选择“是”…");
         string feedback;
@@ -410,10 +460,10 @@ public partial class MainWindow : Window
         {
             var target=await GetNetworkConflictTargetAsync();
             using var helper=Process.Start(WindowsNetworkConflict.Elevation(Environment.ProcessPath??throw new InvalidOperationException(),target.Plan,target.Host,restore))??throw new InvalidOperationException();
-            await helper.WaitForExitAsync();feedback=WindowsNetworkConflict.ResultMessage(helper.ExitCode);
+            await helper.WaitForExitAsync();_lastNetworkRepairCode=helper.ExitCode;_lastNetworkRepairState="completed";feedback=WindowsNetworkConflict.ResultMessage(helper.ExitCode);
         }
-        catch(System.ComponentModel.Win32Exception error) when(error.NativeErrorCode==1223){feedback="已取消 Windows 授权，冲突规则未修改。需要时可再次点击。";}
-        catch{feedback="连接权限处理未完成，请重试并反馈 NET-REPAIR-LAUNCH。";}
+        catch(System.ComponentModel.Win32Exception error) when(error.NativeErrorCode==1223){_lastNetworkRepairState="cancelled";_lastNetworkRepairCode=1223;feedback="已取消 Windows 授权，冲突规则未修改。需要时可再次点击。";}
+        catch{_lastNetworkRepairState="launch-failed";feedback="连接权限处理未完成，请重试并反馈 NET-REPAIR-LAUNCH。";}
         finally{_networkAuthorizationBusy=false;}
         if(!_startupCancellation.IsCancellationRequested){await RefreshNetworkAuthorizationAsync();await RefreshNetworkConflictsAsync(feedback);}
     }
@@ -609,6 +659,25 @@ public partial class MainWindow : Window
         var removed=await UntilAsync("!document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')");
         File.WriteAllText(Path.Combine(_verificationDirectory,"extra-scan-verification.json"),JsonSerializer.Serialize(new{previewConfirmed=true,added=true,removed,originalPreserved=File.Exists(photo),privateFixture=true}));
         return removed&&File.Exists(photo);
+    }
+
+    public async Task<bool> VerifyConnectionDiagnosticsAsync()
+    {
+        if(_verificationDirectory is null)return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();document.querySelector('#renew').click();");
+        await Task.Delay(500);
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#pairing-export-diagnostics').click();");
+        var watch=Stopwatch.StartNew();var path=Path.Combine(_verificationDirectory,"ConnectionDiagnostics.zip");
+        while(watch.Elapsed<TimeSpan.FromSeconds(60)&&!File.Exists(path))await Task.Delay(200);
+        if(!File.Exists(path))return false;
+        using var zip=System.IO.Compression.ZipFile.OpenRead(path);
+        var names=zip.Entries.Select(entry=>entry.FullName).ToArray();
+        var hasReport=names.Contains("ConnectionReport.txt");var hasSummary=names.Contains("DiagnosticSummary.json");
+        var allowed=names.All(name=>name is "ConnectionReport.txt" or "DiagnosticSummary.json" or "反馈说明.txt"||new[]{"startup-timings.json","startup-service-timings.json","startup-error.log","startup-diagnostics.log","game-discovery.log"}.Any(log=>name=="logs/"+log));
+        File.WriteAllText(Path.Combine(_verificationDirectory,"connection-diagnostics-verification.json"),JsonSerializer.Serialize(new{hasReport,hasSummary,allowlistedEntries=allowed,actualNativeExport=true,privateFixture=true}));
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"connection-diagnostics-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#close').click();");
+        return hasReport&&hasSummary&&allowed;
     }
 
     public async Task<bool> VerifyOrganizerAsync()

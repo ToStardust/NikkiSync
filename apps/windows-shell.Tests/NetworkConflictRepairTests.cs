@@ -57,6 +57,41 @@ public class NetworkConflictRepairTests
     {
         var rules=new Rules(Block());Assert.Throws<IOException>(()=>NetworkConflictRepair.Repair(rules,new Journal{FailSave=true},Plan,4));Assert.Equal(0,rules.Writes);
     }
+    [Fact] public void SameFriendlyNameTcpUdpAndOtherProgramDoNotMakeTheTargetAmbiguous()
+    {
+        var tcp=Block("shared",7);var udp=tcp with{Protocol=17};var other=tcp with{Program=@"C:\other\tool.exe"};
+        var rules=new Rules(tcp,udp,other);var journal=new Journal();
+        Assert.Equal(1,NetworkConflictRepair.Inspect(rules.Read(),Plan,4).Repairable);
+        Assert.Equal(1,NetworkConflictRepair.Repair(rules,journal,Plan,4));
+        Assert.Equal(tcp with{Profiles=3},rules.Values[0]);Assert.Equal(udp,rules.Values[1]);Assert.Equal(other,rules.Values[2]);
+        Assert.Equal(1,NetworkConflictRepair.Restore(rules,journal,Plan));Assert.Equal(new[]{tcp,udp,other},rules.Values);Assert.Empty(journal.Value);
+    }
+    [Fact] public void SameFriendlyNameDistinctTcpScopesHaveIndependentBackupsAndUndo()
+    {
+        var wildcard=Block("shared",6);var port=wildcard with{LocalPorts="28080"};var otherPort=wildcard with{LocalPorts="443"};
+        var rules=new Rules(wildcard,port,otherPort);var journal=new Journal();
+        Assert.Equal(2,NetworkConflictRepair.Repair(rules,journal,Plan,4));Assert.Equal(2,journal.Value.Count);
+        Assert.Equal(otherPort,rules.Values[2]);
+        Assert.Equal(2,NetworkConflictRepair.Repair(rules,journal,Plan,2));Assert.Equal(2,journal.Value.Count);
+        Assert.Equal(2,NetworkConflictRepair.Restore(rules,journal,Plan));Assert.Equal(new[]{wildcard,port,otherPort},rules.Values);
+    }
+    [Fact] public void SameIdentityWithDifferentProfilesOrEnabledStateStillCannotBeSelectedSafely()
+    {
+        var target=Block("shared",4);
+        foreach(var ambiguous in new[]{target,target with{Profiles=2},target with{Enabled=false}})
+        {
+            var rules=new Rules(target,ambiguous);var journal=new Journal();
+            Assert.Equal(0,NetworkConflictRepair.Inspect(rules.Read(),Plan,4).Repairable);
+            Assert.Equal(0,NetworkConflictRepair.Repair(rules,journal,Plan,4));Assert.Equal(0,rules.Writes);Assert.Empty(journal.Value);
+        }
+    }
+    [Fact] public void SameFriendlyNameRepairFailureRollsBackEachExactRule()
+    {
+        var first=Block("shared",7);var second=first with{LocalPorts="28080"};var udp=first with{Protocol=17};
+        var rules=new Rules(first,second,udp){FailAt=2};var journal=new Journal();
+        Assert.Throws<IOException>(()=>NetworkConflictRepair.Repair(rules,journal,Plan,4));
+        Assert.Equal(new[]{first,second,udp},rules.Values);Assert.Empty(journal.Value);
+    }
     [Fact] public void APartialFailureRollsBackChangesAndDoesNotTouchOthers()
     {
         var first=Block("first");var second=Block("second");var rules=new Rules(first,second){FailAt=2};var journal=new Journal();

@@ -110,7 +110,7 @@ function mount(fetcher: (url: string,options?:{body?:string}) => Promise<unknown
       get hidden() { return documentState.hidden },
       querySelector: element,
       createElement:()=>new Element(),
-      querySelectorAll: (selector: string) => selector === '[data-view]' ? navigation : selector === '[data-project]' ? projects : pages,
+      querySelectorAll: (selector: string) => selector === '[data-view]' ? navigation : selector === '[data-project]' ? projects : selector === '[data-diagnostics-status]' ? [element('diagnostic-home-note'),element('diagnostic-modal-note')] : pages,
       addEventListener: (name: string, handler: (event: unknown) => void) => events.set(name, handler),
       get activeElement() { return active }
     },
@@ -256,6 +256,22 @@ test('network authorization is a named native action with no web-supplied progra
   assert.equal(ui.element('#revoke-network').disabled,true)
   const browser=mount(async()=>({}))
   assert.equal(browser.element('#authorize-network').disabled,true)
+})
+
+test('QR diagnostic export sends one fixed action and shares progress across both entries',()=>{
+  const messages:unknown[]=[];let reply!:(event:unknown)=>void
+  const ui=mount(async()=>({}),{postMessage:(message:unknown)=>messages.push(message),addEventListener(_:string,handler:typeof reply){reply=handler}})
+  for(const id of ['#export-connection-diagnostics','#pairing-export-diagnostics'])assert.equal(ui.element(id).disabled,false)
+  ui.element('#pairing-export-diagnostics').onclick!()
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'exportConnectionDiagnostics'})
+  const count=messages.length;ui.element('#export-connection-diagnostics').onclick!();assert.equal(messages.length,count)
+  reply({data:{type:'connectionDiagnostics',busy:true,message:'collecting'}})
+  assert.equal(ui.element('#export-connection-diagnostics').disabled,true)
+  assert.equal(ui.element('diagnostic-home-note').textContent,'collecting');assert.equal(ui.element('diagnostic-modal-note').textContent,'collecting')
+  reply({data:{type:'connectionDiagnostics',busy:false,message:'saved'}})
+  assert.equal(ui.element('#pairing-export-diagnostics').disabled,false)
+  assert.equal(ui.element('diagnostic-modal-note').textContent,'saved')
+  assert.equal(mount(async()=>({})).element('#export-connection-diagnostics').disabled,true)
 })
 
 test('conflict inspection, repair and restore send fixed actions and respect native policy/busy state',()=>{

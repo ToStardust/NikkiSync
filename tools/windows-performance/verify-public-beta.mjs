@@ -57,9 +57,15 @@ const port=reserve.address().port;await new Promise(done=>reserve.close(done));
 await run(['--verify-startup',profile,String(port)],{LOCALAPPDATA:join(profile,'localdata'),DOTNET_BUNDLE_EXTRACT_BASE_DIR:join(output,'native-cache'),NIKKISYNC_GAME_ROOT:game,NIKKISYNC_BIND:'127.0.0.1',NIKKISYNC_PORT:'0',NIKKISYNC_MDNS:'0'});
 const startup=JSON.parse(await readFile(join(profile,'startup-verification.json'),'utf8'));
 assert.ok(startup.ok&&startup.browserVisible&&startup.loaderHidden);
+let diagnosticExportVerified;
+if(build>=2026102402){
+  const diagnostics=JSON.parse(await readFile(join(profile,'connection-diagnostics-verification.json'),'utf8'));
+  assert.ok(diagnostics.actualNativeExport&&diagnostics.hasReport&&diagnostics.hasSummary&&diagnostics.allowlistedEntries);
+  diagnosticExportVerified=true;
+}
 assert.equal(await readFile(marker,'utf8'),'keep user data');
 const files=await readdir(bundle,{recursive:true});
 assert.ok(!files.some(n=>/\.(?:jks|key|dpapi|db|sqlite|pfx)$/i.test(n)));
-const report={version:info.version,build:info.build,signedManifest:true,actualSingleExe:true,embeddedApkMatches:true,runtimeDirectory:embedded.runtimeDirectory,apkSha256:apkHash,exeSha256:await hash(exe),isolatedDashboardBoot:true,syntheticLibrary:true,privateUserProfileUntouched:true,startupTimings:startup.stages,files};
+const report={version:info.version,build:info.build,signedManifest:true,actualSingleExe:true,embeddedApkMatches:true,diagnosticExportVerified,runtimeDirectory:embedded.runtimeDirectory,apkSha256:apkHash,exeSha256:await hash(exe),isolatedDashboardBoot:true,syntheticLibrary:true,privateUserProfileUntouched:true,startupTimings:startup.stages,files};
 await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));
 console.log(JSON.stringify({report:relative(root,join(output,'report.json')),...report}));
