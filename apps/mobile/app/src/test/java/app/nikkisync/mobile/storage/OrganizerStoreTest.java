@@ -11,6 +11,33 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class OrganizerStoreTest {
+    @Test public void modernIntentCarriesMediaProofAndFailureReceiptIsSentOnlyUntilAcknowledged()throws Exception{
+        var summary=FavoritePhotoStore.encode(photo).put("mediaFingerprint","a".repeat(64));
+        var modern=FavoritePhotoStore.decode(summary);store.enqueue("proof",List.of(modern));
+        var request=store.outgoing("proof").getJSONObject(0);assertEquals("a".repeat(64),request.getString("mediaFingerprint"));assertTrue(request.getBoolean("batchVerification"));
+        String id=request.getString("id");store.acknowledge("proof",new JSONArray().put(new JSONObject().put("id",id).put("state","changed").put("message","未删除").put("resultAcknowledged",false)));
+        assertTrue(store.outgoing("proof").getJSONObject(0).getBoolean("resultAck"));
+        store.acknowledge("proof",new JSONArray().put(new JSONObject().put("id",id).put("state","changed").put("message","未删除").put("resultAcknowledged",true)));
+        assertEquals(0,store.outgoing("proof").length());assertEquals("changed",store.entries("proof").get(0).state());
+    }
+    @Test public void twentyFiveThousandOfflineSummariesPersistInOrderWithoutTouchingDeletionIntentions()throws Exception{
+        List<AssetSummary> photos=new java.util.ArrayList<>();for(int i=0;i<25050;i++)photos.add(new AssetSummary("large_"+i,"photo","ready",null,null,i,null,null,false,false,null,"preview",null,null));
+        store.enqueue("large",List.of(photos.get(24000)));store.remember("large",photos);store.close();store=new OrganizerStore(context);
+        var restored=store.library("large");assertEquals(25050,restored.size());assertEquals("large_0",restored.get(0).assetId());assertEquals("large_25049",restored.get(25049).assetId());
+        assertEquals(1,store.outgoing("large").length());store.cancel("large",List.of(store.entries("large").get(0).id()));assertTrue(store.outgoing("large").getJSONObject(0).getBoolean("cancel"));
+    }
+    @Test public void oldResultsDoNotReloadThousandsOfSummariesButUnsentReceiptsAndIntentionsRemain()throws Exception{
+        var db=store.getWritableDatabase();String summary=FavoritePhotoStore.encode(photo).toString();
+        db.beginTransaction();try{
+            for(int i=0;i<3000;i++)db.execSQL("INSERT INTO deletions VALUES(?,?,?,?,?,?,?,?)",new Object[]{"old-"+i,"history",photo.assetId(),summary,"recycled","已回收",i,""});
+            db.execSQL("UPDATE deletions SET approval='result:pending' WHERE id='old-0'");db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        store.enqueue("history",List.of(photo));
+        assertEquals(52,store.entries("history").size());assertEquals(2,store.outgoing("history").length());
+        assertEquals(3001,android.database.DatabaseUtils.longForQuery(db,"SELECT COUNT(*) FROM deletions",null));
+        store.acknowledge("history",new JSONArray().put(new JSONObject().put("id","old-0").put("state","recycled").put("resultAcknowledged",true)));
+        assertEquals(51,store.entries("history").size());assertEquals(1,store.outgoing("history").length());
+    }
     Context context;OrganizerStore store;
     final AssetSummary photo=new AssetSummary("asset_example","photo","ready",null,null,3,100,100,false,true,"thumb","original","2.9","inferred");
     @Before public void setup(){context=RuntimeEnvironment.getApplication();context.deleteDatabase("nikkisync-organizer.db");store=new OrganizerStore(context);}

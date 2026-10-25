@@ -17,8 +17,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 30
         targetSdk = 35
-        versionCode = 47
-        versionName = "1.0.23"
+        versionCode = 49
+        versionName = "1.0.25"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
         externalNativeBuild { cmake { targets += "momo_jpeg" } }
         buildConfigField("boolean", "STORE_SUBMISSION", providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") })

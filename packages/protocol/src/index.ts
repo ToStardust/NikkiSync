@@ -64,6 +64,14 @@ export interface AssetSummary {
   hasMetadata: boolean
   thumbnailResourceId?: ResourceId
   previewResourceId?: ResourceId
+  /** Media-byte identities, independent of metadata revisions. Optional for v1 clients. */
+  thumbnailSha256?: string
+  previewSha256?: string
+  /** Larger still for the full-screen viewer; exports continue to use original resources. */
+  fullPreviewResourceId?: ResourceId
+  fullPreviewSha256?: string
+  /** All current source resources, excluding parameter-only revisions; used for offline organizer intent. */
+  mediaFingerprint?: string
   /** Resolved Infinity Nikki game version for version-first gallery grouping. */
   gameVersion?: string
   /** Provenance of gameVersion; unknown never forces a fabricated version. */

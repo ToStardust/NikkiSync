@@ -2,6 +2,25 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mapAssetSummary } from '../src/server/row-mappers.js'
 
+test('image cache identities follow resource bytes, not metadata or asset revisions', () => {
+  const asset = { asset_id: 'photo', asset_type: 'photo', asset_state: 'ready', revision: 1 }
+  const resource = (id: string, role: string, hash: string) => ({ resource_id: id, role,
+    file_name: 'photo.jpg', mime_type: 'image/jpeg', file_ext: '.jpg', size_bytes: 100,
+    sha256: hash, stable_state: 'stable', is_derived: 0 })
+  const rows = [resource('low', 'source_low_quality', 'a'.repeat(64)), resource('high', 'source_high_quality', 'b'.repeat(64))]
+  const first = mapAssetSummary(asset, rows) as unknown as Record<string, unknown>
+  const updated = mapAssetSummary({ ...asset, revision: 200, metadata_json: '{}' }, rows) as unknown as Record<string, unknown>
+  assert.equal(first.previewSha256, 'a'.repeat(64))
+  assert.equal(first.fullPreviewResourceId, 'high')
+  assert.equal(first.fullPreviewSha256, 'b'.repeat(64))
+  assert.equal(updated.previewSha256, first.previewSha256)
+  assert.equal(updated.fullPreviewSha256, first.fullPreviewSha256)
+  const replaced = mapAssetSummary(asset, [rows[0]!, resource('high', 'source_high_quality', 'c'.repeat(64))]) as unknown as Record<string, unknown>
+  assert.notEqual(replaced.fullPreviewSha256, first.fullPreviewSha256)
+  const derived = mapAssetSummary(asset, [...rows, resource('derived', 'derived_preview', 'd'.repeat(64))]) as unknown as Record<string, unknown>
+  assert.equal(derived.fullPreviewResourceId, 'high', 'the viewer must prefer the actual high-quality still over a derived grid preview')
+})
+
 test('asset summary exposes explicit Infinity Nikki game version without requiring detail fetch', () => {
   const summary = mapAssetSummary({
     asset_id: 'asset_29',

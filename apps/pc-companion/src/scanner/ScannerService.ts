@@ -20,6 +20,9 @@ export class ScannerService {
   private draining: Promise<void> | undefined
   private extraDirectories:ExtraScanRoot[]=[]
   private nativeImages=new Map<string,string>()
+  private exportImages=new Map<string,{path:string;size:number;sha256:string;imageHash:string}>()
+  private exportsByImage=new Map<string,Array<{path:string;size:number;sha256:string}>>()
+  exactExportCopies(source:string){const image=this.nativeImages.get(source);return image?(this.exportsByImage.get(image)??[]).map(file=>({...file})):[]}
   private watcherHolds=0
   private deferredWatchPaths=new Set<string>()
   constructor(private readonly database: DatabaseManager, config: ScannerConfig = {}) {
@@ -95,6 +98,7 @@ export class ScannerService {
     if(removed.length){
       new AssetRepository(this.database).markMissingByRoots([],removed.map(item=>item.path))
       for(const file of this.nativeImages.keys())if(removed.some(item=>within(file,item.path)))this.nativeImages.delete(file)
+      for(const file of this.exportImages.keys())if(removed.some(item=>within(file,item.path)))this.exportImages.delete(file)
     }
     if(this.config.watcher!==false){this.watcher??=new ScannerWatcher(this.config.debounceMs??250);this.watcher.start(this.getScanRoots(),event=>this.watcherChanged(event.path))}
     // Adding a small export folder must not rehash an already indexed, potentially huge game album.
@@ -138,6 +142,9 @@ export class ScannerService {
     const completedRoots=roots.filter((_root,index)=>all[index]?.errors.length===0)
     for(const file of this.nativeImages.keys())if(completedRoots.some(root=>within(file,root)))this.nativeImages.delete(file)
     for(const resource of discovered)if(resource.imageSha256&&/[/\\]NikkiPhotos_HighQuality[/\\]/i.test(resource.absolutePath))this.nativeImages.set(resource.absolutePath,resource.imageSha256)
+    for(const file of this.exportImages.keys())if(completedRoots.some(root=>within(file,root)))this.exportImages.delete(file)
+    for(const resource of discovered)if(resource.imageSha256&&resource.sha256&&/[/\\]ScreenShot[/\\]/i.test(resource.absolutePath))this.exportImages.set(resource.absolutePath,{path:resource.absolutePath,size:resource.sizeBytes,sha256:resource.sha256,imageHash:resource.imageSha256})
+    this.exportsByImage=new Map();for(const file of this.exportImages.values()){const group=this.exportsByImage.get(file.imageHash)??[];group.push({path:file.path,size:file.size,sha256:file.sha256});this.exportsByImage.set(file.imageHash,group)}
     const nativeHashes=new Set(this.nativeImages.values())
     // Only suppress exact exported image bytes, never equal filenames or visually similar photos.
     const resources=discovered.filter(resource=>!(/[/\\]ScreenShot[/\\]/i.test(resource.absolutePath)&&resource.imageSha256&&nativeHashes.has(resource.imageSha256)))

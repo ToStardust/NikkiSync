@@ -14,6 +14,14 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if(e.Args.Length>0&&e.Args[0]=="--recycle-batch")
+        {
+            Shutdown(e.Args.Length==3?RecycleOnly.RunBatch(e.Args[1],e.Args[2]):3);return;
+        }
+        if(e.Args.Length>0&&e.Args[0]=="--organizer-preview")
+        {
+            Shutdown(e.Args.Length==3?OrganizerPreview.Run(e.Args[1],e.Args[2]):3);return;
+        }
         if(e.Args.Length>0&&e.Args[0]=="--recycle-file")
         {
             Shutdown(e.Args.Length==4?RecycleOnly.Run(e.Args[1],e.Args[2],e.Args[3]):3);return;

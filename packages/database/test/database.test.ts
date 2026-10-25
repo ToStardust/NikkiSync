@@ -242,3 +242,10 @@ test('dictionary thumbnail fallbacks round-trip with canonical entries and legac
   assert.deepEqual(dictionary.getActiveManifest()?.entries[0]?.thumbnailFallbacks, ['https://example.test/hair.webp'])
   database.close()
 })
+test('gallery keyset pages use the chronology expression index on large libraries', () => {
+  const db = new DatabaseManager();db.initialize()
+  try {
+    const plan=db.connection.prepare("EXPLAIN QUERY PLAN SELECT * FROM assets WHERE asset_state <> 'deleted' ORDER BY COALESCE(captured_at,discovered_at) DESC,asset_id ASC LIMIT 500").all()
+    assert.match(JSON.stringify(plan),/idx_assets_gallery_order/)
+  } finally {db.close()}
+})

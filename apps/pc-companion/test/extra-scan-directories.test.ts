@@ -24,6 +24,16 @@ async function fixture(){
 const exportedJpeg=Buffer.from([255,216,255,218,0,2,1,2,3,255,217])
 const nativeJpeg=Buffer.concat([exportedJpeg,Buffer.from('native-parameters'),Buffer.from([255,217]),Buffer.from(Buffer.alloc(32,7).toString('base64'))])
 
+test('removing an extra ScreenShot folder also retires its exact deletion-copy lookup',async()=>{
+ const f=await fixture();try{
+  const source=path.join(f.native,'Source.jpeg'),screen=path.join(f.root,'OldGame/X6Game/ScreenShot'),copy=path.join(screen,'Export.jpeg')
+  await writeFile(source,nativeJpeg);await f.scanner.fullScan();await mkdir(screen,{recursive:true});await writeFile(copy,exportedJpeg)
+  await f.extra.add((await f.extra.inspect(screen)).id);assert.deepEqual(f.scanner.exactExportCopies(source).map(file=>file.path),[copy])
+  await f.extra.remove(f.extra.state().directories.find(item=>item.path===screen)!.id)
+  assert.equal(f.scanner.exactExportCopies(source).length,0);assert.ok((await readFile(copy)).equals(exportedJpeg))
+ }finally{await f.close()}
+})
+
 test('JPEG identity skips thumbnail EOI, handles stuffed bytes/restarts and rejects truncated data',async()=>{
   const f=await fixture()
   try{

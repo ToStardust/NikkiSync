@@ -64,6 +64,8 @@ public final class Models {
     public static final class AssetSummary {
         private final String assetId, type, state, capturedAt, uid, thumbnailResourceId, previewResourceId;
         private final String gameVersion, gameVersionSource;
+        private final String thumbnailSha256, previewSha256, fullPreviewResourceId, fullPreviewSha256;
+        private final String mediaFingerprint;
         private final long revision;
         private final Integer width, height;
         private final boolean hasMotion, hasMetadata;
@@ -71,10 +73,27 @@ public final class Models {
                             Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
                             String thumbnailResourceId, String previewResourceId,
                             String gameVersion, String gameVersionSource) {
+            this(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,
+                thumbnailResourceId,previewResourceId,gameVersion,gameVersionSource,null,null,null,null);
+        }
+        public AssetSummary(String assetId, String type, String state, String capturedAt, String uid, long revision,
+                            Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
+                            String thumbnailResourceId, String previewResourceId, String gameVersion, String gameVersionSource,
+                            String thumbnailSha256, String previewSha256, String fullPreviewResourceId, String fullPreviewSha256) {
+            this(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,thumbnailResourceId,previewResourceId,
+                gameVersion,gameVersionSource,thumbnailSha256,previewSha256,fullPreviewResourceId,fullPreviewSha256,null);
+        }
+        public AssetSummary(String assetId, String type, String state, String capturedAt, String uid, long revision,
+                            Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
+                            String thumbnailResourceId, String previewResourceId, String gameVersion, String gameVersionSource,
+                            String thumbnailSha256, String previewSha256, String fullPreviewResourceId, String fullPreviewSha256,String mediaFingerprint) {
             this.assetId = assetId; this.type = type; this.state = state; this.capturedAt = capturedAt; this.uid = uid;
             this.revision = revision; this.width = width; this.height = height; this.hasMotion = hasMotion;
             this.hasMetadata = hasMetadata; this.thumbnailResourceId = thumbnailResourceId; this.previewResourceId = previewResourceId;
             this.gameVersion = gameVersion; this.gameVersionSource = gameVersionSource;
+            this.thumbnailSha256=thumbnailSha256;this.previewSha256=previewSha256;
+            this.fullPreviewResourceId=fullPreviewResourceId;this.fullPreviewSha256=fullPreviewSha256;
+            this.mediaFingerprint=mediaFingerprint;
         }
         public String assetId() { return assetId; }
         public String type() { return type; }
@@ -90,6 +109,11 @@ public final class Models {
         public String previewResourceId() { return previewResourceId; }
         public String gameVersion() { return gameVersion; }
         public String gameVersionSource() { return gameVersionSource; }
+        public String thumbnailSha256(){return thumbnailSha256;}
+        public String previewSha256(){return previewSha256;}
+        public String fullPreviewResourceId(){return fullPreviewResourceId;}
+        public String fullPreviewSha256(){return fullPreviewSha256;}
+        public String mediaFingerprint(){return mediaFingerprint;}
     }
 
     public static final class AssetPage {

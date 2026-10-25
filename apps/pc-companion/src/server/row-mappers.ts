@@ -8,6 +8,7 @@ import type {
 } from '@nikkisync/protocol'
 import { inferInfinityNikkiGameVersion } from './GameVersionCalendar.js'
 import {gameVersionEnglishName} from '../wechat/GalleryRuntime.mjs'
+import {mediaFingerprint} from './MediaFingerprint.js'
 
 function optionalString(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value)
@@ -125,6 +126,9 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ?? resources.find((resource) => resource.role === 'source_low_quality')
     ?? resources.find((resource) => resource.role === 'source_primary')
     ?? resources.find((resource) => resource.role === 'source_high_quality')
+  const thumbnail = resources.find((resource) => resource.role === 'derived_thumbnail')
+  const fullPreview = visual?.mimeType.startsWith('image/') ? visual : bestPreview
+  const fingerprint=mediaFingerprint(resourceRows)
   return {
     assetId: String(row.asset_id),
     type: String(row.asset_type) as AssetSummary['type'],
@@ -136,10 +140,14 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ...(visual?.height === undefined ? {} : { height: visual.height }),
     hasMotion: resources.some((resource) => resource.role === 'source_motion'),
     hasMetadata: Boolean(row.metadata_json),
+    ...(fingerprint?{mediaFingerprint:fingerprint}:{}),
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),
     ...(bestPreview?.resourceId ? { previewResourceId: bestPreview.resourceId } : {}),
+    ...(thumbnail?.sha256 ? { thumbnailSha256: thumbnail.sha256 } : {}),
+    ...(bestPreview?.sha256 ? { previewSha256: bestPreview.sha256 } : {}),
+    ...(fullPreview?.resourceId ? { fullPreviewResourceId: fullPreview.resourceId, fullPreviewSha256: fullPreview.sha256 } : {}),
     ...summaryGameVersion(row)
   }
 }

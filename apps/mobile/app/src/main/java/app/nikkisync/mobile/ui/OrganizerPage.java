@@ -33,7 +33,7 @@ public final class OrganizerPage {
         adapter=new GalleryAdapter(activity,images,()->client,new GalleryAdapter.Listener(){
             public void onPhotoClick(AssetSummary asset){toggle(asset);}
             public boolean onPhotoLongClick(AssetSummary asset){toggle(asset);return true;}
-        });layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup(){public int getSpanSize(int position){return adapter.isHeader(position)?3:1;}});grid.setAdapter(adapter);grid.setItemAnimator(null);body.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
+        });adapter.setOfflineServer(server);layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup(){public int getSpanSize(int position){return adapter.isHeader(position)?3:1;}});grid.setAdapter(adapter);grid.setItemAnimator(null);body.addView(grid,new LinearLayout.LayoutParams(-1,0,1));
         cancel.setOnClickListener(v->{List<String> ids=new ArrayList<>();for(var asset:adapter.selectedItems())for(var entry:entries)if(entry.asset().assetId().equals(asset.assetId())&&entry.pending())ids.add(entry.id());
             if(ids.isEmpty()){Toast.makeText(activity,"请先选择待删除照片",Toast.LENGTH_SHORT).show();return;}
             cancel.setEnabled(false);worker.execute(()->{store.cancel(scope,ids);main.post(()->{adapter.clearSelection();refresh();changed.run();});});});
@@ -49,7 +49,8 @@ public final class OrganizerPage {
         adapter.setItems(new ArrayList<>(photos.values()));long pending=next.stream().filter(OrganizerStore.Entry::pending).count();
         cancel.setEnabled(adapter.selectedCount()>0);
         long processing=next.stream().filter(entry->Set.of("preparing","queued","checking","executing").contains(entry.state())).count();
-        if(!unchanged||!adapter.hasSelection())note.setText(processing>0?"正在核对或移入回收站 "+processing+" 张 · 结果自动更新\n请保持 App 打开，尚未开始的照片仍可取消。":"待处理 "+pending+" 张 · 点选照片可取消待删除\n电脑确认后移入回收站，可从回收站恢复。");
+        boolean verified=processing>0&&next.stream().filter(entry->Set.of("preparing","queued","checking","executing").contains(entry.state())).allMatch(OrganizerStore.Entry::batchVerified);
+        if(!unchanged||!adapter.hasSelection())note.setText(processing>0?"正在核对或移入回收站 "+processing+" 张 · 结果自动更新\n"+(verified?"本批已核对，可关闭 App；完成后可从电脑回收站恢复。":"请保持 App 打开，尚未开始的照片仍可取消。 "):"待处理 "+pending+" 张 · 点选照片可取消待删除\n电脑确认后移入回收站，可从回收站恢复。");
         if(refreshAgain){refreshAgain=false;refresh();}
     });});}
 }

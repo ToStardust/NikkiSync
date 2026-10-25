@@ -7,8 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.0.23</Version>
-    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026102408</DesktopBuild>
+    <Version>1.0.25</Version>
+    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026102502</DesktopBuild>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="DesktopBuild" Value="$(DesktopBuild)" />

@@ -16,13 +16,13 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk = 35)
 @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
 public class ShareThumbnailCacheTest {
-    @Test public void diskBudgetFitsSixHundredLargeThumbnailsWithoutExpandingBitmapMemory() throws Exception {
+    @Test public void legacyDiskBudgetIsKeptAndBitmapMemoryFollowsTheUserLimitAndSafeHeapCap() throws Exception {
         var budget=ImageLoader.class.getDeclaredField("MAX_DISK_CACHE_BYTES");budget.setAccessible(true);
         assertTrue("600 cached files averaging 600KiB must fit",budget.getLong(null)>=600L*600*1024);
         var loader=new ImageLoader(RuntimeEnvironment.getApplication());
         try {
             var memory=ImageLoader.class.getDeclaredField("cache");memory.setAccessible(true);
-            assertTrue(((android.util.LruCache<?,?>)memory.get(loader)).maxSize()<=96*1024);
+            assertEquals(Math.max(1,loader.preferences().effectiveMemoryBytes(Runtime.getRuntime().maxMemory())/1024),((android.util.LruCache<?,?>)memory.get(loader)).maxSize());
         } finally {loader.shutdown();}
     }
     @Test public void restartedUiUsesSameClothingFileForAnotherPhotoWithoutNetwork() throws Exception {

@@ -127,6 +127,34 @@ function mount(fetcher: (url: string,options?:{body?:string}) => Promise<unknown
 const organizerItem=(id:string,state='pending',online=true)=>({id,state,online,message:'等待电脑确认',count:2,files:[{name:id+'.jpeg',folder:'Photos',size:1048576},{name:id+'.mp4',folder:'Videos',size:5242880}]})
 const descendants=(node:{textContent:string;className:string;children:any[]}):any[]=>[node,...node.children.flatMap(descendants)]
 
+test('failed reminders can be dismissed without approving or deleting files',async()=>{
+ const calls:{url:string;body:any}[]=[];const failed={...organizerItem('old-failure','changed'),message:'参数版本变化'}
+ const ui=mount(async(url,options)=>{calls.push({url,body:JSON.parse(options?.body||'null')});return {ok:true,json:async()=>({items:[organizerItem('still-pending')]})}},undefined,[failed,organizerItem('still-pending')])
+ await new Promise(resolve=>setImmediate(resolve));const clear=descendants(ui.element('#organizer-results')).find(node=>node.textContent==='移除失败提示');assert.ok(clear)
+ await clear.onclick();assert.deepEqual(calls,[{url:'/api/organizer/dismiss',body:{ids:['old-failure'],allFailures:true}}]);assert.equal(ui.prompts.length,0)
+})
+test('verified batch processing explains that the phone can leave without showing reconnect warnings',async()=>{
+ const ui=mount(async()=>({}),undefined,[{...organizerItem('verified','executing',false),batchVerified:true,message:'整批已核对'}])
+ await new Promise(resolve=>setImmediate(resolve));assert.match(ui.element('#organizer-availability').textContent,/无需.*手机|可关闭.*App/)
+ assert.doesNotMatch(ui.element('#organizer-availability').textContent,/请保持手机 App 打开/)
+})
+
+test('a failed preview retries in place and changing content invalidates a successful cached preview',async()=>{
+ let reads=0;const ui=mount(async()=>({}),undefined,[{...organizerItem('preview'),previewVersion:'first'}],true,async()=>{reads++;return reads===1?{ok:false}:{ok:true,blob:async()=>({})}})
+ await new Promise(resolve=>setImmediate(resolve));const nodes=descendants(ui.element('#organizer-list')),retry=nodes.find(node=>node.textContent==='重试预览');assert.ok(retry);assert.equal(retry.hidden,false)
+ await retry.onclick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2)
+ ui.setOrganizerItems([{...organizerItem('preview','confirming'),previewVersion:'first'}]);await ui.organizerPoll();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2)
+ ui.setOrganizerItems([{...organizerItem('preview','confirming'),previewVersion:'second'}]);await ui.organizerPoll();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,3);assert.equal(ui.revoked.length,1)
+})
+
+test('new-client confirmation explains one-time phone validation for both single and bulk approval',async()=>{
+ const ui=mount(async()=>({ok:true,json:async()=>({items:[],approved:1,skipped:0})}),undefined,[{...organizerItem('modern'),batchVerification:true}])
+ await new Promise(resolve=>setImmediate(resolve));await descendants(ui.element('#organizer-list')).find(node=>node.textContent==='确认移入回收站').onclick()
+ assert.match(ui.prompts[0]!,/本批.*一次|本次.*一次/);assert.match(ui.prompts[0]!,/核对完成后可关闭/)
+ ui.setOrganizerItems([{...organizerItem('modern'),batchVerification:true}]);await ui.organizerPoll();await ui.element('#organizer-approve-all').onclick!()
+ assert.match(ui.prompts[1]!,/本批.*一次|本次.*一次/);assert.match(ui.prompts[1]!,/核对完成后可关闭/)
+})
+
 test('disconnected deletion records explain the phone requirement and completed records leave no gallery placeholders',async()=>{
  const ui=mount(async()=>({}),undefined,[organizerItem('offline','pending',false),organizerItem('confirmed','confirming',false),organizerItem('deleted','recycled'),organizerItem('cancelled','cancelled'),organizerItem('rejected','rejected'),{...organizerItem('failed','failed'),message:'部分处理，请检查回收站'}])
  await new Promise(resolve=>setImmediate(resolve))

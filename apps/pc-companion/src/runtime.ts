@@ -13,6 +13,7 @@ import type { MetadataDictionaryProvider } from './metadata/MetadataDictionaryPr
 import { RemoteBridgeService } from './remote/RemoteBridgeService.js'
 import { CachedDecodedMetadataService } from './metadata/CachedDecodedMetadataService.js'
 import {DeletionQueue} from './organizer/DeletionQueue.js'
+import {nativePreview,recycleMany} from './organizer/NativeMediaOperations.js'
 
 export interface PcCompanionRuntimeConfig {
   onStartupStage?: (stage: PcStartupStage) => void
@@ -62,7 +63,7 @@ export class PcCompanionRuntime {
     this.database = new DatabaseManager(config.databaseFile ?? ':memory:')
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
-    this.deletions = new DeletionQueue(this.database,()=>this.scanner.getScanRoots(),()=>this.scanner.fullScan(),undefined,undefined,work=>this.scanner.withDeferredWatchEvents(work))
+    this.deletions = new DeletionQueue(this.database,()=>this.scanner.getScanRoots(),()=>this.scanner.fullScan(),undefined,undefined,work=>this.scanner.withDeferredWatchEvents(work),{exportsFor:source=>this.scanner.exactExportCopies(source),recycleMany,preview:nativePreview})
     if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
       this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)

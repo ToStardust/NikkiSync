@@ -43,6 +43,8 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final List<AssetSummary> items = new ArrayList<>();
     private final Set<String> selected = new HashSet<>();
     private boolean singleAdjustDispatch;
+    private app.nikkisync.mobile.model.Models.PairedServer offlineServer;
+    public void setOfflineServer(app.nikkisync.mobile.model.Models.PairedServer server){offlineServer=server;}
 
     public GalleryAdapter(Context context, ImageLoader images, Supplier<NikkiSyncClient> client, Listener listener) {
         this.context = context;
@@ -139,7 +141,9 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         photo.cell.check.setContentDescription(selected.contains(asset.assetId())?"取消选择照片":"选择照片");
         photo.cell.check.setOnClickListener(v->listener.onPhotoLongClick(asset));
         NikkiSyncClient current = client.get();
-        if (current != null) images.load(current, asset, photo.cell.image);
+        if (current != null && images!=null) images.load(current, asset, photo.cell.image);
+        else if(offlineServer!=null&&images!=null)images.loadOffline(offlineServer,asset,photo.cell.image);
+        else photo.cell.image.setImageDrawable(null);
         photo.cell.setOnClickListener(v -> listener.onPhotoClick(asset));
         photo.cell.setOnLongClickListener(v -> {
             GalleryInteractionPolicy.Action action = GalleryInteractionPolicy.onLongPress(!selected.isEmpty());

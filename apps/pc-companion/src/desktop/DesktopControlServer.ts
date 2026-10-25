@@ -66,16 +66,18 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
         if(config.deletions&&requestUrl.pathname.startsWith('/api/organizer')){
           if(request.method==='GET'&&requestUrl.pathname==='/api/organizer/preview'){
             const file=await config.deletions.preview(requestUrl.searchParams.get('id')??'');if(!file){json(response,404,{error:'not_found'});return}
+            if('bytes' in file){response.writeHead(200,{'content-type':file.mimeType,'content-length':file.bytes.byteLength,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(file.bytes);return}
             response.writeHead(200,{'content-type':/\.png$/i.test(file.path)?'image/png':/\.webp$/i.test(file.path)?'image/webp':'image/jpeg','content-length':file.size,'cache-control':'no-store','x-content-type-options':'nosniff'});
             const stream=createReadStream(file.path);stream.on('error',()=>response.destroy());response.on('close',()=>stream.destroy());stream.pipe(response);return
           }
           if(request.method==='GET'&&requestUrl.pathname==='/api/organizer'){json(response,200,{items:config.deletions.list()});return}
-          const bulk=requestUrl.pathname==='/api/organizer/approve-many'
-          if(request.method!=='POST'||(!bulk&&requestUrl.pathname!=='/api/organizer/decide')||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+          const bulk=requestUrl.pathname==='/api/organizer/approve-many',dismiss=requestUrl.pathname==='/api/organizer/dismiss'
+          if(request.method!=='POST'||(!bulk&&!dismiss&&requestUrl.pathname!=='/api/organizer/decide')||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
           const chunks:Buffer[]=[];let size=0
-          for await(const chunk of request){size+=chunk.length;if(size>(bulk?40960:4096)){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
-          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {id:unknown;approve:unknown;ids:unknown}
+          for await(const chunk of request){size+=chunk.length;if(size>(bulk||dismiss?40960:4096)){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
+          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {id:unknown;approve:unknown;ids:unknown;allFailures?:unknown}
             if(bulk){json(response,200,await config.deletions.approveMany(value.ids as string[]));return}
+            if(dismiss){if(value.allFailures!==undefined&&typeof value.allFailures!=='boolean')throw new Error('bad_request');json(response,200,await config.deletions.dismiss(value.ids as string[],value.allFailures===true));return}
             if(typeof value.id!=='string'||typeof value.approve!=='boolean')throw new Error('bad_request')
             json(response,200,{items:await config.deletions.decide(value.id,value.approve)})
           }catch{json(response,409,{error:'request_changed'})}return

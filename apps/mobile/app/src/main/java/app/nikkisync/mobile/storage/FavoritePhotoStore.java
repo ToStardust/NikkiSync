@@ -114,6 +114,9 @@ public final class FavoritePhotoStore extends SQLiteOpenHelper {
         row.put("hasMotion", asset.hasMotion()); row.put("hasMetadata", asset.hasMetadata());
         row.put("thumbnailResourceId", asset.thumbnailResourceId()); row.put("previewResourceId", asset.previewResourceId());
         row.put("gameVersion", asset.gameVersion()); row.put("gameVersionSource", asset.gameVersionSource());
+        row.put("thumbnailSha256",asset.thumbnailSha256());row.put("previewSha256",asset.previewSha256());
+        row.put("fullPreviewResourceId",asset.fullPreviewResourceId());row.put("fullPreviewSha256",asset.fullPreviewSha256());
+        row.put("mediaFingerprint",asset.mediaFingerprint());
         return row;
     }
 
@@ -122,7 +125,9 @@ public final class FavoritePhotoStore extends SQLiteOpenHelper {
                 optional(row, "capturedAt"), optional(row, "uid"), row.optLong("revision", 0),
                 number(row, "width"), number(row, "height"), row.optBoolean("hasMotion", false),
                 row.optBoolean("hasMetadata", false), optional(row, "thumbnailResourceId"), optional(row, "previewResourceId"),
-                optional(row, "gameVersion"), row.optString("gameVersionSource", "unknown"));
+                optional(row, "gameVersion"), row.optString("gameVersionSource", "unknown"),
+                optional(row,"thumbnailSha256"),optional(row,"previewSha256"),
+                optional(row,"fullPreviewResourceId"),optional(row,"fullPreviewSha256"),optional(row,"mediaFingerprint"));
     }
 
     private static String optional(JSONObject row, String key) {
