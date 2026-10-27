@@ -6,6 +6,7 @@ namespace NikkiSync.WindowsShell.Tests;
 public sealed class StartupDiagnosticsTests
 {
     [Theory]
+    [InlineData(unchecked((int)0x80070005), "FILE_ACCESS")]
     [InlineData(unchecked((int)0x80070020), "FILE_BUSY")]
     [InlineData(unchecked((int)0x80070021), "FILE_BUSY")]
     [InlineData(unchecked((int)0x80070070), "DISK_FULL")]

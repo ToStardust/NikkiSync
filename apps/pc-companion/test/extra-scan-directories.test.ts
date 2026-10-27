@@ -24,6 +24,20 @@ async function fixture(){
 const exportedJpeg=Buffer.from([255,216,255,218,0,2,1,2,3,255,217])
 const nativeJpeg=Buffer.concat([exportedJpeg,Buffer.from('native-parameters'),Buffer.from([255,217]),Buffer.from(Buffer.alloc(32,7).toString('base64'))])
 
+test('custom spinning-momo source identity survives restart and ordinary folders stay ordinary',async()=>{
+ const f=await fixture();try{
+  const custom=path.join(f.root,'custom-captures'),ordinary=path.join(f.root,'other-captures');await mkdir(custom);await mkdir(ordinary)
+  await writeFile(f.file,JSON.stringify({directories:[{path:custom,mode:'images',source:'spinning_momo'},{path:ordinary,mode:'images'}]}))
+  const loaded=loadExtraScanDirectories(f.file)
+  assert.deepEqual(loaded.map(root=>({...root,id:'omitted'})),[{id:'omitted',path:custom,mode:'images',source:'spinning_momo'},{id:'omitted',path:ordinary,mode:'images'}])
+  let notified=0;const restored=new ExtraScanDirectories(f.file,f.scanner,undefined,()=>{notified++})
+  const image=path.join(custom,'original.jpeg');await writeFile(image,exportedJpeg)
+  await restored.setSource(loaded[0]!.id,'other');assert.equal(loadExtraScanDirectories(f.file)[0]!.source,'other')
+  await restored.setSource(loaded[0]!.id,'spinning_momo');assert.equal(loadExtraScanDirectories(f.file)[0]!.source,'spinning_momo');assert.equal(notified,2)
+  assert.ok((await readFile(image)).equals(exportedJpeg),'relabeling never alters photos')
+ }finally{await f.close()}
+})
+
 test('removing an extra ScreenShot folder also retires its exact deletion-copy lookup',async()=>{
  const f=await fixture();try{
   const source=path.join(f.native,'Source.jpeg'),screen=path.join(f.root,'OldGame/X6Game/ScreenShot'),copy=path.join(screen,'Export.jpeg')

@@ -33,15 +33,36 @@ public final class OrganizerStore extends SQLiteOpenHelper {
         }
         throw new IllegalStateException("Unsupported organizer schema");
     }
-    @Override public void onOpen(SQLiteDatabase db){super.onOpen(db);db.execSQL("CREATE INDEX IF NOT EXISTS deletions_scope_state ON deletions(scope,state,created)");db.execSQL("CREATE INDEX IF NOT EXISTS deletions_scope_receipt ON deletions(scope,approval,created)");}
+    @Override public void onOpen(SQLiteDatabase db){super.onOpen(db);db.execSQL("CREATE INDEX IF NOT EXISTS deletions_scope_state ON deletions(scope,state,created)");db.execSQL("CREATE INDEX IF NOT EXISTS deletions_scope_receipt ON deletions(scope,approval,created)");db.execSQL("CREATE TABLE IF NOT EXISTS library_snapshots(scope TEXT PRIMARY KEY,revision INTEGER NOT NULL,photo_count INTEGER NOT NULL,snapshot_format INTEGER NOT NULL DEFAULT 0)");
+        boolean format=false;try(Cursor columns=db.rawQuery("PRAGMA table_info(library_snapshots)",null)){while(columns.moveToNext())if("snapshot_format".equals(columns.getString(columns.getColumnIndexOrThrow("name"))))format=true;}if(!format)db.execSQL("ALTER TABLE library_snapshots ADD COLUMN snapshot_format INTEGER NOT NULL DEFAULT 0");
+    }
     public synchronized void remember(String scope,List<AssetSummary> assets)throws Exception{
+        remember(scope,assets,-1);
+    }
+    public synchronized void remember(String scope,List<AssetSummary> assets,long revision)throws Exception{
         SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{db.delete("library","scope=?",new String[]{scope});
             try(var insert=db.compileStatement("INSERT INTO library(scope,asset_id,summary,snapshot_position) VALUES(?,?,?,?)")){
                 int position=0;for(AssetSummary asset:assets){insert.clearBindings();insert.bindString(1,scope);insert.bindString(2,asset.assetId());insert.bindString(3,FavoritePhotoStore.encode(asset).toString());insert.bindLong(4,position++);insert.executeInsert();}
-            }db.setTransactionSuccessful();
+            }
+            db.delete("library_snapshots","scope=?",new String[]{scope});
+            if(revision>=0){ContentValues snapshot=new ContentValues();snapshot.put("scope",scope);snapshot.put("revision",revision);snapshot.put("photo_count",assets.size());snapshot.put("snapshot_format",2);db.insertOrThrow("library_snapshots",null,snapshot);}
+            db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
     public synchronized List<AssetSummary> library(String scope){List<AssetSummary> out=new ArrayList<>();try(Cursor rows=getReadableDatabase().rawQuery("SELECT summary FROM library WHERE scope=? ORDER BY snapshot_position ASC, rowid ASC",new String[]{scope})){while(rows.moveToNext())try{out.add(FavoritePhotoStore.decode(new JSONObject(rows.getString(0))));}catch(Exception ignored){}}return out;}
+    public synchronized List<String> libraryIds(String scope){List<String> out=new ArrayList<>();try(Cursor rows=getReadableDatabase().rawQuery("SELECT asset_id FROM library WHERE scope=?",new String[]{scope})){while(rows.moveToNext())out.add(rows.getString(0));}return out;}
+    public synchronized List<AssetSummary> libraryForIds(String scope,Set<String> wanted){
+        List<String> ids=new ArrayList<>(wanted);List<AssetSummary> out=new ArrayList<>();
+        for(int from=0;from<ids.size();from+=500){List<String> chunk=ids.subList(from,Math.min(from+500,ids.size()));List<String> args=new ArrayList<>();args.add(scope);args.addAll(chunk);
+            String placeholders=String.join(",",Collections.nCopies(chunk.size(),"?"));try(Cursor rows=getReadableDatabase().rawQuery("SELECT summary FROM library WHERE scope=? AND asset_id IN ("+placeholders+")",args.toArray(new String[0]))){while(rows.moveToNext())try{out.add(FavoritePhotoStore.decode(new JSONObject(rows.getString(0))));}catch(Exception ignored){}}
+        }return out;
+    }
+    public synchronized app.nikkisync.mobile.net.LibraryPager.Snapshot snapshot(String scope){
+        try(Cursor row=getReadableDatabase().rawQuery("SELECT revision,photo_count,snapshot_format FROM library_snapshots WHERE scope=?",new String[]{scope})){
+            if(!row.moveToFirst()||row.getInt(2)!=2)return null;long revision=row.getLong(0),count=row.getLong(1);List<AssetSummary> items=library(scope);
+            return revision>=0&&count==items.size()?new app.nikkisync.mobile.net.LibraryPager.Snapshot(items,revision):null;
+        }
+    }
     public synchronized List<Entry> entries(String scope){
         // Keep tombstones in SQLite for replay protection; only hydrate active work,
         // one protocol-sized receipt batch and the latest 50 completed summaries.

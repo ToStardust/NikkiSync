@@ -11,6 +11,26 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class OrganizerStoreTest {
+    @Test public void reconciliationReadsIdsAndOnlyRequestedSavedSummaries()throws Exception{
+        java.util.List<AssetSummary> items=new java.util.ArrayList<>();for(int i=0;i<601;i++)items.add(FavoritePhotoStore.decode(FavoritePhotoStore.encode(photo).put("assetId","scope_"+i)));
+        store.remember("many",items,22);assertEquals(601,store.libraryIds("many").size());
+        assertEquals(java.util.Set.of("scope_0","scope_600"),store.libraryForIds("many",java.util.Set.of("scope_0","scope_600")).stream().map(AssetSummary::assetId).collect(java.util.stream.Collectors.toSet()));
+    }
+    @Test public void upgradeKeepsOfflineRowsButDoesNotTrustPreDescriptorSnapshot()throws Exception{
+        store.remember("old-format",List.of(photo),21);store.getWritableDatabase().execSQL("UPDATE library_snapshots SET snapshot_format=0 WHERE scope='old-format'");
+        assertNull(store.snapshot("old-format"));assertEquals(1,store.library("old-format").size());
+    }
+    @Test public void failedSnapshotReplacementRollsBackItsRevisionAlongsideTheSummaries()throws Exception{
+        store.remember("atomic",List.of(photo),21);assertThrows(android.database.sqlite.SQLiteConstraintException.class,()->store.remember("atomic",List.of(photo,photo),22));
+        assertEquals(21,store.snapshot("atomic").revision());assertEquals(1,store.snapshot("atomic").items().size());
+    }
+    @Test public void snapshotRevisionIsAtomicScopedAndNeverTrustedAfterAnIncompleteOrLegacyWrite()throws Exception{
+        store.remember("snapshot",List.of(photo),12);store.close();store=new OrganizerStore(context);
+        assertEquals(12,store.snapshot("snapshot").revision());assertEquals(List.of(photo.assetId()),store.snapshot("snapshot").items().stream().map(AssetSummary::assetId).toList());assertNull(store.snapshot("other"));
+        store.getWritableDatabase().execSQL("DELETE FROM library WHERE scope='snapshot'");assertNull(store.snapshot("snapshot"));
+        store.remember("snapshot",List.of(photo),13);store.remember("snapshot",List.of(photo));assertNull(store.snapshot("snapshot"));
+        store.remember("empty",List.of(),14);assertEquals(0,store.snapshot("empty").items().size());assertEquals(14,store.snapshot("empty").revision());
+    }
     @Test public void modernIntentCarriesMediaProofAndFailureReceiptIsSentOnlyUntilAcknowledged()throws Exception{
         var summary=FavoritePhotoStore.encode(photo).put("mediaFingerprint","a".repeat(64));
         var modern=FavoritePhotoStore.decode(summary);store.enqueue("proof",List.of(modern));

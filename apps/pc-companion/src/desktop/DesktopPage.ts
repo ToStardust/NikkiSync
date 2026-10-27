@@ -4,6 +4,7 @@ import { desktopPageScript } from './DesktopPageScript.js'
 import { remotePanelCss, remotePanelHtml, remoteDialogHtml, remotePanelScript } from './RemoteBridgePanel.js'
 import { metadataPrivacyHtml, metadataPrivacyDialog, metadataPrivacyScript } from './MetadataPrivacyPanel.js'
 import {extraScanDirectoriesHtml} from './ExtraScanDirectoriesPanel.js'
+import {accountSyncHtml,accountSyncCss} from './AccountSyncPanel.js'
 import {organizerHtml, temporaryNetworkHtml, organizerCss} from './OrganizerPanel.js'
 
 const css = `
@@ -67,7 +68,7 @@ export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: stri
       <div class="connection-grid">${firstUse}${android}${showRemote ? remotePanelHtml : ''}</div>
       <p class="privacy-note">${icon('shield')}照片通过局域网传输。在线参数解析可在同步设置单独选择。</p>
     </div>
-    <div data-page="settings" hidden><section class="settings-card glass"><h2>同步与连接</h2><div class="setting-row"><p>电脑局域网地址</p><span id="desktop-address" class="setting-value">${escapeHtml(status.host)}:${status.port}</span></div><div class="setting-row"><p>相册更新</p><span class="setting-value">自动收录新照片</span></div><div class="setting-row"><p>关闭窗口后</p><span class="setting-value">在托盘继续运行</span></div></section>
+    <div data-page="settings" hidden><section class="settings-card glass" id="sync-connection-section"><h2>同步与连接</h2><div class="setting-row"><p>电脑局域网地址</p><span id="desktop-address" class="setting-value">${escapeHtml(status.host)}:${status.port}</span></div><div class="setting-row"><p>相册更新</p><span class="setting-value">自动收录新照片</span></div><div class="setting-row"><p>关闭窗口后</p><span class="setting-value">在托盘继续运行</span></div>${accountSyncHtml}</section><style>${accountSyncCss}</style>
       <section class="settings-card glass"><h2>启动偏好</h2><div class="setting-row"><div><label for="autostart" class="setting-title">开机时自动启动大喵相机助手</label><p id="autostart-note" class="setting-help">登录 Windows 后，自动准备照片同步。</p></div><label class="toggle"><input id="autostart" type="checkbox" role="switch" disabled aria-label="开机时自动启动大喵相机助手"></label></div></section>
       <section class="settings-card glass" id="network-permission-section"><h2>本地网络权限</h2><p id="network-authorization-settings-note" class="page-subtitle">连接失败时可尝试授权。只允许本地子网访问当前后台服务的同步端口，支持 Wi-Fi 和手机热点。</p><div class="about-actions"><button id="authorize-network" class="primary" disabled>允许手机连接</button><button id="revoke-network" class="secondary" disabled>撤销当前服务的网络授权</button></div><p id="network-authorization-note" class="page-subtitle" role="status">这是可选的连接排障功能，已正常连接时无需操作。</p><h3 style="font-size:14px;margin-top:24px">仍无法连接？检查冲突规则</h3><p class="page-subtitle" style="margin-top:8px">已有允许规则，仍可能被显式阻止。一键检查会确认授权，并只处理当前后台、同步端口和当前网络配置下可恢复的普通阻止规则。</p><div class="about-actions"><button id="repair-network-conflicts" class="primary" disabled>一键检查并修复</button><button id="check-network-conflicts" class="secondary" disabled>重新检查</button><button id="restore-network-conflicts" class="secondary" disabled>撤销上次修复</button></div><p id="network-conflict-note" class="page-subtitle" role="status">正在读取当前连接的规则状态…</p><p class="page-subtitle" style="margin-top:8px">修复时同意 Windows 提示即可。不会删除规则或更改其他程序；域网络、策略限制和复杂规则会跳过。撤销会恢复原有阻止，连接限制可能重新生效。</p></section>
       ${extraScanDirectoriesHtml}

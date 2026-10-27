@@ -72,6 +72,10 @@ export interface AssetSummary {
   fullPreviewSha256?: string
   /** All current source resources, excluding parameter-only revisions; used for offline organizer intent. */
   mediaFingerprint?: string
+  /** Local source descriptor, shared only through the authenticated LAN gallery. */
+  sourcePath?: string
+  sourceFolder?: string
+  sizeBytes?: number
   /** Resolved Infinity Nikki game version for version-first gallery grouping. */
   gameVersion?: string
   /** Provenance of gameVersion; unknown never forces a fabricated version. */

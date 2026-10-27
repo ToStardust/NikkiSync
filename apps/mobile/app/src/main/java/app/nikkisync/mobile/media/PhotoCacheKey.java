@@ -20,6 +20,7 @@ public final class PhotoCacheKey {
         return value!=null&&value.matches("(?i)[a-f0-9]{64}")?value.toLowerCase(Locale.ROOT):null;
     }
     private static String identity(PairedServer server,AssetSummary asset){return server.serverId()+"\n"+server.tlsFingerprintSha256()+"\n"+asset.assetId();}
+    static String assetPrefix(PairedServer server,String assetId){return hash(server.serverId()+"\n"+server.tlsFingerprintSha256()+"\n"+assetId);}
     private static String key(PairedServer server,AssetSummary asset,boolean preview){
         String hash=contentHash(asset,preview);
         // Old PCs cannot prove unchanged media. Keep conservative revision invalidation until both ends update.

@@ -36,8 +36,10 @@ import { buildProfileStats } from './ProfileStatsIndex.js'
 import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 import type {DeletionQueue,DeleteIntent} from '../organizer/DeletionQueue.js'
+import {AccountSyncSettings} from './AccountSyncSettings.js'
 
 export interface LocalSyncServerConfig {
+  accountSourceDirectories?:()=>readonly import('../scanner/types.js').ExtraScanRoot[]
   deletions?: DeletionQueue
   name?: string
   host?: string
@@ -134,6 +136,7 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 }
 
 export class LocalSyncServer {
+  readonly accounts:AccountSyncSettings
   private readonly deletions:DeletionQueue|undefined
   private exportBusy = false
   private readonly reads: SyncReadRepository
@@ -155,7 +158,8 @@ export class LocalSyncServer {
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.deletions=config.deletions
-    this.reads = new SyncReadRepository(database)
+    this.accounts=new AccountSyncSettings(database,config.accountSourceDirectories)
+    this.reads = new SyncReadRepository(database,()=>this.accounts.selection(),()=>this.accounts.sourceGroups())
     this.assets = new AssetRepository(database)
     this.dictionary = new MetadataDictionaryRepository(database)
     this.auth = new AuthService(database)
@@ -450,7 +454,7 @@ export class LocalSyncServer {
     if (after === undefined) return json(res, 400, errorBody('bad_request', 'after revision is required'))
     const current = this.reads.currentRevision()
     const minimum = this.reads.minimumJournalRevision()
-    const fullResyncRequired = minimum !== undefined && after < minimum - 1
+    const fullResyncRequired = after<this.accounts.revision() || minimum !== undefined && after < minimum - 1
     const changes = fullResyncRequired ? [] : this.reads.listChangesAfter(after).map(mapChangeRow)
     const body: ChangesResponse = { changes, libraryRevision: current, fullResyncRequired }
     json(res, 200, body)

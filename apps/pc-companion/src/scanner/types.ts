@@ -52,7 +52,7 @@ export interface ScannerConfig extends GameDiscoveryOptions {
   onProgress?(progress: ScannerProgress): void
 }
 
-export interface ExtraScanRoot { id: string; path: string; mode: 'native' | 'images' }
+export interface ExtraScanRoot { id: string; path: string; mode: 'native' | 'images'; source?:'spinning_momo'|'other' }
 
 /** Aggregate work only: never include paths, UIDs, filenames or photo parameters. */
 export interface ScannerProgress {

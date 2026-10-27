@@ -33,6 +33,16 @@ import java.util.concurrent.Executors;
 import javax.net.ssl.HttpsURLConnection;
 
 public final class ImageLoader {
+    private record LibraryScope(String owner,Set<String> ids){}
+    private volatile LibraryScope sharedLibrary;
+    private boolean shared(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset){LibraryScope scope=sharedLibrary;return scope==null||!scope.owner().equals(server.serverId()+"\n"+server.tlsFingerprintSha256())||scope.ids().contains(asset.assetId());}
+    public void reconcileLibraryIds(app.nikkisync.mobile.model.Models.PairedServer server,List<String> previous,List<AssetSummary> next){
+        Set<String> ids=new java.util.HashSet<>();for(AssetSummary asset:next)ids.add(asset.assetId());sharedLibrary=new LibraryScope(server.serverId()+"\n"+server.tlsFingerprintSha256(),Set.copyOf(ids));
+        List<String> removed=previous.stream().filter(id->!ids.contains(id)).toList();if(removed.isEmpty())return;
+        pauseOfflineCaching();cache.evictAll();
+        for(String id:removed)photos.removeOrdinary(server,id);
+        cache.evictAll();
+    }
     private volatile boolean networkAvailable=true;
     public void setNetworkAvailable(boolean available){networkAvailable=available;if(!available)pauseOfflineCaching();}
     private static String assetKey(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset){
@@ -89,6 +99,11 @@ public final class ImageLoader {
     private volatile boolean closed;
     private volatile HttpsURLConnection warmConnection;
     private String warmSignature="";
+    private String signatureOwner="",signatureDigest="";
+    private List<AssetSummary> signatureAssets=List.of();
+    private volatile long warmRetryAt;
+    private volatile long warmScheduled;
+    private int warmRetries;
     private volatile OfflineProgress offlineProgress=new OfflineProgress(0,0,false,false,0);
     public record OfflineProgress(int cached,int total,boolean running,boolean full,int failed){
         public String description(){return "离线缩略图 "+cached+" / "+total+" 张"+(running?" · 正在缓存":full?" · 空间已满，可提高上限":failed>0?" · 部分未缓存，可点击重试":cached>=total&&total>0?" · 已就绪":" · 连接电脑后可继续");}
@@ -150,42 +165,61 @@ public final class ImageLoader {
         executor.execute(()->{photos.trim(preferences.thumbnailBytes(),preferences.previewBytes());if(complete!=null&&!closed)main.post(complete);});
     }
     public synchronized void pauseOfflineCaching(){
-        warmGeneration.incrementAndGet();warmSignature="";HttpsURLConnection connection=warmConnection;if(connection!=null)connection.disconnect();
+        warmGeneration.incrementAndGet();warmSignature="";warmRetries=0;warmRetryAt=0;warmScheduled=0;HttpsURLConnection connection=warmConnection;if(connection!=null)connection.disconnect();
         OfflineProgress old=offlineProgress;offlineProgress=new OfflineProgress(old.cached,old.total,false,old.full,old.failed);
     }
     public synchronized void retryOfflineCaching(){pauseOfflineCaching();}
     public synchronized void warmThumbnails(NikkiSyncClient client,List<AssetSummary> assets,Consumer<OfflineProgress> listener){
         if(closed||client==null)return;
-        StringBuilder identity=new StringBuilder(client.server().serverId()).append(client.server().tlsFingerprintSha256());
-        for(AssetSummary asset:assets)identity.append(PhotoCacheKey.thumbnail(client.server(),asset));
-        String signature=PhotoCacheKey.hash(identity.toString())+":"+preferences.thumbnailMiB()+":"+preferences.automaticOffline();
-        if(signature.equals(warmSignature))return;warmSignature=signature;long ticket=warmGeneration.incrementAndGet();
+        String owner=client.server().serverId()+"\n"+client.server().tlsFingerprintSha256();
+        if(!owner.equals(signatureOwner)||!signatureAssets.equals(assets)){
+            // A large library must not allocate one giant concatenated UTF-8 key
+            // on every recovery tick. Summaries are immutable; retain a copy to
+            // detect even callers that mutate their list in place.
+            try{MessageDigest digest=MessageDigest.getInstance("SHA-256");digest.update(owner.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                for(AssetSummary asset:assets){digest.update((byte)0);digest.update(PhotoCacheKey.thumbnail(client.server(),asset).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                signatureDigest=hex(digest.digest());signatureAssets=List.copyOf(assets);signatureOwner=owner;
+            }catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+        }
+        String signature=signatureDigest+":"+preferences.thumbnailMiB()+":"+preferences.automaticOffline();
+        if(signature.equals(warmSignature)){
+            if(warmScheduled==warmGeneration.get()||offlineProgress.running()||offlineProgress.full()||offlineProgress.failed()==0||warmRetries>=2||System.currentTimeMillis()<warmRetryAt)return;
+            warmRetries++;
+        }else warmRetries=0;
+        warmSignature=signature;long ticket=warmGeneration.incrementAndGet();warmScheduled=ticket;
         List<AssetSummary> snapshot=List.copyOf(assets);
         offlineExecutor.execute(()->{
-            int count=cachedAssets(client.server(),snapshot).size(),failed=0;boolean full=false;
+            try{
+            Set<String> counted=new java.util.HashSet<>();for(AssetSummary asset:cachedAssets(client.server(),snapshot))counted.add(asset.assetId());
+            int count=counted.size(),failed=0;boolean full=false;
             boolean enabled=preferences.automaticOffline()&&networkAvailable;
             publishWarm(ticket,new OfflineProgress(count,snapshot.size(),enabled,false,0),listener);
             if(!enabled)return;
             long last=0;
             for(AssetSummary asset:snapshot){
                 if(closed||ticket!=warmGeneration.get()||!networkAvailable)break;
-                if(photos.thumbnail(client.server(),asset).isFile()||photos.pinned(client.server(),asset).isFile())continue;
-                boolean already=hasCached(client.server(),asset);
+                if(photos.thumbnail(client.server(),asset).isFile()||photos.pinned(client.server(),asset).isFile()){if(counted.add(asset.assetId()))count++;continue;}
                 try{
                     if(!photos.thumbnailRoom()){full=true;break;}
                     if(!ensureThumbnail(client,client.server(),asset,false,ticket)){full=true;break;}
-                    if(!already)count++;
-                }catch(Exception error){if(ticket!=warmGeneration.get()||!networkAvailable)break;failed++;}
+                    if(counted.add(asset.assetId()))count++;
+                }catch(Exception|OutOfMemoryError error){if(error instanceof OutOfMemoryError)cache.evictAll();if(ticket!=warmGeneration.get()||!networkAvailable)break;failed++;}
                 long now=System.currentTimeMillis();if(now-last>=500){last=now;publishWarm(ticket,new OfflineProgress(count,snapshot.size(),true,false,failed),listener);}
             }
+            if(!closed&&ticket==warmGeneration.get())count=cachedAssets(client.server(),snapshot).size();
             publishWarm(ticket,new OfflineProgress(count,snapshot.size(),false,full,failed),listener);
+            }catch(OutOfMemoryError pressure){
+                cache.evictAll();OfflineProgress last=offlineProgress;
+                publishWarm(ticket,new OfflineProgress(Math.min(last.cached(),snapshot.size()),snapshot.size(),false,false,Math.max(1,last.failed())),listener);
+            }finally{if(warmScheduled==ticket)warmScheduled=0;}
         });
     }
     private void publishWarm(long ticket,OfflineProgress progress,Consumer<OfflineProgress> listener){
-        if(closed||ticket!=warmGeneration.get())return;offlineProgress=progress;
+        if(closed||ticket!=warmGeneration.get())return;if(!progress.running()&&progress.failed()>0)warmRetryAt=System.currentTimeMillis()+30000;offlineProgress=progress;
         if(listener!=null)main.post(()->{if(!closed&&ticket==warmGeneration.get())listener.accept(progress);});
     }
     private void loadPhoto(NikkiSyncClient client,app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,ImageView target,boolean preview,boolean allowNetwork){
+        if(allowNetwork&&!shared(server,asset)){loadPhoto(null,server,asset,target,preview,false);return;}
         if(closed)return;
         String identity=server.serverId()+":"+server.tlsFingerprintSha256()+":"+asset.assetId();
         String key=(preview?"preview:":"thumbnail:")+(preview?PhotoCacheKey.preview(server,asset):PhotoCacheKey.thumbnail(server,asset));
@@ -196,6 +230,12 @@ public final class ImageLoader {
         executor.execute(()->{
             boolean acquired=false;
             try{
+                if(allowNetwork&&!shared(server,asset))return;
+                if(!shared(server,asset)){
+                    Bitmap pin=photos.pinned(server,asset).isFile()?photos.readThumbnail(server,asset):null;
+                    if(pin==null){File old=pinnedFile(assetKey(server,asset));if(old.isFile())pin=decodeDisplayFile(old);}
+                    if(pin!=null)show(target,key,pin);return;
+                }
                 if(preview){previewDecode.acquire();acquired=true;}
                 synchronized(downloadLocks[(PhotoCacheKey.thumbnail(server,asset).hashCode()&0x7fffffff)%downloadLocks.length]){
                     Bitmap bitmap=cache.get(key);if(bitmap!=null){show(target,key,bitmap);return;}
@@ -207,7 +247,7 @@ public final class ImageLoader {
                             bitmap=photos.readPreview(server,asset);
                             if(bitmap==null&&allowNetwork&&networkAvailable&&client!=null){
                                 File temp=downloadPhoto(client,asset,true,0);
-                                try{photos.storePreview(server,asset,temp);if(!photos.thumbnail(server,asset).isFile())photos.storeThumbnail(server,asset,temp,true);bitmap=photos.readPreview(server,asset);}
+                                try{if(!shared(server,asset))return;photos.storePreview(server,asset,temp,()->shared(server,asset));if(!photos.thumbnail(server,asset).isFile())photos.storeThumbnail(server,asset,temp,true,()->shared(server,asset));bitmap=photos.readPreview(server,asset);}
                                 finally{temp.delete();}
                             }
                         }else{
@@ -215,29 +255,31 @@ public final class ImageLoader {
                             if(bitmap==null&&allowNetwork&&networkAvailable&&client!=null){ensureThumbnail(client,server,asset,true,0);bitmap=photos.readThumbnail(server,asset);}
                         }
                     }
-                    if(bitmap!=null){cache.put(key,bitmap);show(target,key,bitmap);}
+                    if(bitmap!=null){if(!shared(server,asset))return;cache.put(key,bitmap);show(target,key,bitmap);}
                 }
-            }catch(Exception ignored){/* The cached small still stays visible if a preview cannot be reached. */}
+            }catch(OutOfMemoryError pressure){cache.evictAll();}
+            catch(Exception ignored){/* The cached small still stays visible if a preview cannot be reached. */}
             finally{if(acquired)previewDecode.release();}
         });
     }
     private void show(ImageView target,String key,Bitmap bitmap){main.post(()->{if(!closed&&key.equals(target.getTag()))target.setImageBitmap(bitmap);});}
     private boolean ensureThumbnail(NikkiSyncClient client,app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,boolean evict,long ticket)throws Exception{
+        if(!shared(server,asset))throw new java.io.IOException("Photo outside shared library");
         synchronized(downloadLocks[(PhotoCacheKey.thumbnail(server,asset).hashCode()&0x7fffffff)%downloadLocks.length]){
             if(photos.thumbnail(server,asset).isFile()||photos.pinned(server,asset).isFile())return true;
             if(ensureLocalThumbnail(server,asset,evict))return true;
             File temp=downloadPhoto(client,asset,false,ticket);
-            try{return photos.storeThumbnail(server,asset,temp,evict);}finally{temp.delete();}
+            try{if(!shared(server,asset))throw new java.io.IOException("Photo outside shared library");return photos.storeThumbnail(server,asset,temp,evict,()->shared(server,asset));}finally{temp.delete();}
         }
     }
     private boolean ensureLocalThumbnail(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,boolean evict)throws Exception{
         if(photos.thumbnail(server,asset).isFile()||photos.pinned(server,asset).isFile())return true;
-        File large=photos.preview(server,asset);if(large.isFile())return photos.storeThumbnail(server,asset,large,evict);
+        File large=photos.preview(server,asset);if(large.isFile())return photos.storeThumbnail(server,asset,large,evict,()->shared(server,asset));
         File legacy=diskFile(assetKey(server,asset));if(!legacy.isFile())legacy=pinnedFile(assetKey(server,asset));if(!legacy.isFile())return false;
         // Migrate only the exact old revision, and validate a known source hash before trusting it.
         String expected=PhotoCacheKey.contentHash(asset,false);if(expected!=null&&!expected.equals(fileHash(legacy)))return false;
-        if(!photos.storeThumbnail(server,asset,legacy,evict))return false;
-        if(java.util.Objects.equals(PhotoCacheKey.resource(asset,false),PhotoCacheKey.resource(asset,true)))photos.storePreview(server,asset,legacy);
+        if(!photos.storeThumbnail(server,asset,legacy,evict,()->shared(server,asset)))return false;
+        if(java.util.Objects.equals(PhotoCacheKey.resource(asset,false),PhotoCacheKey.resource(asset,true)))photos.storePreview(server,asset,legacy,()->shared(server,asset));
         // Keep bounded v1 entries for older organizer/favorite snapshots, whose keys lack content hashes.
         // They age out under the existing legacy budget; a migration never erases a pending preview.
         return true;

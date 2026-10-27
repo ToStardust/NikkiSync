@@ -313,7 +313,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         return identity!=null?identity:source.getTag();
     }
     private static Drawable copy(Drawable drawable){return drawable==null?null:drawable.getConstantState()==null?drawable:drawable.getConstantState().newDrawable().mutate();}
-    private void tintHeader(View v){if(v instanceof TextView text){text.setTextColor(Color.WHITE);if(v instanceof Button){if("完成".contentEquals(text.getText()))text.setText("关闭");text.setBackgroundColor(Color.TRANSPARENT);}}if(v instanceof android.view.ViewGroup group)for(int i=0;i<group.getChildCount();i++)tintHeader(group.getChildAt(i));}
+    private void tintHeader(View v){if(v instanceof TextView text){text.setTextColor(Color.WHITE);if(v instanceof Button){if("完成".contentEquals(text.getText()))text.setText("关闭");if(!"photo-selection".equals(v.getTag()))text.setBackgroundColor(Color.TRANSPARENT);}}if(v instanceof android.view.ViewGroup group)for(int i=0;i<group.getChildCount();i++)tintHeader(group.getChildAt(i));}
     private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
 
     private final class SharedImage extends View {

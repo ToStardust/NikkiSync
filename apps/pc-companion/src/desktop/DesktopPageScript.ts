@@ -1,5 +1,6 @@
 import {extraScanDirectoriesScript} from './ExtraScanDirectoriesPanel.js'
 import {organizerScript} from './OrganizerPanel.js'
+import {accountSyncScript} from './AccountSyncPanel.js'
 export const desktopPageScript = `
 ${organizerScript}
 (()=>{
@@ -105,6 +106,7 @@ ${organizerScript}
     }
   });
   ${extraScanDirectoriesScript}
+  ${accountSyncScript}
   bridge?.postMessage({type:'getAutostart'});
   if(!bridge)document.querySelector('#autostart-note').textContent='请在 Windows 应用内设置。';
   autostart.onchange=()=>{autostart.disabled=true;bridge?.postMessage({type:'setAutostart',enabled:autostart.checked});};

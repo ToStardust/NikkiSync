@@ -30,8 +30,10 @@ export const extraScanDirectoriesScript=String.raw`
       const row=document.createElement('div');row.className='scan-folder-card';
       const title=document.createElement('strong');title.textContent=item.path.split(/[\\/]/).filter(Boolean).pop()||'照片目录';row.appendChild(title);
       const name=document.createElement('p');name.textContent=item.path;name.className='scan-folder-path';row.appendChild(name);
-      const mode=document.createElement('p');mode.className='page-subtitle';mode.textContent=item.mode==='native'?'暖暖原生相册 · 包含子文件夹':'外部图片目录 · 包含子文件夹';row.appendChild(mode);
-      const remove=document.createElement('button');remove.className='secondary';remove.textContent=extraRemoval===item.id?'确认移除（保留原文件）':'移除';remove.disabled=extraBusy;
+      const spinning=item.source==='spinning_momo'||item.source===undefined&&/(?:^|[/\\\\])(?:SpinningMomo|旋转吧大喵)(?:[/\\\\]|$)/i.test(item.path);
+      const mode=document.createElement('p');mode.className='page-subtitle';mode.textContent=item.mode==='native'?'暖暖原生相册 · 包含子文件夹':spinning?'旋转吧大喵 · 包含子文件夹':'外部图片目录 · 包含子文件夹';row.appendChild(mode);
+      if(item.mode==='images'){const source=document.createElement('button');source.dataset.action='mark-spinning-momo';source.className='secondary';source.textContent=spinning?'取消旋转吧大喵标记':'标记为旋转吧大喵';source.disabled=extraBusy;source.onclick=()=>extraOperation(()=>extraRequest('source',{id:item.id,source:spinning?'other':'spinning_momo'}));row.appendChild(source);}
+      const remove=document.createElement('button');remove.dataset.action='remove-scan-directory';remove.className='secondary';remove.textContent=extraRemoval===item.id?'确认移除（保留原文件）':'移除';remove.disabled=extraBusy;
       remove.onclick=async()=>{if(extraBusy)return;if(extraRemoval!==item.id){extraRemoval=item.id;renderExtraState(extraLastState);return;}await extraOperation(async()=>{await extraRequest('remove',{id:item.id});extraRemoval=undefined;});};row.appendChild(remove);list.appendChild(row);
     }
     if(!(state.directories||[]).length){const empty=document.createElement('p');empty.className='page-subtitle';empty.textContent='尚未添加额外目录，默认游戏相册仍会自动扫描。';list.appendChild(empty);}
@@ -48,7 +50,7 @@ export const extraScanDirectoriesScript=String.raw`
   }
   async function extraOperation(work){
     if(extraBusy)return;extraBusy=true;extraButtons();extraMessage.textContent='正在更新目录并扫描照片，照片较多时可能需要一些时间…';
-    try{await work();extraBusy=false;await loadExtraDirectories();}catch(error){extraMessage.textContent=error.message;}finally{extraBusy=false;extraButtons();if(extraLastState)renderExtraState({...extraLastState,message:extraMessage.textContent});}
+    try{await work();extraBusy=false;await loadExtraDirectories();if(!document.querySelector('#sync-account-content').hidden)void loadSyncAccounts();}catch(error){extraMessage.textContent=error.message;}finally{extraBusy=false;extraButtons();if(extraLastState)renderExtraState({...extraLastState,message:extraMessage.textContent});}
   }
   extraAdd.onclick=()=>{if(!extraBusy)bridge?.postMessage({type:'chooseExtraScanDirectory'});};
   extraSpinning.onclick=()=>{if(!extraBusy)bridge?.postMessage({type:'chooseSpinningMomoDirectory'});};
@@ -60,7 +62,7 @@ export const extraScanDirectoriesScript=String.raw`
     if(event.data?.type!=='extraScanDirectorySelected'||typeof event.data.path!=='string'||extraBusy)return;
     extraBusy=true;extraButtons();extraPreview.hidden=true;extraMessage.textContent='正在识别所选目录…';
     try{
-      const proposal=await extraRequest('inspect',{path:event.data.path});extraProposal=proposal.id;
+      const proposal=await extraRequest('inspect',{path:event.data.path,...(event.data.source==='spinning_momo'?{source:'spinning_momo'}:{})});extraProposal=proposal.id;
       document.querySelector('#scan-directory-preview-roots').textContent=proposal.roots.map(item=>item.path).join('\n');
       document.querySelector('#scan-directory-preview-note').textContent='预览发现'+(proposal.limited?'至少':'')+proposal.images+'张图片、'+proposal.videos+'段视频。'+proposal.hint+(proposal.limited?'此处为有限预览，加入后会完整扫描。':'');
       extraPreview.hidden=false;extraMessage.textContent='请核对以上目录，确认后才会开始共享。';

@@ -16,6 +16,7 @@ public final class ChromeHost extends FrameLayout {
     private ProgressiveTopBlurView topBlur;
     private int insetTop, insetBottom, insetLeft, insetRight;
     private View top, bottom;
+    private boolean headerOnlyBlur;
     private View[] scrolling = new View[0];
     public ChromeHost(Context context) {
         super(context);
@@ -39,6 +40,8 @@ public final class ChromeHost extends FrameLayout {
     public FrameLayout controlsLayer(){return controls;}
     public ContentBackdrop backdrop(){return backdrop;}
     public void setScrolling(boolean value){topBlur.setScrolling(value);}
+    /** Ambient form pages keep body text sharp; photo pages retain the full progressive blur. */
+    public void limitTopBlurToHeader(){headerOnlyBlur=true;updateSpacing();}
     public void addDockEffect(View anchor){
         LiquidGlassDockView dock=new LiquidGlassDockView(getContext(),backdrop,anchor);
         effects.addView(dock,new LayoutParams(-1,-1));
@@ -58,6 +61,7 @@ public final class ChromeHost extends FrameLayout {
     }
     private void updateSpacing() {
         if(top==null) return;
+        if(headerOnlyBlur){LayoutParams blur=(LayoutParams)topBlur.getLayoutParams();int height=insetTop+top.getHeight()+dp(8);if(blur.height!=height){blur.height=height;topBlur.setLayoutParams(blur);}}
         int side=dp(18);
         LayoutParams a=(LayoutParams)top.getLayoutParams(), b=(LayoutParams)bottom.getLayoutParams();
         if(a.topMargin!=insetTop || a.leftMargin!=side+insetLeft || a.rightMargin!=side+insetRight) {

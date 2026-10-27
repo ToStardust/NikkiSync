@@ -117,6 +117,7 @@ public final class FavoritePhotoStore extends SQLiteOpenHelper {
         row.put("thumbnailSha256",asset.thumbnailSha256());row.put("previewSha256",asset.previewSha256());
         row.put("fullPreviewResourceId",asset.fullPreviewResourceId());row.put("fullPreviewSha256",asset.fullPreviewSha256());
         row.put("mediaFingerprint",asset.mediaFingerprint());
+        row.put("sourcePath",asset.sourcePath());row.put("sourceFolder",asset.sourceFolder());row.put("sizeBytes",asset.sizeBytes());
         return row;
     }
 
@@ -127,7 +128,7 @@ public final class FavoritePhotoStore extends SQLiteOpenHelper {
                 row.optBoolean("hasMetadata", false), optional(row, "thumbnailResourceId"), optional(row, "previewResourceId"),
                 optional(row, "gameVersion"), row.optString("gameVersionSource", "unknown"),
                 optional(row,"thumbnailSha256"),optional(row,"previewSha256"),
-                optional(row,"fullPreviewResourceId"),optional(row,"fullPreviewSha256"),optional(row,"mediaFingerprint"));
+                optional(row,"fullPreviewResourceId"),optional(row,"fullPreviewSha256"),optional(row,"mediaFingerprint")).withSource(optional(row,"sourcePath"),optional(row,"sourceFolder"),row.has("sizeBytes")&&!row.isNull("sizeBytes")?row.getLong("sizeBytes"):null);
     }
 
     private static String optional(JSONObject row, String key) {

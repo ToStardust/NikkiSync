@@ -12,8 +12,20 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class) @Config(sdk=35)
 public class PhotoCacheSettingsTest {
+    @Test public void explicitlyRequestedFillKeepsScreenOnOnlyWhileForegroundWorkIsRunning()throws Exception{
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();invoke(activity,"buildUi");ImageLoader loader=new ImageLoader(activity);
+        try{
+            for(var entry:java.util.Map.of("imageLoader",loader,"connectionForeground",true,"cacheWakeRequested",true).entrySet()){Field f=MainActivity.class.getDeclaredField(entry.getKey());f.setAccessible(true);f.set(activity,entry.getValue());}
+            var state=(app.nikkisync.mobile.net.ConnectionState)field(activity,"connectionState");state.httpResult(state.session(),true);
+            Field progress=ImageLoader.class.getDeclaredField("offlineProgress");progress.setAccessible(true);progress.set(loader,new ImageLoader.OfflineProgress(1,10,true,false,0));
+            invoke(activity,"updateCacheWakeLock");assertTrue((activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)!=0);
+            progress.set(loader,new ImageLoader.OfflineProgress(10,10,false,false,0));invoke(activity,"updateCacheWakeLock");assertEquals(0,activity.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            invoke(activity,"showCacheSettings");assertTrue(allText((View)field(activity,"cacheSettingsPage")).contains("保持亮屏"));
+        }finally{activity.navigationHost().close();loader.shutdown();for(String name:new String[]{"io","organizerIo","organizerNetworkIo"})((java.util.concurrent.ExecutorService)field(activity,name)).shutdownNow();}
+    }
     @Test public void offlineSettingsExposeSeparatePersistentDiskAndMemoryChoicesAndDoNotStack()throws Exception{
         MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();invoke(activity,"buildUi");invoke(activity,"showSettings");
+        new PhotoCachePreferences(activity).setThumbnailMiB(1024);
         button(activity.navigationHost(),"缓存与离线整理").performClick();
         assertEquals(2,activity.navigationHost().overlayCount());invoke(activity,"showCacheSettings");assertEquals(2,activity.navigationHost().overlayCount());
         View page=(View)field(activity,"cacheSettingsPage");String text=allText(page);

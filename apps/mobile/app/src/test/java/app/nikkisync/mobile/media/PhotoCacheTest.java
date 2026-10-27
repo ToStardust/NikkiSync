@@ -21,6 +21,97 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=35)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class PhotoCacheTest {
+    @Test public void excludedAccountPendingPreviewStillOpensWhileThePhoneIsOnline()throws Exception{
+        var context=RuntimeEnvironment.getApplication();AtomicInteger requests=new AtomicInteger();ImageLoader loader=new ImageLoader(context,(client,photo,id)->{requests.incrementAndGet();throw new IOException("excluded network request");});File file=source(jpeg(40,30));
+        try{var photo=asset("excluded-pending",1,"a".repeat(64));loader.photos.storeThumbnail(PC,photo,file,true);loader.pinForOrganizer(PC,photo);loader.reconcileLibraryIds(PC,List.of(photo.assetId()),List.of());
+            ImageView image=new ImageView(context);loader.loadPreview(new NikkiSyncClient(PC,null),photo,image);await(()->image.getDrawable()!=null);assertEquals(0,requests.get());assertFalse(loader.photos.thumbnail(PC,photo).exists());
+        }finally{file.delete();loader.shutdown();}
+    }
+    @Test public void accountRemovalClearsDuplicateDiskVariantsAndKeepsOtherComputerPixels()throws Exception{
+        var context=RuntimeEnvironment.getApplication();File folder=new File(context.getFilesDir(),"photo-thumbnails-v2");folder.mkdirs();
+        var first=asset("duplicate-account",1,"a".repeat(64));var later=asset("duplicate-account",2,"b".repeat(64));var kept=asset("kept-account",1,"a".repeat(64));
+        var other=new PairedServer("other-pc","PC","invalid.local",28080,"other-cert","","",0);byte[] bytes=jpeg(40,30);
+        for(String name:List.of(PhotoCacheKey.fileName(PC,first,false),PhotoCacheKey.fileName(PC,later,false),PhotoCacheKey.fileName(PC,kept,false),PhotoCacheKey.fileName(other,first,false)))java.nio.file.Files.write(new File(folder,name).toPath(),bytes);
+        var disk=new PhotoDiskCache(context,new PhotoCachePreferences(context));assertEquals(4,disk.thumbnailNames().size());disk.removeOrdinary(PC,first.assetId());
+        assertEquals(2,disk.thumbnailNames().size());assertTrue(disk.thumbnail(PC,kept).isFile());assertTrue(disk.thumbnail(other,first).isFile());
+    }
+    @Test public void scopeRemovalDropsOnlyOrdinaryCacheAndPreservesPendingPinsAndOtherPhotos()throws Exception{
+        var context=RuntimeEnvironment.getApplication();var disk=new PhotoDiskCache(context,new PhotoCachePreferences(context));
+        AssetSummary removed=asset("removed-account",1,"a".repeat(64)),retained=asset("retained-account",1,"b".repeat(64));File file=source(jpeg(40,30));
+        try{disk.storeThumbnail(PC,removed,file,false);disk.storePreview(PC,removed,file);disk.pin(PC,removed);disk.storeThumbnail(PC,retained,file,false);
+            disk.removeOrdinary(PC,removed);assertFalse(disk.thumbnail(PC,removed).exists());assertFalse(disk.preview(PC,removed).exists());assertTrue(disk.pinned(PC,removed).exists());assertTrue(disk.thumbnail(PC,retained).exists());
+        }finally{file.delete();}
+    }
+    @Test public void queuedRecoveryTicksCoalesceAndDoNotSpendTheRetryBudgetWithoutWork()throws Exception{
+        var context=RuntimeEnvironment.getApplication();AtomicInteger requests=new AtomicInteger();var release=new java.util.concurrent.CountDownLatch(1);
+        ImageLoader loader=new ImageLoader(context,(client,photo,id)->{requests.incrementAndGet();throw new IOException("generated persistent failure");});
+        try{
+            var client=new NikkiSyncClient(PC,null);var items=List.of(asset("queued-retry",1,"a".repeat(64)));loader.warmThumbnails(client,items,null);await(()->loader.offlineProgress().failed()==1&&!loader.offlineProgress().running());
+            var field=ImageLoader.class.getDeclaredField("offlineExecutor");field.setAccessible(true);var worker=(java.util.concurrent.ExecutorService)field.get(loader);worker.submit(()->{}).get();
+            worker.execute(()->{try{release.await();}catch(InterruptedException ignored){}});
+            var retry=ImageLoader.class.getDeclaredField("warmRetryAt");retry.setAccessible(true);retry.setLong(loader,0);loader.warmThumbnails(client,items,null);loader.warmThumbnails(client,items,null);release.countDown();worker.submit(()->{}).get();assertEquals(2,requests.get());
+            retry.setLong(loader,0);loader.warmThumbnails(client,items,null);worker.submit(()->{}).get();assertEquals(3,requests.get());
+            retry.setLong(loader,0);loader.warmThumbnails(client,items,null);worker.submit(()->{}).get();assertEquals(3,requests.get());
+        }finally{release.countDown();loader.shutdown();}
+    }
+    @Test public void foregroundThumbnailsPublishedDuringFillAreIncludedInProgress()throws Exception{
+        var context=RuntimeEnvironment.getApplication();byte[] bytes=jpeg(40,30);var started=new java.util.concurrent.CountDownLatch(1);var resume=new java.util.concurrent.CountDownLatch(1);
+        ImageLoader loader=new ImageLoader(context,(client,photo,id)->{started.countDown();if(!resume.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new IOException("fixture timeout");return connection(bytes);});
+        File source=source(bytes);AssetSummary first=asset("foreground-count-a",1,hash(bytes)),second=asset("foreground-count-b",1,hash(bytes));
+        try{
+            loader.warmThumbnails(new NikkiSyncClient(PC,null),List.of(first,second),null);assertTrue(started.await(3,java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue(loader.photos.storeThumbnail(PC,second,source,true));resume.countDown();await(()->!loader.offlineProgress().running()&&loader.photos.thumbnail(PC,first).isFile());
+            assertEquals(2,loader.cachedAssets(PC,List.of(first,second)).size());assertEquals(2,loader.offlineProgress().cached());
+        }finally{resume.countDown();loader.shutdown();source.delete();}
+    }
+    @Test public void actualPrefetchPassesFiveHundredAndRestartKeepsAllPixelsWithoutRequests()throws Exception{
+        var context=RuntimeEnvironment.getApplication();byte[] bytes=jpeg(32,24);String sha=hash(bytes);AtomicInteger requests=new AtomicInteger();
+        List<AssetSummary> items=new ArrayList<>();for(int i=0;i<720;i++)items.add(asset("actual-fill-"+i,1,sha));
+        ImageLoader.PhotoSource transport=(client,photo,id)->{requests.incrementAndGet();return connection(bytes);};ImageLoader loader=new ImageLoader(context,transport);
+        try{
+            loader.warmThumbnails(new NikkiSyncClient(PC,null),items,null);long end=System.currentTimeMillis()+30000;
+            while(System.currentTimeMillis()<end&&(loader.offlineProgress().running()||loader.offlineProgress().cached()<720)){Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();Thread.sleep(10);}
+            assertEquals(720,loader.offlineProgress().cached());assertEquals(0,loader.offlineProgress().failed());assertEquals(720,requests.get());assertEquals(720,loader.cachedAssets(PC,items).size());loader.shutdown();
+            loader=new ImageLoader(context,transport);loader.setNetworkAvailable(false);assertEquals(720,loader.cachedAssets(PC,items).size());loader.setNetworkAvailable(true);loader.warmThumbnails(new NikkiSyncClient(PC,null),items,null);
+            final ImageLoader restarted=loader;await(()->restarted.offlineProgress().cached()==720&&!restarted.offlineProgress().running());assertEquals(720,requests.get());
+        }finally{loader.shutdown();}
+    }
+    @Test public void failedFillHasABoundedAutomaticRetryForTheSameLibrary()throws Exception{
+        var context=RuntimeEnvironment.getApplication();byte[] bytes=jpeg(40,30);AtomicInteger requests=new AtomicInteger();java.util.concurrent.atomic.AtomicBoolean fail=new java.util.concurrent.atomic.AtomicBoolean(true);
+        ImageLoader loader=new ImageLoader(context,(client,photo,id)->{requests.incrementAndGet();if(fail.get())throw new IOException("generated transient failure");return connection(bytes);});
+        try{
+            var client=new NikkiSyncClient(PC,null);var items=List.of(asset("retry-fill",1,hash(bytes)));loader.warmThumbnails(client,items,null);await(()->loader.offlineProgress().failed()==1&&!loader.offlineProgress().running());
+            loader.warmThumbnails(client,items,null);Thread.sleep(40);assertEquals(1,requests.get());
+            fail.set(false);var retry=ImageLoader.class.getDeclaredField("warmRetryAt");retry.setAccessible(true);retry.setLong(loader,0);loader.warmThumbnails(client,items,null);await(()->loader.offlineProgress().cached()==1&&!loader.offlineProgress().running());assertEquals(2,requests.get());
+        }finally{loader.shutdown();}
+    }
+    @Test public void temporaryMemoryAndReadFailuresDoNotDeleteValidOfflineImages()throws Exception{
+        var context=RuntimeEnvironment.getApplication();var choices=new PhotoCachePreferences(context);var normal=new PhotoDiskCache(context,choices);
+        File file=source(jpeg(80,60));var photo=asset("read-pressure",1,"a".repeat(64));
+        try{
+            normal.storeThumbnail(PC,photo,file,true);normal.storePreview(PC,photo,file);
+            var pressured=new PhotoDiskCache(context,choices,(image,edge)->{throw new OutOfMemoryError("generated memory-pressure fixture");});
+            assertNull(pressured.readThumbnail(PC,photo));assertNull(pressured.readPreview(PC,photo));
+            assertTrue(normal.thumbnail(PC,photo).isFile());assertTrue(normal.preview(PC,photo).isFile());
+            var busy=new PhotoDiskCache(context,choices,(image,edge)->{throw new IOException("generated read failure");});
+            assertNull(busy.readThumbnail(PC,photo));assertNull(busy.readPreview(PC,photo));
+            assertEquals(1,busy.usage().thumbnails());assertEquals(1,busy.usage().previews());
+            var restored=new PhotoDiskCache(context,choices);Bitmap small=restored.readThumbnail(PC,photo),large=restored.readPreview(PC,photo);assertNotNull(small);assertNotNull(large);small.recycle();large.recycle();
+        }finally{file.delete();}
+    }
+    @Test public void recoveredConnectionRestartsOfflineFillWithoutManualRefresh()throws Exception{
+        var context=RuntimeEnvironment.getApplication();byte[] bytes=jpeg(40,40);AtomicInteger requests=new AtomicInteger();
+        ImageLoader loader=new ImageLoader(context,(client,asset,id)->{requests.incrementAndGet();return connection(bytes);});
+        var activity=Robolectric.buildActivity(app.nikkisync.mobile.MainActivity.class).get();
+        try{
+            var build=activity.getClass().getDeclaredMethod("buildUi");build.setAccessible(true);build.invoke(activity);
+            for(var entry:Map.of("imageLoader",loader,"client",new NikkiSyncClient(PC,null),"pairedServer",PC,"libraryLoadedForSession",true,"connectionForeground",true).entrySet()){var field=activity.getClass().getDeclaredField(entry.getKey());field.setAccessible(true);field.set(activity,entry.getValue());}
+            var field=activity.getClass().getDeclaredField("assets");field.setAccessible(true);((List<AssetSummary>)field.get(activity)).addAll(List.of(asset("recovered-a",1,hash(bytes)),asset("recovered-b",1,hash(bytes))));
+            field=activity.getClass().getDeclaredField("connectionState");field.setAccessible(true);var state=(app.nikkisync.mobile.net.ConnectionState)field.get(activity);
+            var render=activity.getClass().getDeclaredMethod("renderConnectionStatus");render.setAccessible(true);render.invoke(activity);assertEquals(0,requests.get());
+            state.httpResult(state.session(),true);render.invoke(activity);await(()->loader.offlineProgress().cached()==2);assertEquals(2,requests.get());
+        }finally{loader.shutdown();activity.navigationHost().close();for(String name:List.of("io","organizerIo","organizerNetworkIo")){var field=activity.getClass().getDeclaredField(name);field.setAccessible(true);((java.util.concurrent.ExecutorService)field.get(activity)).shutdownNow();}}
+    }
     @Test public void moreThanTwentyThousandCachedPhotosRemainAvailableOfflineAndPinnedIntentSurvivesPruning()throws Exception{
         var context=RuntimeEnvironment.getApplication();byte[] bytes=jpeg(48,48);List<AssetSummary> photos=new ArrayList<>();File directory=new File(context.getFilesDir(),"photo-thumbnails-v2");directory.mkdirs();
         for(int i=0;i<21005;i++){var photo=asset("over-limit-"+i,1,"a".repeat(64));photos.add(photo);try(var out=new FileOutputStream(new File(directory,PhotoCacheKey.fileName(PC,photo,false)))){out.write(bytes);}}
@@ -28,8 +119,11 @@ public class PhotoCacheTest {
         try{
             organizer.remember(app.nikkisync.mobile.storage.OrganizerStore.scope(PC),photos);var restored=loader.cachedAssets(PC,organizer.library(app.nikkisync.mobile.storage.OrganizerStore.scope(PC)));
             assertEquals(21005,restored.size());assertEquals("over-limit-21004",restored.get(21004).assetId());
-            organizer.enqueue(app.nikkisync.mobile.storage.OrganizerStore.scope(PC),List.of(restored.get(20800)));loader.pinForOrganizer(PC,restored.get(20800));loader.photos.trim(0,0);
+            organizer.enqueue(app.nikkisync.mobile.storage.OrganizerStore.scope(PC),List.of(restored.get(20800)));loader.pinForOrganizer(PC,restored.get(20800));
+            long started=System.nanoTime();loader.reconcileLibraryIds(PC,restored.stream().map(AssetSummary::assetId).toList(),List.of(restored.get(0)));System.out.println("generated21005ScopeRemovalMs="+(System.nanoTime()-started)/1_000_000);assertEquals(1,loader.photos.thumbnailNames().size());
+            loader.photos.trim(0,0);
             assertTrue(loader.hasCached(PC,restored.get(20800)));assertEquals(1,organizer.entries(app.nikkisync.mobile.storage.OrganizerStore.scope(PC)).size());
+            ImageView pending=new ImageView(context);loader.loadOffline(PC,restored.get(20800),pending);await(()->pending.getDrawable()!=null);
         }finally{loader.shutdown();organizer.close();}
     }
     static final PairedServer PC=new PairedServer("photo-cache-pc","PC","invalid.local",28080,"cert","","",0);

@@ -114,13 +114,15 @@ async function main(): Promise<void> {
 
   startupPhase = 'database-and-tls'
   markStartup('database-and-tls')
+  const initialExtraDirectories=loadExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE)
+  let scanDirectories:ExtraScanDirectories|undefined
   const runtime: PcCompanionRuntime = new PcCompanionRuntime({
     onStartupStage: markStartup,
     databaseFile: DATABASE_FILE,
     remoteBridge: true,
     scanner: {
       allowMissingInstallation:true,
-      extraDirectories:loadExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE),
+      extraDirectories:initialExtraDirectories,
       retiredExtraDirectories:loadRetiredExtraDirectories(EXTRA_SCAN_DIRECTORIES_FILE),
       onProgress: progress => {
         if (!startupScanning) return
@@ -160,6 +162,7 @@ async function main(): Promise<void> {
       }
     } : {}),
     server: {
+      accountSourceDirectories:()=>scanDirectories?.state().directories??initialExtraDirectories,
       host: process.env.NIKKISYNC_BIND ?? '0.0.0.0',
       port: Number(process.env.NIKKISYNC_PORT ?? 28080),
       mdns: process.env.NIKKISYNC_MDNS !== '0',
@@ -206,9 +209,11 @@ async function main(): Promise<void> {
   })
   startupPhase = 'desktop-control'
   markStartup('desktop-control')
+  scanDirectories=new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop(),()=>runtime.server.accounts.sourceDirectoriesChanged())
   const dashboard = createDesktopControlServer({
+    accounts:runtime.server.accounts,
     deletions:runtime.deletions,
-    scanDirectories:new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop()),
+    scanDirectories,
     metadataPrivacy:{getState:()=>onlineConsent.state(),setEnabled:(enabled,version)=>{
       if(enabled&&version!==onlineConsent.state().policyVersion)throw new Error('Current privacy policy must be accepted')
       if(!enabled){onlineConsent.setEnabled(false);runtime.metadataResolver?.stop()}

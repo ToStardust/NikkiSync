@@ -12,7 +12,7 @@ public enum PayloadPreparationStep
 {
     ReadManifest, ValidateManifest, CreateCache, CheckCachePath, AcquireCacheLock,
     ValidateCache, ValidateArchive, ValidateEntries, CreateStaging, ExtractFiles,
-    BackupCache, PublishCache, Ready
+    BackupCache, PublishCache, VerifyPublishedCache, Ready
 }
 
 // The ZIP and its file hashes are build artifacts embedded in the desktop executable.
@@ -113,10 +113,14 @@ public static class RuntimePayload
                     step?.Invoke(PayloadPreparationStep.BackupCache);
                     RejectLink(target);
                     // Preserve the old folder for diagnosis; never overwrite a running binary.
-                    Directory.Move(target, target + ".bad-" + Guid.NewGuid().ToString("N"));
+                    MoveCacheDirectory(target, target + ".bad-" + Guid.NewGuid().ToString("N"),root);
                 }
                 step?.Invoke(PayloadPreparationStep.PublishCache);
-                Directory.Move(staging, target);
+                MoveCacheDirectory(staging, target,root);
+                // A wait for another reader must not make post-extraction changes
+                // executable. Verify the final directory before reporting Ready.
+                step?.Invoke(PayloadPreparationStep.VerifyPublishedCache);
+                if(!IsValid(target,files))throw new InvalidDataException("运行文件提交后的校验未通过。");
                 step?.Invoke(PayloadPreparationStep.Ready);
                 progress?.Invoke(1);
                 return target;
@@ -124,11 +128,31 @@ public static class RuntimePayload
             finally
             {
                 // Only this invocation's freshly created, contained temporary folder is removed.
-                if (Directory.Exists(staging) && Path.GetFullPath(staging).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    Directory.Delete(staging, true);
+                try
+                {
+                    if (Directory.Exists(staging) && Path.GetFullPath(staging).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    {RejectLink(staging);Directory.Delete(staging, true);}
+                }
+                // A locked temporary file must not hide the original startup error.
+                // Leave only this invocation's staging folder; it is never accepted
+                // as a usable runtime on subsequent launches.
+                catch(Exception cleanupError) when(cleanupError is IOException or UnauthorizedAccessException){}
             }
         }
         finally { if (acquired) mutex.ReleaseMutex(); }
+    }
+
+    private static void MoveCacheDirectory(string source,string destination,string root)
+    {
+        int[] delays=[100,200,400,800,1000];
+        for(int attempt=0;;attempt++)
+        {
+            RejectLink(root);RejectLink(source);
+            try{Directory.Move(source,destination);return;}
+            catch(Exception error) when(attempt<delays.Length&&(error is IOException or UnauthorizedAccessException)
+                &&(error.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021)))
+            {Thread.Sleep(delays[attempt]);}
+        }
     }
 
     private static bool IsValid(string target, IReadOnlyList<PayloadFile> files)

@@ -20,7 +20,7 @@ export function loadExtraScanDirectories(file:string):ExtraScanRoot[]{
     for(const entry of value.directories){
       if(!entry||typeof entry.path!=='string'||entry.path.length>4096||!path.isAbsolute(entry.path)||path.parse(entry.path).root===entry.path||!['native','images'].includes(entry.mode))continue
       if(result.some(previous=>overlaps(previous.path,entry.path)))continue
-      result.push({id:idFor(entry.path),path:path.resolve(entry.path),mode:entry.mode})
+      result.push({id:idFor(entry.path),path:path.resolve(entry.path),mode:entry.mode,...(entry.mode==='images'&&['spinning_momo','other'].includes(entry.source)?{source:entry.source}:{})})
     }
     return result
   }catch{return []}
@@ -42,10 +42,11 @@ export class ExtraScanDirectories{
   private operations:Promise<unknown>=Promise.resolve()
   private busy=false
   private lastResult=''
-  constructor(private readonly file:string,private readonly scanner:ScannerService,private readonly onScopeChanged?:()=>Promise<void>){this.directories=loadExtraScanDirectories(file)}
+  constructor(private readonly file:string,private readonly scanner:ScannerService,private readonly onScopeChanged?:()=>Promise<void>,private readonly onSourcesChanged?:()=>void){this.directories=loadExtraScanDirectories(file)}
   state(){return {directories:this.directories.map(entry=>({...entry})),automaticRoots:this.scanner.getAutomaticRoots(),busy:this.busy,message:this.lastResult,scannerStatus:this.scanner.getStatus().status}}
 
-  async inspect(selected:string):Promise<ExtraDirectoryProposal>{
+  async inspect(selected:string,source?:unknown):Promise<ExtraDirectoryProposal>{
+    if(source!==undefined&&source!=='spinning_momo')throw new Error('invalid_source')
     if(typeof selected!=='string'||selected.length>4096||!path.isAbsolute(selected))throw new Error('invalid_directory')
     let canonical:string
     try{canonical=await realpath(selected);if(!(await stat(canonical)).isDirectory())throw new Error()}catch{throw new Error('directory_unavailable')}
@@ -77,6 +78,7 @@ export class ExtraScanDirectories{
     const existing=await resolveScopes([...this.directories.map(item=>item.path),...this.scanner.getAutomaticRoots()])
     const unique=roots.filter((root,index)=>!roots.some((other,otherIndex)=>otherIndex<index&&overlaps(root.path,other.path))&&!existing.some(added=>overlaps(root.path,added)))
     if(unique.length===0)throw new Error('already_covered')
+    if(source==='spinning_momo')for(const root of unique)if(root.mode==='images')root.source='spinning_momo'
     if(this.directories.length+unique.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     let images=0,videos=0,observed=0,folders=0,limited=false
     const visit=async(directory:string,depth:number):Promise<void>=>{
@@ -118,11 +120,19 @@ export class ExtraScanDirectories{
     return this.state()
   }).then(()=>this.state())}
   rescan():Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{const result=await this.scanner.setExtraDirectories(this.directories);this.lastResult=result.errors.length?'扫描完成，部分目录暂不可读；已保留之前的索引，请确认磁盘在线后重试。':'扫描完成，手机相册会自动同步更新。';return this.state()}).then(()=>this.state())}
+  setSource(id:string,source:unknown):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{
+    if(source!=='spinning_momo'&&source!=='other')throw new Error('invalid_source')
+    const entry=this.directories.find(root=>root.id===id);if(!entry)throw new Error('directory_not_found');if(entry.mode!=='images')throw new Error('invalid_source')
+    const previous=this.directories,next:ExtraScanRoot[]=previous.map(root=>root.id===id?{...root,source}:root)
+    this.save(next);this.directories=next
+    try{this.onSourcesChanged?.()}catch(error){this.directories=previous;this.save(previous);throw error}
+    this.lastResult='目录来源已更新，可在“同步与连接 → 同步账号设置”中单独勾选。';return this.state()
+  })}
   private async change(next:ExtraScanRoot[]):Promise<void>{
     const previous=this.directories
     this.save(next,previous.filter(entry=>!next.some(item=>item.id===entry.id)).map(entry=>entry.path))
-    try{await this.onScopeChanged?.();await this.scanner.setExtraDirectories(next);this.directories=next}
-    catch(error){this.save(previous);await this.scanner.setExtraDirectories(previous);throw error}
+    try{await this.onScopeChanged?.();await this.scanner.setExtraDirectories(next);this.directories=next;this.onSourcesChanged?.()}
+    catch(error){this.directories=previous;this.save(previous);await this.scanner.setExtraDirectories(previous);throw error}
   }
   private save(entries:ExtraScanRoot[],retiredRoots:string[]=[]):void{
     try{if(lstatSync(this.file).isSymbolicLink())throw new Error('unsafe_settings')}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}

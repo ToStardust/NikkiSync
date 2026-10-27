@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import './game-version-english-names.test.js'
 import { readFileSync } from 'node:fs'
 import { AssetRepository, AppSettingsRepository, DatabaseManager, SyncReadRepository } from '@nikkisync/database'
 import { getGameVersionReleases, inferInfinityNikkiGameVersion, setRemoteGameVersionReleases } from '../src/server/GameVersionCalendar.js'
-import { GameVersionUpdateService, parseOfficialGameVersion } from '../src/server/GameVersionUpdateService.js'
+import { GameVersionUpdateService, parseOfficialGameVersion,parseOfficialReleaseNotices } from '../src/server/GameVersionUpdateService.js'
 import { mapAssetSummary } from '../src/server/row-mappers.js'
+
+test('calendar updates a library across page boundaries without materializing every metadata row',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize();const assets=new AssetRepository(db),original=AssetRepository.prototype.list
+  try{
+    for(let i=0;i<513;i++)assets.create({assetId:`bounded_${String(i).padStart(4,'0')}`,assetType:'photo',capturedAt:'2026-09-25T00:00:00Z',discoveredAt:'2026-10-27T00:00:00Z',metadata:{raw:{nativeParamPayload:'x'.repeat(4096)}}})
+    new AppSettingsRepository(db).set('game_version_calendar_applied',[])
+    AssetRepository.prototype.list=()=>{throw Error('unbounded metadata list prohibited in this fixture')}
+    const service=new GameVersionUpdateService(db,{fetchPage:async()=>{throw Error('offline')}})
+    assert.equal(await service.runOnce(),513);assert.equal(mapAssetSummary(assets.getById('bounded_0512')!,[]).gameVersion,'2.10');service.stop()
+  }finally{AssetRepository.prototype.list=original;setRemoteGameVersionReleases([]);db.close()}
+})
+
+test('official publisher maintenance notices can preseed exact future boundaries without guessing cadence',()=>{
+  const now=Date.parse('2026-10-27T00:00:00Z')
+  const notice={appnews:{appid:3164330,newsitems:[{feedname:'steam_community_announcements',date:Math.floor(now/1000),title:'October 29: Version 2.11 Update Notice',contents:'Infinity Nikki will undergo a version update from 12:50 to 20:00 on October 29, 2026 (UTC-7).'}]}}
+  assert.deepEqual(parseOfficialReleaseNotices(JSON.stringify(notice),now),[{version:'2.11',effectiveAt:'2026-10-30T03:00:00.000Z'}])
+  notice.appnews.newsitems[0]!.feedname='untrusted_feed';assert.deepEqual(parseOfficialReleaseNotices(JSON.stringify(notice),now),[])
+  notice.appnews.newsitems[0]!.feedname='steam_community_announcements';notice.appnews.newsitems[0]!.contents='The event ends on October 29, 2026';assert.deepEqual(parseOfficialReleaseNotices(JSON.stringify(notice),now),[])
+})
 
 test('2.10 calendar uses confirmed reopening boundary and preserves old photos', () => {
   assert.equal(inferInfinityNikkiGameVersion('2026-09-24T02:59:59Z'), '2.9')

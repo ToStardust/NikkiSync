@@ -112,5 +112,54 @@ public sealed class RuntimePayloadTests : IDisposable
         Assert.Empty(Directory.GetDirectories(_root, "*.tmp-*"));
     }
 
+    [Fact]
+    public async Task Publication_recovers_when_a_newly_extracted_file_is_briefly_in_use()
+    {
+        var zip=Archive((File.Path,Content));FileStream? held=null;Task? release=null;
+        try
+        {
+            var path=RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:step=>
+            {
+                if(step!=PayloadPreparationStep.PublishCache)return;
+                var staging=Assert.Single(Directory.GetDirectories(_root,"*.tmp-*"));
+                held=new FileStream(Path.Combine(staging,File.Path),FileMode.Open,FileAccess.Read,FileShare.Read);
+                release=Task.Run(async()=>{await Task.Delay(300);held.Dispose();});
+            });
+            Assert.Equal(Content,System.IO.File.ReadAllBytes(Path.Combine(path,File.Path)));
+            Assert.Empty(Directory.GetDirectories(_root,"*.tmp-*"));
+        }
+        finally{held?.Dispose();if(release is not null)await release;}
+    }
+
+    [Fact]
+    public void Persistent_publication_denial_preserves_the_original_error_and_other_user_data()
+    {
+        Directory.CreateDirectory(_root);var marker=Path.Combine(_root,"pairing-retention-fixture.txt");System.IO.File.WriteAllText(marker,"keep");
+        var zip=Archive((File.Path,Content));FileStream? held=null;var elapsed=System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var error=Assert.ThrowsAny<IOException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:step=>
+            {
+                if(step==PayloadPreparationStep.PublishCache)held=new FileStream(Path.Combine(Assert.Single(Directory.GetDirectories(_root,"*.tmp-*")),File.Path),FileMode.Open,FileAccess.Read,FileShare.None);
+            }));
+            Assert.Equal(unchecked((int)0x80070005),error.HResult);
+            Assert.Equal("FILE_ACCESS",StartupFailure.FromException(error).Code);
+            Assert.True(elapsed.Elapsed<TimeSpan.FromSeconds(10));Assert.Equal("keep",System.IO.File.ReadAllText(marker));
+            Assert.False(Directory.Exists(Path.Combine(_root,Hash(zip))));
+        }
+        finally{held?.Dispose();}
+    }
+
+    [Fact]
+    public void Files_changed_between_extraction_and_publication_are_not_marked_ready()
+    {
+        var zip=Archive((File.Path,Content));var steps=new List<PayloadPreparationStep>();
+        Assert.Throws<InvalidDataException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:step=>
+        {
+            steps.Add(step);if(step==PayloadPreparationStep.PublishCache)System.IO.File.WriteAllBytes(Path.Combine(Assert.Single(Directory.GetDirectories(_root,"*.tmp-*")),File.Path),Encoding.UTF8.GetBytes("changed after extraction"));
+        }));
+        Assert.DoesNotContain(PayloadPreparationStep.Ready,steps);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

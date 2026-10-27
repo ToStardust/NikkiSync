@@ -13,7 +13,7 @@ public final class PhotoCachePreferences {
     public PhotoCachePreferences(Context context){values=context.getApplicationContext().getSharedPreferences("nikkisync.photo-cache-v2",Context.MODE_PRIVATE);}
     private int read(String name,int fallback,int[] allowed){int value=values.getInt(name,fallback);for(int choice:allowed)if(choice==value)return value;return fallback;}
     private void write(String name,int value,int[] allowed){for(int choice:allowed)if(choice==value){values.edit().putInt(name,value).apply();return;}throw new IllegalArgumentException("Unsupported cache limit");}
-    public int thumbnailMiB(){return read("thumbnails",1024,THUMBNAIL_MIB);}
+    public int thumbnailMiB(){return read("thumbnails",2048,THUMBNAIL_MIB);}
     public int previewMiB(){return read("previews",512,PREVIEW_MIB);}
     public int memoryMiB(){return read("memory",128,MEMORY_MIB);}
     public long thumbnailBytes(){return thumbnailMiB()*MIB;}

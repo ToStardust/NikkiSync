@@ -1,11 +1,33 @@
 import { AppSettingsRepository, AssetRepository, ChangeJournalRepository, type DatabaseManager } from '@nikkisync/database'
 import { getGameVersionReleases, inferInfinityNikkiGameVersion, setRemoteGameVersionReleases, type VersionRelease } from './GameVersionCalendar.js'
 import {restoreEnglishNames,updateEnglishNames} from './GameVersionEnglishNames.js'
+import {versionAssetPages} from './VersionAssetPages.js'
 
 const OFFICIAL_PAGE = 'https://infinitynikki.nuanpaper.com/home'
 const CACHE_KEY = 'game_version_calendar'
 const APPLIED_KEY = 'game_version_calendar_applied'
 const INTERVAL = 6 * 60 * 60_000
+const OFFICIAL_NOTICES='https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=3164330&count=30&maxlength=4000&feeds=steam_community_announcements&format=json'
+
+export function parseOfficialReleaseNotices(json:string,now=Date.now()):VersionRelease[]{
+  const data=JSON.parse(json);if(data?.appnews?.appid!==3164330||!Array.isArray(data.appnews.newsitems))return []
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December']
+  const releases:VersionRelease[]=[]
+  for(const item of data.appnews.newsitems.slice(0,300)){
+    if(item.feedname!=='steam_community_announcements'||typeof item.date!=='number'||item.date*1000>now||typeof item.title!=='string'||typeof item.contents!=='string')continue
+    const version=/\b(?:Version\s*|V)(\d{1,3}\.\d{1,3})\b/i.exec(item.title)?.[1]
+    if(!version||!/update notice/i.test(item.title))continue
+    const text=item.contents.replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ')
+    const time=/version update from \d{1,2}:\d{2} to (\d{1,2}):(\d{2}) on ([A-Za-z]+) (\d{1,2}), (\d{4}) \(UTC([+-]\d{1,2})\)/i.exec(text)
+    if(!time)continue
+    const hour=Number(time[1]),minute=Number(time[2]),month=months.findIndex(m=>m.toLowerCase()===time[3]!.toLowerCase()),day=Number(time[4]),year=Number(time[5]),offset=Number(time[6])
+    if(month<0||hour>23||minute>59||Math.abs(offset)>14)continue
+    const local=Date.UTC(year,month,day,hour,minute),date=new Date(local),effective=local-offset*3600000
+    if(date.getUTCDate()!==day||date.getUTCMonth()!==month||effective<Date.parse('2024-12-05T00:00:00Z')||effective>now+90*86400000)continue
+    releases.push({version,effectiveAt:new Date(effective).toISOString()})
+  }
+  return releases.sort((a,b)=>Date.parse(a.effectiveAt)-Date.parse(b.effectiveAt))
+}
 
 export function parseOfficialGameVersion(html: string, now = Date.now()): VersionRelease | undefined {
   const text = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')
@@ -19,8 +41,8 @@ export function parseOfficialGameVersion(html: string, now = Date.now()): Versio
   return { version: match[1]!, effectiveAt: new Date(start + 86400000).toISOString(), uncertainFrom: new Date(start).toISOString() }
 }
 
-async function fetchOfficialPage(signal: AbortSignal): Promise<string> {
-  const response = await fetch(OFFICIAL_PAGE, { signal, redirect: 'error', headers: { accept: 'text/html' } })
+async function fetchOfficialPage(signal: AbortSignal,url=OFFICIAL_PAGE): Promise<string> {
+  const response = await fetch(url, { signal, redirect: 'error', headers: { accept: '*/*' } })
   if (!response.ok || !response.body) throw new Error('Official version page unavailable')
   const chunks: Uint8Array[] = []; let size = 0
   const reader = response.body.getReader()
@@ -37,6 +59,7 @@ async function fetchOfficialPage(signal: AbortSignal): Promise<string> {
 interface Options {
   now?: () => number
   fetchPage?: (signal: AbortSignal) => Promise<string>
+  fetchNotices?: (signal:AbortSignal)=>Promise<string>
   onCalendarChanged?: (releases: VersionRelease[]) => void
 }
 
@@ -79,7 +102,7 @@ export class GameVersionUpdateService {
     return this.database.transaction(() => {
       let changed = 0
       const updatedAt = new Date(this.options.now?.() ?? Date.now()).toISOString()
-      for (const row of this.assets.list()) {
+      for (const row of versionAssetPages(this.database)) {
         if (row.asset_state === 'deleted' || !row.captured_at) continue
         try {
           const explicit = row.metadata_json ? JSON.parse(String(row.metadata_json))?.identity?.gameVersion : undefined
@@ -104,24 +127,19 @@ export class GameVersionUpdateService {
     try {
       changed = this.applyCalendar()
       const now = this.options.now?.() ?? Date.now()
-      const page = await (this.options.fetchPage ?? fetchOfficialPage)(AbortSignal.any([this.controller.signal, AbortSignal.timeout(8000)]))
-      if (this.stopped) return changed
-      const release = parseOfficialGameVersion(page, now)
-      if (!release) return changed
-      const current = getGameVersionReleases()
-      const versionParts = (v: string) => v.split('.').map(Number)
-      const [major, minor] = versionParts(release.version)
-      const newest = current[0]
-      if (newest) {
-        const [oldMajor, oldMinor] = versionParts(newest.version)
-        if (major! < oldMajor! || (major === oldMajor && minor! < oldMinor!)) return changed
-        if (major !== oldMajor || minor !== oldMinor) {
-          if (Date.parse(release.uncertainFrom!) <= Date.parse(newest.effectiveAt)) return changed
+      const candidates:VersionRelease[]=[]
+      try{const page=await(this.options.fetchPage??fetchOfficialPage)(AbortSignal.any([this.controller.signal,AbortSignal.timeout(8000)]));const release=parseOfficialGameVersion(page,now);if(release)candidates.push(release)}catch{}
+      if(this.options.fetchNotices||!this.options.fetchPage)try{const notices=await(this.options.fetchNotices??(signal=>fetchOfficialPage(signal,OFFICIAL_NOTICES)))(AbortSignal.any([this.controller.signal,AbortSignal.timeout(8000)]));candidates.push(...parseOfficialReleaseNotices(notices,now))}catch{}
+      if(this.stopped)return changed
+      for(const release of candidates){
+        const current=getGameVersionReleases(),existing=current.find(r=>r.version===release.version)
+        if(existing&&!existing.tentative){
+          // Exact maintenance information may refine a date-only boundary once.
+          if(!existing.uncertainFrom||release.uncertainFrom||Date.parse(release.effectiveAt)<Date.parse(existing.uncertainFrom)||Date.parse(release.effectiveAt)>Date.parse(existing.effectiveAt))continue
         }
+        if(!existing){const newest=current[0];if(newest){const [major,minor]=release.version.split('.').map(Number),[oldMajor,oldMinor]=newest.version.split('.').map(Number);if(major!<oldMajor!||major===oldMajor&&minor!<oldMinor!||Date.parse(release.uncertainFrom??release.effectiveAt)<=Date.parse(newest.effectiveAt))continue}}
+        setRemoteGameVersionReleases([...current.filter(r=>r.version!==release.version),release])
       }
-      // A hotfix may change the footer date without changing the game version.
-      // Preserve its first verified release date instead of moving old photos backwards.
-      setRemoteGameVersionReleases(current.some(r => r.version === release.version) ? current : [...current, release])
       changed += this.applyCalendar()
       const releases = getGameVersionReleases()
       this.settings.set(CACHE_KEY, { schemaVersion: 1, source: OFFICIAL_PAGE, checkedAt: new Date(now).toISOString(), releases })

@@ -1,6 +1,7 @@
 import { AppSettingsRepository, AssetRepository, ChangeJournalRepository, type DatabaseManager } from '@nikkisync/database'
 import {gameVersionEnglishName,setRemoteGameVersionNames} from '../wechat/GalleryRuntime.mjs'
 import {inferInfinityNikkiGameVersion} from './GameVersionCalendar.js'
+import {versionAssetPages} from './VersionAssetPages.js'
 
 const URL='https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=3164330&count=100&maxlength=100&feeds=steam_community_announcements&format=json'
 const KEY='game_version_english_names'
@@ -9,7 +10,7 @@ export function parseOfficialEnglishNames(json:string,now=Date.now()):Record<str
  const names:Record<string,string>={}
  for(const item of data.appnews.newsitems.slice(0,300)){
   if(item.feedname!=='steam_community_announcements'||typeof item.title!=='string'||typeof item.date!=='number'||item.date*1000>now)continue
-  const match=/Version\s+(\d{1,3}\.\d{1,3})\s*["“\[]([^"”\]]{1,120})["”\]]/i.exec(item.title)
+  const match=/\b(?:Version\s*|V)(\d{1,3}\.\d{1,3})\s*["“\[]([^"”\]]{1,120})["”\]]/i.exec(item.title)
   if(match&&/^[A-Za-z0-9][A-Za-z0-9 '\-:,]{0,119}$/.test(match[2]!))names[match[1]!]=match[2]!
  }return names
 }
@@ -31,7 +32,8 @@ export async function updateEnglishNames(db:DatabaseManager,signal:AbortSignal):
  db.transaction(()=>{
   const date=new Date().toISOString();settings.set(KEY,{...prior,...names},date)
   const journal=new ChangeJournalRepository(db)
-  for(const row of new AssetRepository(db).list()){
+  if(!changed.size)return
+  for(const row of versionAssetPages(db)){
    if(row.asset_state==='deleted')continue
    let explicit:string|undefined;try{explicit=JSON.parse(String(row.metadata_json??'{}'))?.identity?.gameVersion}catch{}
    const version=explicit||inferInfinityNikkiGameVersion(row.captured_at?String(row.captured_at):undefined)

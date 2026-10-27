@@ -66,6 +66,8 @@ public final class Models {
         private final String gameVersion, gameVersionSource;
         private final String thumbnailSha256, previewSha256, fullPreviewResourceId, fullPreviewSha256;
         private final String mediaFingerprint;
+        private String sourcePath,sourceFolder;
+        private Long sizeBytes;
         private final long revision;
         private final Integer width, height;
         private final boolean hasMotion, hasMetadata;
@@ -114,6 +116,13 @@ public final class Models {
         public String fullPreviewResourceId(){return fullPreviewResourceId;}
         public String fullPreviewSha256(){return fullPreviewSha256;}
         public String mediaFingerprint(){return mediaFingerprint;}
+        public String sourcePath(){return sourcePath;}
+        public String sourceFolder(){return sourceFolder;}
+        public Long sizeBytes(){return sizeBytes;}
+        public AssetSummary withSource(String path,String folder,Long size){
+            AssetSummary copy=new AssetSummary(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,thumbnailResourceId,previewResourceId,gameVersion,gameVersionSource,thumbnailSha256,previewSha256,fullPreviewResourceId,fullPreviewSha256,mediaFingerprint);
+            copy.sourcePath=path;copy.sourceFolder=folder;copy.sizeBytes=size;return copy;
+        }
     }
 
     public static final class AssetPage {

@@ -3,6 +3,14 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { desktopPageScript } from '../src/desktop/DesktopPageScript.js'
 import { renderDesktopPage } from '../src/desktop/DesktopPage.js'
+test('account selection belongs inside the sync and connection settings card', () => {
+  const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false})
+  const start=html.indexOf('<section class="settings-card glass" id="sync-connection-section">')
+  assert.ok(start>=0,'sync and connection card must have a stable landmark')
+  const card=html.slice(start,html.indexOf('</section>',start))
+  assert.ok(card.includes('同步与连接'))
+  assert.ok(card.includes('id="sync-account-section"'),'account settings should be inside this card')
+})
 test('pending indicator opens its own gallery page while settings stays separate', async () => {
   const ui=mount(async()=>({}),undefined,[{id:'pending1',state:'pending',online:true,message:'等待电脑确认',count:1,files:[{name:'photo.jpeg',folder:'HighQuality',size:1000}]}])
   await new Promise(resolve=>setImmediate(resolve))

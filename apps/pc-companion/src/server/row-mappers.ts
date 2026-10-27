@@ -129,6 +129,9 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
   const thumbnail = resources.find((resource) => resource.role === 'derived_thumbnail')
   const fullPreview = visual?.mimeType.startsWith('image/') ? visual : bestPreview
   const fingerprint=mediaFingerprint(resourceRows)
+  const source=resourceRows.find(r=>r.resource_id===visual?.resourceId)
+  const sourcePath=optionalString(source?.source_path)
+  const sourceFolder=sourcePath?.replace(/[\\/][^\\/]+$/,'')
   return {
     assetId: String(row.asset_id),
     type: String(row.asset_type) as AssetSummary['type'],
@@ -141,6 +144,8 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     hasMotion: resources.some((resource) => resource.role === 'source_motion'),
     hasMetadata: Boolean(row.metadata_json),
     ...(fingerprint?{mediaFingerprint:fingerprint}:{}),
+    ...(sourcePath?{sourcePath,sourceFolder:sourceFolder??''}:{}),
+    ...(visual?.sizeBytes===undefined?{}:{sizeBytes:visual.sizeBytes}),
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),

@@ -410,7 +410,7 @@ public partial class MainWindow : Window
             var spinning=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),"SpinningMomo");
             if(spinningMomo&&Directory.Exists(spinning))dialog.InitialDirectory=spinning;
             if(dialog.ShowDialog(this)!=true)return;
-            ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectorySelected",path=dialog.FolderName}));
+            ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectorySelected",path=dialog.FolderName,source=spinningMomo?"spinning_momo":(string?)null}));
         }
         catch(Exception){ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="extraScanDirectoryError",message="无法打开文件夹选择器，请关闭其他选择窗口后重试。"}));}
         finally{_extraFolderPickerOpen=false;}
@@ -707,12 +707,15 @@ public partial class MainWindow : Window
         if(!await UntilAsync("document.querySelector('#scan-directory-preview').hidden===false"))return false;
         await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#confirm-scan-directory').click();");
         if(!await UntilAsync("document.querySelector('#scan-directory-preview').hidden===true && document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')"))return false;
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("if(document.querySelector('#sync-account-content').hidden)document.querySelector('#sync-account-toggle').click();document.querySelector('#scan-directory-list button[data-action=mark-spinning-momo]').click();");
+        var sourceMarked=await UntilAsync("document.querySelector('#scan-directory-list').textContent.includes('取消旋转吧大喵标记')");
+        var sourceCardVisible=await UntilAsync("document.querySelector('#sync-account-list').textContent.includes('旋转吧大喵')");
         await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#extra-scan-section').scrollIntoView({block:'start'});");
         using(var image=File.Create(Path.Combine(_verificationDirectory,"extra-scan-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
-        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#scan-directory-list button').click();document.querySelector('#scan-directory-list button').click();");
+        await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('#scan-directory-list button[data-action=remove-scan-directory]').click();document.querySelector('#scan-directory-list button[data-action=remove-scan-directory]').click();");
         var removed=await UntilAsync("!document.querySelector('#scan-directory-list').textContent.includes('extra-photo-fixture')");
-        File.WriteAllText(Path.Combine(_verificationDirectory,"extra-scan-verification.json"),JsonSerializer.Serialize(new{previewConfirmed=true,added=true,removed,originalPreserved=File.Exists(photo),privateFixture=true}));
-        return removed&&File.Exists(photo);
+        File.WriteAllText(Path.Combine(_verificationDirectory,"extra-scan-verification.json"),JsonSerializer.Serialize(new{previewConfirmed=true,added=true,sourceMarked,sourceCardVisible,removed,originalPreserved=File.Exists(photo),privateFixture=true}));
+        return sourceMarked&&sourceCardVisible&&removed&&File.Exists(photo);
     }
 
     public async Task<bool> VerifyStartupFailureDiagnosticsAsync()

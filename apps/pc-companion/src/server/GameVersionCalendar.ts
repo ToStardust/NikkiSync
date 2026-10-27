@@ -2,12 +2,16 @@ export interface VersionRelease {
   version: string
   effectiveAt: string
   uncertainFrom?: string
+  tentative?: boolean
 }
 
 // Official update notices define the version boundary at server reopening after maintenance.
 // Recent update maintenance ends at 20:00 UTC-7, i.e. 03:00 UTC the following day.
 // 1.0 uses the global launch time instead of an update-maintenance boundary.
 const RELEASES: VersionRelease[] = [
+  // Official 2.11 event notices specify Oct 29 (UTC-7), not a maintenance end.
+  // Keep the transition unknown until the end of that date; precise notices override it.
+  { version:'2.11',effectiveAt:'2026-10-30T07:00:00.000Z',uncertainFrom:'2026-10-29T19:49:00.000Z',tentative:true },
   { version: '2.10', effectiveAt: '2026-09-24T03:00:00.000Z' },
   { version: '2.9', effectiveAt: '2026-08-28T03:00:00.000Z' },
   { version: '2.8', effectiveAt: '2026-07-17T03:00:00.000Z' },
@@ -46,7 +50,7 @@ export function setRemoteGameVersionReleases(releases: readonly VersionRelease[]
     merged.set(release.version, { ...release })
   }
   // Confirmed maintenance times outrank a footer that provides only a date.
-  for (const release of RELEASES) merged.set(release.version, release)
+  for (const release of RELEASES) if(!release.tentative||!merged.has(release.version))merged.set(release.version, release)
   activeReleases = [...merged.values()].sort((a,b) => Date.parse(b.effectiveAt)-Date.parse(a.effectiveAt))
 }
 

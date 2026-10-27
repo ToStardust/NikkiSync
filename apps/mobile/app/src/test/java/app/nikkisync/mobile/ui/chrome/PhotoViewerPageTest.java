@@ -11,6 +11,14 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class PhotoViewerPageTest {
+    @Test public void selectionCircleBackgroundSurvivesViewerHeaderTint(){
+        Fixture f=fixture();try{
+            f.page.preparePhoto(null);ScrollView scroll=new ScrollView(f.activity);LinearLayout body=new LinearLayout(f.activity);scroll.addView(body);
+            LinearLayout header=new LinearLayout(f.activity);Button check=new Button(f.activity);check.setTag("photo-selection");
+            var circle=new android.graphics.drawable.GradientDrawable();circle.setShape(android.graphics.drawable.GradientDrawable.OVAL);check.setBackground(circle);header.addView(check);body.addView(header);body.addView(new ImageView(f.activity));
+            f.page.setContentView(scroll);assertSame(circle,check.getBackground());
+        }finally{f.activity.nav.close();f.activity.finish();}
+    }
     @Test public void committedSwipeKeepsOutgoingPhotoUntilIncomingFinishesInBothDirections() throws Exception {
         for(int direction:new int[]{1,-1}) {
             Fixture f=fixture();

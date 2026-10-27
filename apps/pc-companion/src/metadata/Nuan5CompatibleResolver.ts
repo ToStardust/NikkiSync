@@ -73,6 +73,11 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
       const photo = recordOf(item)
       if (!photo) throw new Error('NUAN5 resolver returned an invalid decoded photo')
       return { metadata: normalizeNuan5Photo(photo), provider: this.id, ...(this.version ? { providerVersion: this.version } : {}), rawResponse: photo }
-    } finally { clearTimeout(timer) }
+    } finally {
+      // Connection setup may consume the initial slot before the peer receives it.
+      // Preserve a completion cooldown so a cold first request cannot cause a burst.
+      this.nextRequestAt=Math.max(this.nextRequestAt,Date.now()+(this.config.minIntervalMs??1000))
+      clearTimeout(timer)
+    }
   }
 }

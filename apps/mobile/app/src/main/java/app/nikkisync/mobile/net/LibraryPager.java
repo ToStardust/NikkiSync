@@ -10,8 +10,23 @@ import java.util.function.IntConsumer;
 public final class LibraryPager {
     private LibraryPager(){}
     @FunctionalInterface public interface Source {AssetPage read(String cursor,int limit)throws Exception;}
-    public record Result(List<AssetSummary> items,long baselineRevision,long latestRevision){}
+    public record Snapshot(List<AssetSummary> items,long revision){}
+    public record Result(List<AssetSummary> items,long baselineRevision,long latestRevision,boolean fromSnapshot){
+        public Result(List<AssetSummary> items,long baselineRevision,long latestRevision){this(items,baselineRevision,latestRevision,false);}
+    }
     public static Result read(Source source,BooleanSupplier current,IntConsumer progress)throws Exception{
+        return read(source,current,progress,null);
+    }
+    public static Result read(Source source,BooleanSupplier current,IntConsumer progress,Snapshot local)throws Exception{
+        if(local!=null&&local.revision()>=0){
+            if(!current.getAsBoolean())throw new CancellationException("Library session changed");
+            AssetPage head=source.read(null,1);
+            if(!current.getAsBoolean())throw new CancellationException("Library session changed");
+            if(head==null||head.items()==null||head.libraryRevision()<0)throw new IllegalStateException("图库版本响应无效");
+            boolean sameHead=head.items().isEmpty()?local.items().isEmpty():!local.items().isEmpty()&&head.items().get(0).assetId().equals(local.items().get(0).assetId())&&head.items().get(0).revision()==local.items().get(0).revision();
+            if(sameHead&&!head.items().isEmpty()&&head.items().get(0).sourcePath()!=null)sameHead=Objects.equals(head.items().get(0).sourcePath(),local.items().get(0).sourcePath())&&Objects.equals(head.items().get(0).sizeBytes(),local.items().get(0).sizeBytes());
+            if(head.libraryRevision()==local.revision()&&sameHead){if(progress!=null)progress.accept(local.items().size());return new Result(List.copyOf(local.items()),local.revision(),local.revision(),true);}
+        }
         LinkedHashMap<String,AssetSummary> photos=new LinkedHashMap<>();Set<String> cursors=new HashSet<>();
         String cursor=null;long baseline=-1,latest=0;
         while(true){

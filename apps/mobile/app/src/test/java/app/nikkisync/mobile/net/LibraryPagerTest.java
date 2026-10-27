@@ -7,6 +7,24 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class LibraryPagerTest {
+    @Test public void sourceDescriptorUpgradeInvalidatesAnOldSnapshotEvenWithoutMediaChanges()throws Exception{
+        AssetSummary old=photo(1,1),fresh=old.withSource("D:\\Photos\\a.jpeg","D:\\Photos",456L);
+        var result=LibraryPager.read((cursor,limit)->new AssetPage(List.of(fresh),null,12),()->true,null,new LibraryPager.Snapshot(List.of(old),12));
+        assertFalse(result.fromSnapshot());assertEquals(fresh.sourcePath(),result.items().get(0).sourcePath());
+    }
+    @Test public void cachedHeadMismatchFallsBackAndCancellationCannotPublishAReusedSnapshot()throws Exception{
+        var saved=new LibraryPager.Snapshot(List.of(photo(1,1)),12);AtomicInteger calls=new AtomicInteger();
+        var result=LibraryPager.read((cursor,limit)->{calls.incrementAndGet();return new AssetPage(List.of(photo(2,1)),null,12);},()->true,null,saved);
+        assertFalse(result.fromSnapshot());assertEquals("asset_2",result.items().get(0).assetId());assertEquals(2,calls.get());
+        var current=new java.util.concurrent.atomic.AtomicBoolean(true);assertThrows(CancellationException.class,()->LibraryPager.read((cursor,limit)->{current.set(false);return new AssetPage(saved.items(),null,12);},current::get,null,saved));
+    }
+    @Test public void unchangedVerifiedSnapshotNeedsOnlyARevisionProbeAndChangedLibraryStillReadsAllPages()throws Exception{
+        List<AssetSummary> saved=List.of(photo(1,1),photo(2,1));List<Integer> limits=new ArrayList<>();
+        var result=LibraryPager.read((cursor,limit)->{limits.add(limit);return new AssetPage(List.of(saved.get(0)),"next",10);},()->true,null,new LibraryPager.Snapshot(saved,10));
+        assertTrue(result.fromSnapshot());assertEquals(saved,result.items());assertEquals(List.of(1),limits);
+        limits.clear();var changed=LibraryPager.read((cursor,limit)->{limits.add(limit);return limit==1?new AssetPage(List.of(photo(3,1)),"next",11):new AssetPage(List.of(photo(3,1),photo(1,1),photo(2,1)),null,11);},()->true,null,new LibraryPager.Snapshot(saved,10));
+        assertFalse(changed.fromSnapshot());assertEquals(3,changed.items().size());assertEquals(List.of(1,500),limits);
+    }
     static AssetSummary photo(int n,long revision){return new AssetSummary("asset_"+n,"photo","ready",null,null,revision,100,100,false,false,null,"preview",null,null);}
     @Test public void readsSixtyFiveThousandWithoutAPhotoCountLimitAndKeepsTheBaselineForChanges()throws Exception{
         AtomicInteger pages=new AtomicInteger();List<Integer> progress=new ArrayList<>();

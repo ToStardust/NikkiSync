@@ -19,7 +19,7 @@ public final class ChromePage {
         chrome.contentLayer().addView(background,new FrameLayout.LayoutParams(-1,-1));monet.restore(activity,background);
     }
     public void photo(NikkiSyncClient client,AssetSummary asset){if(asset!=null)monet.updatePhoto(activity,client,asset,background);}
-    public void useAmbientBackground(){background.setVisibility(View.GONE);chrome.contentLayer().setBackgroundResource(app.nikkisync.mobile.R.drawable.bg_gallery_ambient);}
+    public void useAmbientBackground(){background.setVisibility(View.GONE);chrome.contentLayer().setBackgroundResource(app.nikkisync.mobile.R.drawable.bg_gallery_ambient);chrome.limitTopBlurToHeader();}
     public void setContentView(View content){
         LinearLayout body=content instanceof ScrollView scroll?(LinearLayout)scroll.getChildAt(0):(LinearLayout)content;
         View header=body.getChildAt(0);body.removeView(header);
