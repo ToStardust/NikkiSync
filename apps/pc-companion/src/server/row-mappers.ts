@@ -7,6 +7,8 @@ import type {
   NikkiAsset
 } from '@nikkisync/protocol'
 import { inferInfinityNikkiGameVersion } from './GameVersionCalendar.js'
+import {gameVersionEnglishName} from '../wechat/GalleryRuntime.mjs'
+import {mediaFingerprint} from './MediaFingerprint.js'
 
 function optionalString(value: unknown): string | undefined {
   return value === null || value === undefined || value === '' ? undefined : String(value)
@@ -18,6 +20,8 @@ function optionalNumber(value: unknown): number | undefined {
 
 function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhotoMetadata | undefined {
   if (!value) return undefined
+  const title=gameVersionEnglishName(value.identity?.gameVersion)
+  if(title)value={...value,identity:{...value.identity,gameVersionEnglishName:title}}
   const raw = value.raw && typeof value.raw === 'object'
     ? { ...(value.raw as Record<string, unknown>) }
     : undefined
@@ -70,9 +74,12 @@ export function mapAssetRow(row: Record<string, unknown>, resourceRows: Record<s
   const resources = resourceRows.map(mapResourceRow)
   const still = resources.find((resource) => resource.role === 'source_primary' || resource.role === 'source_high_quality')
   const motion = resources.find((resource) => resource.role === 'source_motion')
-  const metadata = publicMetadata(optionalString(row.metadata_json)
+  let metadata = publicMetadata(optionalString(row.metadata_json)
     ? JSON.parse(String(row.metadata_json)) as InfinityPhotoMetadata
     : undefined)
+  const inferred=summaryGameVersion(row).gameVersion
+  const title=gameVersionEnglishName(inferred)
+  if(metadata&&title)metadata={...metadata,identity:{...metadata.identity,...(!metadata.identity?.gameVersion&&inferred?{gameVersion:inferred}:{}),gameVersionEnglishName:title}}
   return {
     schemaVersion: 1,
     assetId: String(row.asset_id),
@@ -119,6 +126,12 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ?? resources.find((resource) => resource.role === 'source_low_quality')
     ?? resources.find((resource) => resource.role === 'source_primary')
     ?? resources.find((resource) => resource.role === 'source_high_quality')
+  const thumbnail = resources.find((resource) => resource.role === 'derived_thumbnail')
+  const fullPreview = visual?.mimeType.startsWith('image/') ? visual : bestPreview
+  const fingerprint=mediaFingerprint(resourceRows)
+  const source=resourceRows.find(r=>r.resource_id===visual?.resourceId)
+  const sourcePath=optionalString(source?.source_path)
+  const sourceFolder=sourcePath?.replace(/[\\/][^\\/]+$/,'')
   return {
     assetId: String(row.asset_id),
     type: String(row.asset_type) as AssetSummary['type'],
@@ -130,10 +143,16 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     ...(visual?.height === undefined ? {} : { height: visual.height }),
     hasMotion: resources.some((resource) => resource.role === 'source_motion'),
     hasMetadata: Boolean(row.metadata_json),
+    ...(fingerprint?{mediaFingerprint:fingerprint}:{}),
+    ...(sourcePath?{sourcePath,sourceFolder:sourceFolder??''}:{}),
+    ...(visual?.sizeBytes===undefined?{}:{sizeBytes:visual.sizeBytes}),
     ...(resources.find((resource) => resource.role === 'derived_thumbnail')?.resourceId
       ? { thumbnailResourceId: resources.find((resource) => resource.role === 'derived_thumbnail')!.resourceId }
       : {}),
     ...(bestPreview?.resourceId ? { previewResourceId: bestPreview.resourceId } : {}),
+    ...(thumbnail?.sha256 ? { thumbnailSha256: thumbnail.sha256 } : {}),
+    ...(bestPreview?.sha256 ? { previewSha256: bestPreview.sha256 } : {}),
+    ...(fullPreview?.resourceId ? { fullPreviewResourceId: fullPreview.resourceId, fullPreviewSha256: fullPreview.sha256 } : {}),
     ...summaryGameVersion(row)
   }
 }

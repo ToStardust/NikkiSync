@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import path from 'node:path'
 import { toPathKey, type MetadataDictionaryManifest } from '@nikkisync/core'
 import {
   AssetRepository,
@@ -59,6 +60,37 @@ test('schema initializes and passes quick/foreign-key checks', () => {
   assert.equal(database.connection.prepare('PRAGMA quick_check').get()?.quick_check, 'ok')
   assert.deepEqual(database.connection.prepare('PRAGMA foreign_key_check').all(), [])
   database.close()
+})
+
+test('obsolete LIVE ownership recovery refuses active owners, uncertain scope and changed identities',()=>{
+  for(const condition of ['active-owner','no-completed-scope','other-uid','changed-bytes','ordinary-photo','different-source-path']){
+    const {database,assets,journal}=setup(),root=path.resolve('synthetic-motion-scope'),source=path.join(root,'Good.mp4')
+    const resource={resourceId:'old-video',assetId:'old',role:'source_motion' as const,fileName:'Good.mp4',sourcePath:source,pathKey:toPathKey(source),mimeType:'video/mp4',fileExt:'.mp4',sizeBytes:10,sha256:'a'.repeat(64)}
+    try{
+      assets.reconcile({assetId:'old',assetType:'motion_photo',uid:'10001',discoveredAt:'2026-01-01T00:00:00Z',resources:[resource]})
+      const revision=journal.currentRevision()
+      const target={assetId:'new',assetType:condition==='ordinary-photo'?'photo' as const:'motion_photo' as const,uid:condition==='other-uid'?'20002':'10001',discoveredAt:'2026-01-01T00:00:00Z',resources:[{...resource,assetId:'new',resourceId:'new-video',...(condition==='changed-bytes'?{sha256:'b'.repeat(64)}:{}),...(condition==='different-source-path'?{sourcePath:path.join(root,'Other.mp4')}:{})}]}
+      assert.throws(()=>assets.reconcile(target,{activeAssetIds:new Set(condition==='active-owner'?['old','new']:['new']),completedRoots:condition==='no-completed-scope'?[]:[root]}),/UNIQUE/)
+      assert.equal(journal.currentRevision(),revision)
+      assert.equal(assets.getById('old')?.asset_state,'ready')
+      assert.equal(database.connection.prepare('SELECT asset_id FROM resources WHERE path_key=?').get(resource.pathKey)?.asset_id,'old')
+      assert.equal(assets.getById('new'),undefined)
+    }finally{database.close()}
+  }
+})
+
+test('obsolete LIVE reassociation rolls back old ownership and journal if the replacement cannot be indexed',()=>{
+  const {database,assets,journal}=setup(),root=path.resolve('synthetic-motion-rollback'),source=path.join(root,'Good.mp4')
+  const resource={resourceId:'old-video',assetId:'old',role:'source_motion' as const,fileName:'Good.mp4',sourcePath:source,pathKey:toPathKey(source),mimeType:'video/mp4',fileExt:'.mp4',sizeBytes:10,sha256:'a'.repeat(64)}
+  try{
+    assets.reconcile({assetId:'old',assetType:'motion_photo',uid:'10001',discoveredAt:'2026-01-01T00:00:00Z',resources:[resource]})
+    const revision=journal.currentRevision()
+    assert.throws(()=>assets.reconcile({assetId:'new',assetType:'motion_photo',uid:'10001',discoveredAt:'2026-01-01T00:00:00Z',resources:[{...resource,assetId:'new',resourceId:'new-video'},{...resource,role:'source_primary',assetId:'new',resourceId:'bad-cover',pathKey:toPathKey(path.join(root,'cover.jpeg')),sourcePath:path.join(root,'cover.jpeg'),sizeBytes:-1}]},{activeAssetIds:new Set(['new']),completedRoots:[root]}),/CHECK/)
+    assert.equal(journal.currentRevision(),revision)
+    assert.equal(assets.getById('old')?.asset_state,'ready')
+    assert.equal(database.connection.prepare('SELECT resource_id FROM resources WHERE path_key=?').get(resource.pathKey)?.resource_id,'old-video')
+    assert.equal(assets.getById('new'),undefined)
+  }finally{database.close()}
 })
 
 test('foreign keys reject orphan resources', () => {
@@ -197,4 +229,23 @@ test('paired-device count excludes revoked devices', () => {
   pairing.revoke('revoked')
   assert.equal(pairing.countActiveDevices(), 1)
   database.close()
+})
+
+test('dictionary thumbnail fallbacks round-trip with canonical entries and legacy raw data', () => {
+  const { database, dictionary } = setup()
+  dictionary.replaceSnapshot({ schemaVersion: 1, provider: 'fixture', providerVersion: '1', entries: [
+    { kind: 'clothing', id: '101', thumbnailFallbacks: ['https://example.test/hair.webp'] },
+    { kind: 'clothing', id: '102', raw: { thumbnailFallbacks: ['https://example.test/tops.webp', 123] } }
+  ] })
+  assert.deepEqual(dictionary.lookup('clothing', '101')?.thumbnailFallbacks, ['https://example.test/hair.webp'])
+  assert.deepEqual(dictionary.lookup('clothing', '102')?.thumbnailFallbacks, ['https://example.test/tops.webp'])
+  assert.deepEqual(dictionary.getActiveManifest()?.entries[0]?.thumbnailFallbacks, ['https://example.test/hair.webp'])
+  database.close()
+})
+test('gallery keyset pages use the chronology expression index on large libraries', () => {
+  const db = new DatabaseManager();db.initialize()
+  try {
+    const plan=db.connection.prepare("EXPLAIN QUERY PLAN SELECT * FROM assets WHERE asset_state <> 'deleted' ORDER BY COALESCE(captured_at,discovered_at) DESC,asset_id ASC LIMIT 500").all()
+    assert.match(JSON.stringify(plan),/idx_assets_gallery_order/)
+  } finally {db.close()}
 })

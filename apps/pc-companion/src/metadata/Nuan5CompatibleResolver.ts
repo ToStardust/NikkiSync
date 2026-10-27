@@ -1,4 +1,4 @@
-import type { InfinityPhotoMetadata } from '@nikkisync/core'
+import { normalizeNuan5Photo } from '@nikkisync/core'
 import type { PhotoMetadataResolveRequest, PhotoMetadataResolveResult, PhotoMetadataResolver } from './types.js'
 
 export interface Nuan5CompatibleResolverConfig {
@@ -11,10 +11,6 @@ export interface Nuan5CompatibleResolverConfig {
 }
 
 type DecodedPhoto = Record<string, unknown>
-
-function numberOf(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -29,36 +25,6 @@ function buildEncodedTuple(request: PhotoMetadataResolveRequest): string {
   const dataSegment = Buffer.from(request.nativeParamPayload, 'base64')
   if (hashSegment.length === 0 || dataSegment.length === 0) throw new Error('NUAN5 embedded segments are invalid Base64')
   return Buffer.concat([hashSegment, dataSegment]).toString('base64')
-}
-
-function mapDecodedPhoto(photo: DecodedPhoto): Partial<InfinityPhotoMetadata> {
-  const filter = recordOf(photo.filter)
-  const light = recordOf(photo.light)
-  const raw = recordOf(photo.raw)
-  const time = recordOf(raw?.time)
-  const pos = recordOf(raw?.pos)
-  const camera: NonNullable<Partial<InfinityPhotoMetadata>['camera']> = {}
-  const setCamera = (value: unknown, assign: (number: number) => void) => { const number = numberOf(value); if (number !== undefined) assign(number) }
-  setCamera(photo.focal, (value) => { camera.focalLength = value }); setCamera(photo.apeture, (value) => { camera.apertureSection = value }); setCamera(photo.brightness, (value) => { camera.brightness = value }); setCamera(photo.exposure, (value) => { camera.exposure = value })
-  setCamera(photo.contrast, (value) => { camera.contrast = value }); setCamera(photo.saturation, (value) => { camera.saturation = value }); setCamera(photo.vibrance, (value) => { camera.vibrance = value }); setCamera(photo.highlights, (value) => { camera.highlights = value })
-  setCamera(photo.shadow, (value) => { camera.shadows = value }); setCamera(photo.vignette, (value) => { camera.vignetteIntensity = value }); setCamera(photo.bloomIntensity, (value) => { camera.bloomIntensity = value }); setCamera(photo.bloomThreshold, (value) => { camera.bloomThreshold = value })
-  const filterMetadata: NonNullable<InfinityPhotoMetadata['filter']> = {}
-  if (filter?.f !== undefined) filterMetadata.id = String(filter.f)
-  const filterStrength = numberOf(filter?.s); if (filterStrength !== undefined) filterMetadata.strength = filterStrength
-  const lightMetadata: NonNullable<InfinityPhotoMetadata['lighting']> = {}
-  if (light?.l !== undefined) lightMetadata.id = String(light.l)
-  const lightStrength = numberOf(light?.s); if (lightStrength !== undefined) lightMetadata.strength = lightStrength
-  const coordinates: Record<string, number> = {}
-  for (const key of ['x', 'y', 'z']) { const value = numberOf(pos?.[key]); if (value !== undefined) coordinates[key] = value }
-  return {
-    ...(Object.keys(camera).length ? { camera } : {}),
-    ...(Object.keys(filterMetadata).length ? { filter: filterMetadata } : {}),
-    ...(Object.keys(lightMetadata).length ? { lighting: lightMetadata } : {}),
-    ...(Array.isArray(photo.clothes) ? { dressing: { clothes: photo.clothes } } : {}),
-    ...(Object.keys(coordinates).length ? { location: { coordinates } } : {}),
-    ...(time ? { photography: { time } } : {}),
-    raw: { nuan5: photo }
-  }
 }
 
 export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
@@ -90,12 +56,14 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
   }
 
   async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+    request.signal?.throwIfAborted()
     await this.waitForRequestSlot()
+    request.signal?.throwIfAborted()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 12_000)
     try {
       const body = { photos: { [request.uid]: [[request.nativeParamNuan5Md5!, buildEncodedTuple(request)]] }, raw_data: true, raw_id: true }
-      const response = await fetch(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'x-client': 'SpinningMomo' }, body: JSON.stringify(body), signal: controller.signal })
+      const response = await fetch(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'x-client': 'SpinningMomo' }, body: JSON.stringify(body), signal: request.signal?AbortSignal.any([controller.signal,request.signal]):controller.signal })
       const text = await response.text()
       if (!response.ok) throw new Error(`NUAN5 resolver HTTP ${response.status}: ${text.slice(0, 240)}`)
       const parsed = JSON.parse(text) as unknown
@@ -104,7 +72,12 @@ export class Nuan5CompatibleResolver implements PhotoMetadataResolver {
       if (typeof item === 'string') throw new Error(`NUAN5 resolver rejected photo: ${item}`)
       const photo = recordOf(item)
       if (!photo) throw new Error('NUAN5 resolver returned an invalid decoded photo')
-      return { metadata: mapDecodedPhoto(photo), provider: this.id, ...(this.version ? { providerVersion: this.version } : {}), rawResponse: photo }
-    } finally { clearTimeout(timer) }
+      return { metadata: normalizeNuan5Photo(photo), provider: this.id, ...(this.version ? { providerVersion: this.version } : {}), rawResponse: photo }
+    } finally {
+      // Connection setup may consume the initial slot before the peer receives it.
+      // Preserve a completion cooldown so a cold first request cannot cause a burst.
+      this.nextRequestAt=Math.max(this.nextRequestAt,Date.now()+(this.config.minIntervalMs??1000))
+      clearTimeout(timer)
+    }
   }
 }

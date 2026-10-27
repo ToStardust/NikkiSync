@@ -26,6 +26,11 @@ jobs:
       - run: npm ci
       - run: npm run mobile:validate
       - run: npm test
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.1'
+      - run: bun test apps/pc-companion/test/local-sync-server.test.ts --test-name-pattern 'production TLS'
+      - run: bun test tools/windows-performance/sqlite-cache.test.mjs
 
   android:
     runs-on: ubuntu-latest
@@ -41,6 +46,6 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.1.13356709' 'cmake;3.22.1'
       - run: chmod +x gradlew
       - run: ./gradlew testDebugUnitTest assembleDebug

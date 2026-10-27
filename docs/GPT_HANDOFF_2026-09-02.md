@@ -32,7 +32,7 @@ GPT 应通过 `coding-tools-mcp` 访问且仅修改此目录：
 D:\GAME\InfinityNikki Launcher\InfinityNikki\X6Game\CameraPartner\NikkiSync
 ```
 
-桌面入口为 `C:\Users\Stardust\Desktop\start-nikkisync-gpt-mcp.cmd`。它固定使用 `127.0.0.1:8767`、OAuth 和 `safe` 权限模式；端口不会与 PhotoLayout（8765）或 Neon Road（8766）冲突。启动后用户会从两个可见窗口取得当次 OAuth 密码和 Cloudflare 临时 URL。密码、URL、Cookie、Token 都不能写进代码、文档或对话记录。
+桌面入口为 `%USERPROFILE%\Desktop\start-nikkisync-gpt-mcp.cmd`。它固定使用 `127.0.0.1:8767`、OAuth 和 `safe` 权限模式；端口不会与 PhotoLayout（8765）或 Neon Road（8766）冲突。启动后用户会从两个可见窗口取得当次 OAuth 密码和 Cloudflare 临时 URL。密码、URL、Cookie、Token 都不能写进代码、文档或对话记录。
 
 桌面的 `NikkiSync PC` 文件夹是已构建的交付物，不是 GPT 的编辑目标。GPT 应修改本工作区源码并重新产出 `release/` 内容。
 

@@ -25,6 +25,16 @@ public final class EditedVariantStoreTest {
     @After public void tearDown() {
         store.close();
     }
+    @Test public void upgradeRetainsExistingLinksAndChecksTheirSelectedUris(){
+        store.close();context.deleteDatabase("nikkisync-edited-variants.db");
+        var old=context.openOrCreateDatabase("nikkisync-edited-variants.db",0,null);
+        old.execSQL("CREATE TABLE edited_variants (variant_id TEXT PRIMARY KEY,asset_id TEXT NOT NULL,uri TEXT NOT NULL UNIQUE,linked_at INTEGER NOT NULL,display_name TEXT,mime_type TEXT,source_saved_uri TEXT)");
+        old.execSQL("INSERT INTO edited_variants VALUES ('old','a','content://old',1,NULL,NULL,'source')");
+        old.setVersion(1);old.close();store=new EditedVariantStore(context);
+        assertEquals("old",store.findByUri("content://old").variantId());
+        assertEquals(EditedVariantStore.LinkStatus.DUPLICATE,store.linkSelected("a","source","content://copy","content://old",2,null,null).status());
+        assertEquals(1,store.loadAll().size());
+    }
 
     @Test public void oneAssetKeepsMultipleEditedVariantsInLinkOrder() {
         assertEquals(EditedVariantStore.LinkStatus.ADDED,
@@ -54,6 +64,13 @@ public final class EditedVariantStoreTest {
         assertEquals(EditedVariantStore.LinkStatus.CONFLICT, result.status());
         assertEquals("asset-a", result.conflictingAssetId());
         assertTrue(store.loadForAsset("asset-b").isEmpty());
+    }
+
+    @Test public void derivativeRetainsSelectedUriForDuplicateAndConflictChecks() {
+        store.linkSelected("a","content://source","content://generated/1","content://picked/1",1000L,"edit.jpg","image/jpeg");
+        assertEquals("content://generated/1",store.findByUri("content://picked/1").uri());
+        assertEquals(EditedVariantStore.LinkStatus.DUPLICATE,store.linkSelected("a","source","content://generated/2","content://picked/1",2000L,null,null).status());
+        assertEquals(EditedVariantStore.LinkStatus.CONFLICT,store.link("b","source","content://picked/1",2000L,null,null).status());
     }
 
     @Test public void unlinkRemovesOnlyRequestedAssociation() {

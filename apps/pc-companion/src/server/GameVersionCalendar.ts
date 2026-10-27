@@ -1,12 +1,18 @@
-interface VersionRelease {
+export interface VersionRelease {
   version: string
   effectiveAt: string
+  uncertainFrom?: string
+  tentative?: boolean
 }
 
 // Official update notices define the version boundary at server reopening after maintenance.
 // Recent update maintenance ends at 20:00 UTC-7, i.e. 03:00 UTC the following day.
 // 1.0 uses the global launch time instead of an update-maintenance boundary.
 const RELEASES: VersionRelease[] = [
+  // Official 2.11 event notices specify Oct 29 (UTC-7), not a maintenance end.
+  // Keep the transition unknown until the end of that date; precise notices override it.
+  { version:'2.11',effectiveAt:'2026-10-30T07:00:00.000Z',uncertainFrom:'2026-10-29T19:49:00.000Z',tentative:true },
+  { version: '2.10', effectiveAt: '2026-09-24T03:00:00.000Z' },
   { version: '2.9', effectiveAt: '2026-08-28T03:00:00.000Z' },
   { version: '2.8', effectiveAt: '2026-07-17T03:00:00.000Z' },
   { version: '2.7', effectiveAt: '2026-06-24T03:00:00.000Z' },
@@ -31,17 +37,30 @@ const RELEASES: VersionRelease[] = [
   { version: '1.0', effectiveAt: '2024-12-05T02:00:00.000Z' }
 ]
 
-const RELEASES_WITH_EPOCH = RELEASES.map((release) => ({
-  ...release,
-  epochMs: Date.parse(release.effectiveAt)
-}))
+let activeReleases = [...RELEASES]
 
-export function inferInfinityNikkiGameVersion(capturedAt: string | undefined): string | undefined {
+export function getGameVersionReleases(): VersionRelease[] { return activeReleases.map(r => ({ ...r })) }
+
+export function setRemoteGameVersionReleases(releases: readonly VersionRelease[]): void {
+  const merged = new Map<string, VersionRelease>()
+  for (const release of releases.slice(0, 256)) {
+    if (!/^\d{1,3}\.\d{1,3}$/.test(release.version) || !Number.isFinite(Date.parse(release.effectiveAt))) continue
+    if (release.uncertainFrom && (!Number.isFinite(Date.parse(release.uncertainFrom))
+      || Date.parse(release.uncertainFrom) >= Date.parse(release.effectiveAt))) continue
+    merged.set(release.version, { ...release })
+  }
+  // Confirmed maintenance times outrank a footer that provides only a date.
+  for (const release of RELEASES) if(!release.tentative||!merged.has(release.version))merged.set(release.version, release)
+  activeReleases = [...merged.values()].sort((a,b) => Date.parse(b.effectiveAt)-Date.parse(a.effectiveAt))
+}
+
+export function inferInfinityNikkiGameVersion(capturedAt: string | undefined, releases: readonly VersionRelease[] = activeReleases): string | undefined {
   if (!capturedAt) return undefined
   const capturedMs = Date.parse(capturedAt)
   if (!Number.isFinite(capturedMs)) return undefined
-  for (const release of RELEASES_WITH_EPOCH) {
-    if (capturedMs >= release.epochMs) return release.version
+  for (const release of releases) {
+    if (release.uncertainFrom && capturedMs >= Date.parse(release.uncertainFrom) && capturedMs < Date.parse(release.effectiveAt)) return undefined
+    if (capturedMs >= Date.parse(release.effectiveAt)) return release.version
   }
   return undefined
 }

@@ -21,7 +21,7 @@ export class DesktopStatusService {
   private readonly pairing: PairingRepository
 
   constructor(database: DatabaseManager) {
-    this.assets = new AssetRepository(database)
+    this.assets=new AssetRepository(database)
     this.pairing = new PairingRepository(database)
   }
 
@@ -31,7 +31,7 @@ export class DesktopStatusService {
       service: 'ready',
       host: input.host,
       port: input.port,
-      assets: input.assets ?? this.assets.list().length,
+      assets: input.assets ?? this.assets.countVisible(),
       pairedDevices,
       firstRun: pairedDevices === 0
     }

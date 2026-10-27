@@ -33,6 +33,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
 
     private static final int TYPE_HEADER = 0;
     private static final int TYPE_PHOTO = 1;
+    private static final Object SELECTION = new Object();
 
     private final Context context;
     private final ImageLoader images;
@@ -42,6 +43,8 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final List<AssetSummary> items = new ArrayList<>();
     private final Set<String> selected = new HashSet<>();
     private boolean singleAdjustDispatch;
+    private app.nikkisync.mobile.model.Models.PairedServer offlineServer;
+    public void setOfflineServer(app.nikkisync.mobile.model.Models.PairedServer server){offlineServer=server;}
 
     public GalleryAdapter(Context context, ImageLoader images, Supplier<NikkiSyncClient> client, Listener listener) {
         this.context = context;
@@ -51,6 +54,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public void setItems(List<AssetSummary> next) {
+        if (items.equals(next)) return;
         items.clear();
         items.addAll(next);
         rows.clear();
@@ -69,6 +73,10 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public int selectedCount() { return selected.size(); }
+    public boolean isSelected(AssetSummary asset){return selected.contains(asset.assetId());}
+    public List<AssetSummary> visiblePhotos(){
+        List<AssetSummary> photos=new ArrayList<>();for(Row row:rows)if(row.asset!=null)photos.add(row.asset);return photos;
+    }
 
     /**
      * MainActivity uses this to decide whether a tap should toggle selection or open the viewer.
@@ -79,8 +87,10 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     public boolean hasSelection() { return !singleAdjustDispatch && !selected.isEmpty(); }
 
     public boolean toggle(AssetSummary asset) {
+        boolean wasEmpty=selected.isEmpty();
         if (!selected.add(asset.assetId())) selected.remove(asset.assetId());
-        notifyDataSetChanged();
+        if(wasEmpty!=selected.isEmpty())notifyItemRangeChanged(0,rows.size(),SELECTION);
+        else for(int i=0;i<rows.size();i++)if(rows.get(i).asset!=null&&rows.get(i).asset.assetId().equals(asset.assetId()))notifyItemChanged(i,SELECTION);
         return selected.contains(asset.assetId());
     }
 
@@ -91,8 +101,9 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public void clearSelection() {
+        if(selected.isEmpty())return;
         selected.clear();
-        notifyDataSetChanged();
+        notifyItemRangeChanged(0,rows.size(),SELECTION);
     }
 
     @Override public int getItemCount() { return rows.size(); }
@@ -106,6 +117,16 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         return new PhotoHolder(new Cell(context));
     }
 
+    @Override public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder,int position,@NonNull List<Object> payloads){
+        if(!payloads.isEmpty()&&holder instanceof PhotoHolder photo){bindSelection(photo,rows.get(position).asset);return;}
+        onBindViewHolder(holder,position);
+    }
+    private void bindSelection(PhotoHolder photo,AssetSummary asset){
+        photo.cell.bind(asset,selected.contains(asset.assetId()));
+        photo.cell.check.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);
+        photo.cell.check.setText(selected.contains(asset.assetId())?"✓":"○");
+        photo.cell.check.setContentDescription(selected.contains(asset.assetId())?"取消选择照片":"选择照片");
+    }
     @Override public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
         Row row = rows.get(position);
         if (holder instanceof HeaderHolder header) {
@@ -115,8 +136,14 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         PhotoHolder photo = (PhotoHolder) holder;
         AssetSummary asset = row.asset;
         photo.cell.bind(asset, selected.contains(asset.assetId()));
+        photo.cell.check.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);
+        photo.cell.check.setText(selected.contains(asset.assetId())?"✓":"○");
+        photo.cell.check.setContentDescription(selected.contains(asset.assetId())?"取消选择照片":"选择照片");
+        photo.cell.check.setOnClickListener(v->listener.onPhotoLongClick(asset));
         NikkiSyncClient current = client.get();
-        if (current != null) images.load(current, asset, photo.cell.image);
+        if (current != null && images!=null) images.load(current, asset, photo.cell.image);
+        else if(offlineServer!=null&&images!=null)images.loadOffline(offlineServer,asset,photo.cell.image);
+        else photo.cell.image.setImageDrawable(null);
         photo.cell.setOnClickListener(v -> listener.onPhotoClick(asset));
         photo.cell.setOnLongClickListener(v -> {
             GalleryInteractionPolicy.Action action = GalleryInteractionPolicy.onLongPress(!selected.isEmpty());
@@ -159,44 +186,31 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final class HeaderView extends LinearLayout {
         private final TextView title;
         private final TextView count;
-        private final TextView provenance;
 
         HeaderView(Context context) {
             super(context);
-            setOrientation(VERTICAL);
-            setPadding(dp(14), dp(12), dp(14), dp(12));
-            setBackground(GalleryUxStyle.glassCard(context));
+            setGravity(Gravity.CENTER_VERTICAL);
+            setPadding(dp(14), dp(6), dp(14), dp(4));
+            setMinimumHeight(dp(40));
 
-            LinearLayout top = new LinearLayout(context);
-            top.setGravity(Gravity.CENTER_VERTICAL);
+            title = label(16, true, context.getColor(R.color.text_primary));
+            title.setSingleLine(true);
+            addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-            title = label(19, true, context.getColor(R.color.text_primary));
-            count = label(12, true, context.getColor(R.color.text_secondary));
-            top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            top.addView(count);
-            addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            provenance = label(11, false, context.getColor(R.color.text_secondary));
-            provenance.setPadding(dp(8), dp(3), dp(8), dp(3));
-            provenance.setBackground(GalleryUxStyle.glassChip(context));
-            LinearLayout.LayoutParams provenanceLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-            );
-            provenanceLp.topMargin = dp(7);
-            addView(provenance, provenanceLp);
+            count = label(11, false, context.getColor(R.color.text_secondary));
+            count.setSingleLine(true);
+            addView(count);
         }
 
         void bind(GalleryVersionGroups.Group group) {
             title.setText(group.versionLabel());
-            count.setText(group.items().size() + " 张照片");
-            provenance.setText(group.inferred() ? "自动推测版本" : "");
-            provenance.setVisibility(group.inferred() ? VISIBLE : GONE);
+            count.setText(group.items().size() + " 张" + (group.inferred() ? " · 自动推测" : ""));
         }
 
         private TextView label(int sp, boolean bold, int color) {
             TextView view = new TextView(context);
             view.setTextSize(sp);
+            view.setIncludeFontPadding(false);
             view.setTextColor(color);
             if (bold) view.setTypeface(Typeface.DEFAULT_BOLD);
             return view;
@@ -223,6 +237,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
 
             selectedOverlay = new View(context);
             selectedOverlay.setBackground(GalleryUxStyle.selectedOverlay(context));
+            selectedOverlay.setClipToOutline(true);
             selectedOverlay.setVisibility(GONE);
             addView(selectedOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(132)));
 
@@ -248,6 +263,17 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
             check.setVisibility(isSelected ? VISIBLE : GONE);
             selectedOverlay.setVisibility(isSelected ? VISIBLE : GONE);
             setAlpha(1f);
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            int width = MeasureSpec.getSize(widthSpec);
+            if (width > 0) {
+                int edge = Math.max(1, width - getPaddingLeft() - getPaddingRight());
+                image.getLayoutParams().height = edge;
+                selectedOverlay.getLayoutParams().height = edge;
+                heightSpec = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
+            }
+            super.onMeasure(widthSpec, heightSpec);
         }
 
         private TextView badge(String text) {

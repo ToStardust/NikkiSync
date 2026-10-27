@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile, readdir,lstat,utimes } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import path from 'node:path'
 
@@ -12,6 +12,9 @@ export interface MetadataThumbnailCacheConfig {
   maxBytes?: number
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  maxCacheBytes?: number
+  maxEntries?: number
+  graceMs?: number
 }
 
 export interface CachedMetadataThumbnail {
@@ -80,14 +83,22 @@ export class MetadataThumbnailCache {
   private readonly timeoutMs: number
   private readonly fetchImpl: typeof fetch
   private readonly inflight = new Map<string, Promise<CachedMetadataThumbnail>>()
+  private budgetQueue: Promise<unknown> = Promise.resolve()
+  private readonly maxCacheBytes: number
+  private readonly maxEntries: number
+  private readonly graceMs: number
 
   constructor(private readonly config: MetadataThumbnailCacheConfig) {
     if (!config.cacheDir) throw new Error('metadata thumbnail cacheDir is required')
     this.maxBytes = config.maxBytes ?? DEFAULT_MAX_BYTES
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.fetchImpl = config.fetchImpl ?? fetch
+    this.maxCacheBytes=config.maxCacheBytes??128*1024*1024
+    this.maxEntries=config.maxEntries??2048
+    this.graceMs=config.graceMs??60000
     if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes < 1) throw new Error('metadata thumbnail maxBytes must be positive')
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1) throw new Error('metadata thumbnail timeoutMs must be positive')
+    if(!Number.isSafeInteger(this.maxCacheBytes)||this.maxCacheBytes<this.maxBytes||!Number.isSafeInteger(this.maxEntries)||this.maxEntries<1||!Number.isSafeInteger(this.graceMs)||this.graceMs<0)throw new Error('metadata thumbnail cache budget is invalid')
   }
 
   async get(sourceUrl: string, versionKey = ''): Promise<CachedMetadataThumbnail> {
@@ -111,13 +122,16 @@ export class MetadataThumbnailCache {
 
   private async readCached(key: string, sourceUrl: string, versionKey: string): Promise<CachedMetadataThumbnail | undefined> {
     try {
+      if(!(await lstat(this.recordPath(key))).isFile())return undefined
       const record = JSON.parse(await readFile(this.recordPath(key), 'utf8')) as Partial<CacheRecord>
       if (record.sourceUrl !== sourceUrl || record.versionKey !== versionKey) return undefined
       if (typeof record.mimeType !== 'string' || !ALLOWED_CONTENT_TYPES.has(record.mimeType)) return undefined
       if (!positiveInteger(record.sizeBytes) || typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.sha256)) return undefined
       const dataPath = this.dataPath(key)
-      const info = await stat(dataPath)
+      const info = await lstat(dataPath)
       if (!info.isFile() || info.size !== record.sizeBytes || info.size > this.maxBytes) return undefined
+      if(createHash('sha256').update(await readFile(dataPath)).digest('hex')!==record.sha256)return undefined
+      const accessed=new Date();await utimes(dataPath,accessed,accessed)
       return { path: dataPath, mimeType: record.mimeType, sizeBytes: record.sizeBytes, sha256: record.sha256 }
     } catch {
       return undefined
@@ -128,26 +142,27 @@ export class MetadataThumbnailCache {
     await mkdir(this.config.cacheDir, { recursive: true })
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
-    let response: Response
+    let body: Buffer
+    let mimeType: string
     try {
-      response = await this.fetchImpl(sourceUrl, {
+      const response = await this.fetchImpl(sourceUrl, {
         method: 'GET',
         redirect: 'follow',
         headers: { accept: 'image/png,image/jpeg,image/webp;q=0.9' },
         signal: controller.signal
       })
-    } finally {
-      clearTimeout(timer)
-    }
     if (!response.ok) throw new Error(`metadata thumbnail HTTP ${response.status}`)
     if (response.url) assertSafeHttpsUrl(response.url)
-    const mimeType = normalizedContentType(response.headers.get('content-type'))
+    mimeType = normalizedContentType(response.headers.get('content-type'))
     if (!ALLOWED_CONTENT_TYPES.has(mimeType)) throw new Error(`metadata thumbnail content type is not allowed: ${mimeType || 'missing'}`)
     const advertisedLength = Number(response.headers.get('content-length'))
     if (Number.isFinite(advertisedLength) && advertisedLength > this.maxBytes) throw new Error('metadata thumbnail is too large')
 
-    const body = await this.readLimitedBody(response)
+    body = await this.readLimitedBody(response)
     if (body.length === 0) throw new Error('metadata thumbnail is empty')
+    } finally {
+      clearTimeout(timer)
+    }
     const sha256 = createHash('sha256').update(body).digest('hex')
     const dataPath = this.dataPath(key)
     const recordPath = this.recordPath(key)
@@ -155,7 +170,9 @@ export class MetadataThumbnailCache {
     const dataTemp = `${dataPath}${suffix}`
     const recordTemp = `${recordPath}${suffix}`
     const record: CacheRecord = { sourceUrl, versionKey, mimeType, sizeBytes: body.length, sha256 }
-    try {
+    const persist=async()=>{
+     await this.pruneToFit(key,body.length)
+     try {
       await writeFile(dataTemp, body, { flag: 'wx' })
       await writeFile(recordTemp, JSON.stringify(record), { encoding: 'utf8', flag: 'wx' })
       await rename(dataTemp, dataPath)
@@ -166,8 +183,28 @@ export class MetadataThumbnailCache {
         rm(recordTemp, { force: true }).catch(() => undefined)
       ])
       throw error
+     }
     }
+    const committed=this.budgetQueue.catch(()=>undefined).then(persist);this.budgetQueue=committed
+    await committed
     return { path: dataPath, mimeType, sizeBytes: body.length, sha256 }
+  }
+
+  private async pruneToFit(currentKey:string,incoming:number):Promise<void>{
+    const owned: {key:string;size:number;mtime:number}[]=[]
+    for(const entry of await readdir(this.config.cacheDir,{withFileTypes:true})){
+      if(!entry.isFile()||!/^[a-f0-9]{64}\.img$/.test(entry.name))continue
+      const key=entry.name.slice(0,-4);if(key===currentKey)continue
+      try{const info=await lstat(this.dataPath(key));if(info.isFile())owned.push({key,size:info.size,mtime:info.mtimeMs})}catch{}
+    }
+    let bytes=owned.reduce((total,x)=>total+x.size,0),count=owned.length
+    for(const item of owned.sort((a,b)=>a.mtime-b.mtime||a.key.localeCompare(b.key))){
+      if(bytes+incoming<=this.maxCacheBytes&&count+1<=this.maxEntries)break
+      // Recent readers and in-flight fills are protected; refuse new fills rather than grow unbounded.
+      if(this.inflight.has(item.key)||Date.now()-item.mtime<this.graceMs)continue
+      await rm(this.dataPath(item.key),{force:true});await rm(this.recordPath(item.key),{force:true});bytes-=item.size;count--
+    }
+    if(bytes+incoming>this.maxCacheBytes||count+1>this.maxEntries)throw new Error('metadata thumbnail cache budget is busy')
   }
 
   private async readLimitedBody(response: Response): Promise<Buffer> {

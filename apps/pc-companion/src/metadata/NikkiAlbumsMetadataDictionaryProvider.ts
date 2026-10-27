@@ -60,11 +60,13 @@ export class NikkiAlbumsMetadataDictionaryProvider implements MetadataDictionary
   }
 
   async fetch(state?: MetadataDictionaryFetchState): Promise<MetadataDictionaryFetchResult> {
+    // Older cached snapshots omitted photography names even when the language package contained them.
+    const currentFormat = state?.contentVersion?.endsWith(':photography-names-v1') === true
     const response = await this.fetchWithTimeout(this.endpoint, {
       accept: 'application/json',
       'accept-language': this.locale,
-      ...(state?.etag ? { 'if-none-match': state.etag } : {}),
-      ...(state?.lastModified ? { 'if-modified-since': state.lastModified } : {}),
+      ...(currentFormat && state?.etag ? { 'if-none-match': state.etag } : {}),
+      ...(currentFormat && state?.lastModified ? { 'if-modified-since': state.lastModified } : {}),
       ...(this.config.headers ?? {})
     })
     const etag = response.headers.get('etag') ?? undefined
@@ -95,7 +97,7 @@ export class NikkiAlbumsMetadataDictionaryProvider implements MetadataDictionary
     const database = parseNuan5Database(decryptNikkiAlbumsPackage(databasePackage))
     const manifest = buildDictionaryManifest({
       provider: this.id,
-      providerVersion: `${langGroup.versionId}:${databaseGroup.versionId}`,
+      providerVersion: `${langGroup.versionId}:${databaseGroup.versionId}:photography-names-v1`,
       language,
       database
     })
@@ -203,6 +205,12 @@ export function buildDictionaryManifest(input: {
     })
   }
   if (entries.length === 0) throw new Error('Nikki Albums database returned no clothing entries')
+  for (const [kind, section] of [['filter', 'filter'], ['lighting', 'light']] as const) {
+    for (const [id, name] of getNestedStringMap(input.language, ['infinity_nikki', section])) {
+      if (!/^[1-9]\d{0,15}$/.test(id) || !name.trim()) continue
+      entries.push({ kind, id, name: name.trim(), raw: { source: 'nikki-albums-public', languageSection: section } })
+    }
+  }
   return {
     schemaVersion: 1,
     provider: input.provider,

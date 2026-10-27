@@ -1,27 +1,216 @@
 import http from 'node:http'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import type { DesktopStatus } from './DesktopStatusService.js'
+import type { LocalRemotePhotoResource, RemoteSelectionPage } from '../remote/RemoteFileProvider.js'
+import type { CreatedRemoteSession, RemoteSessionStatus } from '../remote/RemoteSessionStore.js'
+import { renderDesktopPage } from './DesktopPage.js'
+import type { WeChatGalleryStatus } from '../wechat/WeChatGalleryService.js'
+import type { MetadataRecipient } from '../metadata/MetadataOnlineConsent.js'
+import type {ExtraScanDirectories} from '../scanner/ExtraScanDirectories.js'
+import type {DeletionQueue} from '../organizer/DeletionQueue.js'
+import type {AccountSyncSettings} from '../server/AccountSyncSettings.js'
+import {nativePreview} from '../organizer/NativeMediaOperations.js'
 
 export interface DesktopControlServerConfig {
+  accounts?:AccountSyncSettings
+  deletions?:DeletionQueue
+  scanDirectories?:ExtraScanDirectories
+  metadataPrivacy?: {
+    getState(): {enabled:boolean;policyVersion:string;recipients:MetadataRecipient[]}
+    setEnabled(enabled:boolean,policyVersion?:string):void
+  }
+  legalDocuments?: Record<string,string>
   getStatus(): DesktopStatus
   createPairingUri(): string
   qrSvg(uri: string): Promise<string>
-}
-
-function html(status: DesktopStatus, qrSvg?: string): string {
-  const pairing = qrSvg
-    ? `<section class="pairing-card"><h2>首次配对</h2><p>请使用手机 NikkiSync 扫描二维码。</p><div class="qr">${qrSvg}</div></section>`
-    : '<section class="paired-card"><h2>已连接</h2><p>手机已配对。需要添加新设备时可生成新的二维码。</p></section>'
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NikkiSync PC</title><style>
-:root{color-scheme:dark}body{margin:0;background:#17131f;color:#f8f3ff;font:15px system-ui,"Microsoft YaHei",sans-serif}.app{padding:24px;min-width:440px}.header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #42384e;padding-bottom:18px}.header h1{font-size:24px;margin:0}.chip{background:#243f34;color:#a6f3c8;border-radius:99px;padding:7px 11px;font-size:13px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:20px 0}.stat{background:#272033;border:1px solid #44374f;border-radius:12px;padding:13px}.stat b{display:block;font-size:20px;margin-top:5px}.pairing-card,.paired-card{background:#211b2a;border:1px solid #493b57;border-radius:16px;padding:20px;text-align:center}.pairing-card h2,.paired-card h2{margin:0 0 8px}.qr{display:flex;justify-content:center;margin-top:16px}.qr svg{width:260px;height:260px;background:#fff;border-radius:12px;padding:10px}.actions{display:flex;justify-content:center;margin:20px 0}.primary{border:0;border-radius:10px;background:#dfadff;color:#25162e;padding:11px 18px;font-weight:700;cursor:pointer}.setting{display:flex;gap:9px;align-items:center;color:#cabed6;border-top:1px solid #42384e;padding-top:16px}.modal[hidden]{display:none}.modal{position:fixed;inset:0;background:#0009;display:grid;place-items:center}.dialog{background:#282033;border:1px solid #5b456d;border-radius:16px;padding:22px;text-align:center}.dialog .qr{margin:12px 0}.secondary{border:1px solid #715885;border-radius:8px;background:transparent;color:#f5edff;padding:8px 15px;cursor:pointer}</style>
-<main class="app"><header class="header"><h1>NikkiSync PC</h1><span class="chip">同步服务运行中</span></header><section class="stats"><div class="stat">局域网地址<b>${status.host}:${status.port}</b></div><div class="stat">已扫描照片<b>${status.assets}</b></div><div class="stat">已配对设备<b>${status.pairedDevices}</b></div></section>${pairing}<div class="actions"><button id="renew" class="primary">生成新二维码</button></div><label class="setting"><input id="autostart" type="checkbox">开机时自动启动 NikkiSync</label></main><div id="modal" class="modal" hidden><div class="dialog"><h2>扫描二维码</h2><div id="modal-qr" class="qr"></div><button id="close" class="secondary">关闭</button></div></div>
-<script>const bridge=window.chrome?.webview;const autostart=document.querySelector('#autostart');bridge?.postMessage({type:'getAutostart'});bridge?.addEventListener('message',e=>{if(e.data?.type==='autostart')autostart.checked=!!e.data.enabled});autostart.onchange=()=>bridge?.postMessage({type:'setAutostart',enabled:autostart.checked});const modal=document.querySelector('#modal'),modalQr=document.querySelector('#modal-qr');document.querySelector('#renew').onclick=async()=>{const r=await fetch('/api/pairing',{method:'POST'});const data=await r.json();modalQr.innerHTML=data.qrSvg;modal.hidden=false};document.querySelector('#close').onclick=()=>{modal.hidden=true};</script></html>`
+  brandImage?: Buffer
+  wechatGallery?: {
+    start(): Promise<WeChatGalleryStatus & {qrSvg:string}>
+    stop(): Promise<void>
+    status(): WeChatGalleryStatus
+  }
+  remoteBridge?: {
+    listPhotos(cursor?: string): RemoteSelectionPage
+    createSession(resourceIds: string[]): CreatedRemoteSession
+    closeSession(sessionId: string): void
+    getSessionStatus(sessionId: string): RemoteSessionStatus | undefined
+    getPreview(resourceId: string): LocalRemotePhotoResource | undefined
+  }
 }
 
 export function createDesktopControlServer(config: DesktopControlServerConfig): http.Server {
-  return http.createServer(async (request, response) => {
+  const desktopToken = randomBytes(32).toString('base64url')
+  let activeSessionId: string | undefined
+  const json = (response: http.ServerResponse, status: number, value: unknown) => {
+    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    response.end(JSON.stringify(value))
+  }
+  const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const remote = config.remoteBridge
+    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments || config.scanDirectories || config.deletions || config.accounts) {
+      const host = request.headers.host
+      const localHosts = [`127.0.0.1:${request.socket.localPort}`, `localhost:${request.socket.localPort}`]
+      if (!host || !localHosts.includes(host)) { json(response, 403, { error: 'forbidden' }); return }
+    }
+    if ((remote && requestUrl.pathname.startsWith('/api/remote/')) || (config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/'))
+        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))||(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories'))||(config.deletions&&requestUrl.pathname.startsWith('/api/organizer'))||(config.accounts&&requestUrl.pathname.startsWith('/api/sync-accounts'))) {
+      const token = request.headers['x-nikkisync-desktop-token']
+      const origin = request.headers.origin
+      if (typeof token !== 'string' || Buffer.byteLength(token) !== Buffer.byteLength(desktopToken)
+        || !timingSafeEqual(Buffer.from(token), Buffer.from(desktopToken))
+        || (origin && origin !== `http://${request.headers.host}`)
+        || request.headers['sec-fetch-site'] === 'cross-site') {
+        json(response, 403, { error: 'forbidden' }); return
+      }
+      try {
+        if(config.accounts&&requestUrl.pathname.startsWith('/api/sync-accounts')){
+          if(request.method==='GET'&&requestUrl.pathname==='/api/sync-accounts'){json(response,200,config.accounts.state());return}
+          if(request.method==='GET'&&requestUrl.pathname==='/api/sync-accounts/thumbnail'){
+            const row=config.accounts.preview(requestUrl.searchParams.get('id')??'');if(!row){json(response,404,{error:'not_found'});return}
+            const source=String(row.source_path),info=await stat(source);if(!info.isFile()||info.size>2*1024*1024*1024){json(response,404,{error:'not_found'});return}
+            if(process.platform==='win32'&&process.env.NIKKISYNC_RECYCLE_HELPER){const bytes=await nativePreview({path:source,size:info.size,sha256:String(row.sha256)});response.writeHead(200,{'content-type':'image/jpeg','content-length':bytes.byteLength,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(bytes);return}
+            if(info.size>64*1024*1024){json(response,404,{error:'not_found'});return}
+            response.writeHead(200,{'content-type':String(row.mime_type),'content-length':info.size,'cache-control':'no-store','x-content-type-options':'nosniff'});
+            const stream=createReadStream(source);stream.on('error',()=>response.destroy());response.on('close',()=>stream.destroy());stream.pipe(response);return
+          }
+          if(request.method!=='POST'||requestUrl.pathname!=='/api/sync-accounts'||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+          const chunks:Buffer[]=[];let size=0;for await(const chunk of request){size+=chunk.length;if(size>16384){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
+          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));config.accounts.setSelection(value.uids);json(response,200,config.accounts.state())}catch{json(response,400,{error:'invalid_accounts'})}return
+        }
+        if(config.deletions&&requestUrl.pathname.startsWith('/api/organizer')){
+          if(request.method==='GET'&&requestUrl.pathname==='/api/organizer/preview'){
+            const file=await config.deletions.preview(requestUrl.searchParams.get('id')??'');if(!file){json(response,404,{error:'not_found'});return}
+            if('bytes' in file){response.writeHead(200,{'content-type':file.mimeType,'content-length':file.bytes.byteLength,'cache-control':'no-store','x-content-type-options':'nosniff'});response.end(file.bytes);return}
+            response.writeHead(200,{'content-type':/\.png$/i.test(file.path)?'image/png':/\.webp$/i.test(file.path)?'image/webp':'image/jpeg','content-length':file.size,'cache-control':'no-store','x-content-type-options':'nosniff'});
+            const stream=createReadStream(file.path);stream.on('error',()=>response.destroy());response.on('close',()=>stream.destroy());stream.pipe(response);return
+          }
+          if(request.method==='GET'&&requestUrl.pathname==='/api/organizer'){json(response,200,{items:config.deletions.list()});return}
+          const bulk=requestUrl.pathname==='/api/organizer/approve-many',dismiss=requestUrl.pathname==='/api/organizer/dismiss'
+          if(request.method!=='POST'||(!bulk&&!dismiss&&requestUrl.pathname!=='/api/organizer/decide')||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+          const chunks:Buffer[]=[];let size=0
+          for await(const chunk of request){size+=chunk.length;if(size>(bulk||dismiss?40960:4096)){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
+          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')) as {id:unknown;approve:unknown;ids:unknown;allFailures?:unknown}
+            if(bulk){json(response,200,await config.deletions.approveMany(value.ids as string[]));return}
+            if(dismiss){if(value.allFailures!==undefined&&typeof value.allFailures!=='boolean')throw new Error('bad_request');json(response,200,await config.deletions.dismiss(value.ids as string[],value.allFailures===true));return}
+            if(typeof value.id!=='string'||typeof value.approve!=='boolean')throw new Error('bad_request')
+            json(response,200,{items:await config.deletions.decide(value.id,value.approve)})
+          }catch{json(response,409,{error:'request_changed'})}return
+        }
+        if(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories')){
+          const directories=config.scanDirectories
+          if(request.method==='GET'&&requestUrl.pathname==='/api/scan-directories'){json(response,200,directories.state());return}
+          if(request.method!=='POST'){json(response,405,{error:'method_not_allowed'});return}
+          if(!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+          const chunks:Buffer[]=[];let size=0
+          for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>8192){json(response,413,{error:'too_large'});return}chunks.push(bytes)}
+          try{
+            const value=JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string,unknown>
+            let result:unknown
+            if(requestUrl.pathname==='/api/scan-directories/inspect'&&typeof value.path==='string')result=await directories.inspect(value.path,value.source)
+            else if(requestUrl.pathname==='/api/scan-directories/source'&&typeof value.id==='string')result=await directories.setSource(value.id,value.source)
+            else if(requestUrl.pathname==='/api/scan-directories/confirm'&&typeof value.proposalId==='string')result=await directories.add(value.proposalId)
+            else if(requestUrl.pathname==='/api/scan-directories/remove'&&typeof value.id==='string')result=await directories.remove(value.id)
+            else if(requestUrl.pathname==='/api/scan-directories/rescan')result=await directories.rescan()
+            else{json(response,400,{error:'bad_request'});return}
+            json(response,200,result)
+          }catch(error){
+            const known=new Set(['invalid_directory','directory_unavailable','choose_subfolder','thumbnail_only','choose_photo_folder','too_many_directories','already_covered','selection_expired','directory_not_found'])
+            const code=error instanceof Error&&known.has(error.message)?error.message:'scan_unavailable'
+            json(response,400,{error:code})
+          }
+          return
+        }
+        if(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/')){
+          if(requestUrl.pathname!=='/api/privacy/metadata'){json(response,404,{error:'not_found'});return}
+          if(request.method==='GET'){json(response,200,config.metadataPrivacy.getState());return}
+          if(request.method==='POST'){
+            if(!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
+            const chunks:Buffer[]=[];let size=0
+            for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>4096){json(response,413,{error:'too_large'});return}chunks.push(bytes)}
+            try{
+              const data=JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string,unknown>
+              if(typeof data.enabled!=='boolean'||(data.policyVersion!==undefined&&typeof data.policyVersion!=='string'))throw new Error()
+              config.metadataPrivacy.setEnabled(data.enabled,data.policyVersion as string|undefined)
+            }catch{json(response,400,{error:'choice_not_saved'});return}
+            json(response,200,config.metadataPrivacy.getState());return
+          }
+          json(response,405,{error:'method_not_allowed'});return
+        }
+        if(config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/')) {
+          const wechat=config.wechatGallery
+          if(request.method==='GET' && requestUrl.pathname==='/api/wechat/status'){json(response,200,wechat.status());return}
+          if(request.method==='POST' && requestUrl.pathname==='/api/wechat/session'){
+            const session=await wechat.start();
+            if(response.destroyed){await wechat.stop();return}
+            json(response,200,session);return
+          }
+          if(request.method==='DELETE' && requestUrl.pathname==='/api/wechat/session'){await wechat.stop();json(response,200,wechat.status());return}
+          json(response,404,{error:'not_found'});return
+        }
+        if(!remote){json(response,404,{error:'not_found'});return}
+        if (request.method === 'GET' && requestUrl.pathname === '/api/remote/photos') {
+          json(response, 200, remote.listPhotos(requestUrl.searchParams.get('cursor') ?? undefined)); return
+        }
+        if (request.method === 'POST' && requestUrl.pathname === '/api/remote/session') {
+          if (!request.headers['content-type']?.startsWith('application/json')) { json(response, 400, { error: 'bad_request' }); return }
+          const chunks: Buffer[] = []; let size = 0
+          for await (const chunk of request) {
+            const data = Buffer.from(chunk); size += data.length
+            if (size > 16_384) { json(response, 413, { error: 'too_large' }); return }
+            chunks.push(data)
+          }
+          let ids: unknown
+          try { ids = (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { resourceIds?: unknown }).resourceIds }
+          catch { json(response, 400, { error: 'bad_request' }); return }
+          if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100 || !ids.every((id) => typeof id === 'string' && id.length <= 200)) {
+            json(response, 400, { error: 'bad_selection' }); return
+          }
+          let session: CreatedRemoteSession
+          try { session = remote.createSession(ids as string[]) }
+          catch { json(response, 400, { error: 'bad_selection' }); return }
+          let svg: string
+          try { svg = await config.qrSvg(session.qrPayload) }
+          catch { remote.closeSession(session.sessionId); throw new Error('QR rendering failed') }
+          if (activeSessionId) remote.closeSession(activeSessionId)
+          activeSessionId = session.sessionId
+          json(response, 200, { sessionId: session.sessionId, expiresAt: session.expiresAt, state: session.state, selectedCount: ids.length, qrSvg: svg }); return
+        }
+        const sessionMatch = /^\/api\/remote\/session\/([A-Za-z0-9_-]+)$/.exec(requestUrl.pathname)
+        if (sessionMatch && (request.method === 'GET' || request.method === 'DELETE')) {
+          const id = sessionMatch[1]!
+          const state = remote.getSessionStatus(id)
+          if (!state) { json(response, 404, { error: 'not_found' }); return }
+          if (request.method === 'DELETE') remote.closeSession(id)
+          json(response, 200, remote.getSessionStatus(id)); return
+        }
+        const previewMatch = /^\/api\/remote\/preview\/([A-Za-z0-9_-]+)$/.exec(requestUrl.pathname)
+        if (request.method === 'GET' && previewMatch) {
+          const file = remote.getPreview(previewMatch[1]!)
+          if (!file) { json(response, 404, { error: 'not_found' }); return }
+          let info
+          try { info = await stat(file.sourcePath) } catch { json(response, 404, { error: 'not_found' }); return }
+          if (!info.isFile() || info.size !== file.sizeBytes) { json(response, 404, { error: 'not_found' }); return }
+          response.writeHead(200, { 'content-type': file.mimeType, 'content-length': info.size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+          const stream = createReadStream(file.sourcePath)
+          stream.on('error', () => response.destroy()); response.on('close', () => stream.destroy()); stream.pipe(response); return
+        }
+        json(response, 404, { error: 'not_found' }); return
+      } catch { if (!response.headersSent) json(response, 500, { error: 'unavailable' }); else response.destroy(); return }
+    }
     const status = config.getStatus()
+    if(request.method==='GET'&&requestUrl.pathname.startsWith('/legal/')){
+      const text=config.legalDocuments?.[requestUrl.pathname.slice(7)]
+      if(!text){json(response,404,{error:'not_found'});return}
+      const safe=text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+      response.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"})
+      response.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>大喵相机助手 · 政策说明</title><style>body{background:#fff4f8;color:#59475e;font:16px/1.8 sans-serif;margin:32px auto;padding:24px;max-width:900px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}</style><pre>'+safe+'</pre></html>');return
+    }
+    if(requestUrl.pathname==='/brand.png' && request.method==='GET' && config.brandImage){
+      response.writeHead(200,{'content-type':'image/png','cache-control':'no-store','x-content-type-options':'nosniff'});response.end(config.brandImage);return
+    }
     if (requestUrl.pathname === '/api/status' && request.method === 'GET') {
       response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); response.end(JSON.stringify(status)); return
     }
@@ -31,8 +220,11 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
     }
     if (requestUrl.pathname === '/' && request.method === 'GET') {
       const qrSvg = status.firstRun ? await config.qrSvg(config.createPairingUri()) : undefined
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); response.end(html(status, qrSvg)); return
+      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...((config.metadataPrivacy||config.scanDirectories||config.deletions||config.accounts)?{desktopToken}:{}), ...(config.metadataPrivacy?{metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' }); response.end(page); return
     }
     response.writeHead(404); response.end()
   })
+  server.on('close', () => { if (activeSessionId) config.remoteBridge?.closeSession(activeSessionId);void config.wechatGallery?.stop() })
+  return server
 }

@@ -10,13 +10,16 @@ const pkg = 'app/nikkisync/mobile/media/live';
 const names = ['QuarterTurn', 'LivePhotoProfile', 'JpegSegments', 'MotionXmp',
   'VivoLegacyMetadata', 'MotionContainer', 'MotionContainerVerifier'];
 const files = names.map(n => path.join(mobile, 'app/src/main/java', pkg, `${n}.java`));
+files.push(path.join(mobile,'app/src/main/java/app/nikkisync/mobile/util/ByteStreams.java'));
 files.push(path.join(mobile, 'app/src/test/java', pkg, 'LivePhotoCoreChecks.java'));
+files.push(path.join(mobile, 'app/src/test/java', pkg, 'LargeMotionContainerChecks.java'));
 for (const file of files) assert.ok(existsSync(file), `Live Photo behavior not implemented: ${path.basename(file)}`);
 const out = mkdtempSync(path.join(tmpdir(), 'nikkisync-live-test-'));
 try {
   for (const [cmd, args] of [
     ['javac', ['--release', '17', '-encoding', 'UTF-8', '-d', out, ...files]],
-    ['java', ['-ea', '-cp', out, 'app.nikkisync.mobile.media.live.LivePhotoCoreChecks']]
+    ['java', ['-ea', '-cp', out, 'app.nikkisync.mobile.media.live.LivePhotoCoreChecks']],
+    ['java', ['-Xmx32m', '-ea', '-cp', out, 'app.nikkisync.mobile.media.live.LargeMotionContainerChecks', ...process.argv.slice(2)]]
   ]) {
     const result = spawnSync(cmd, args, {stdio: 'inherit'});
     if (result.error) throw result.error;

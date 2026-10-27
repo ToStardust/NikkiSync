@@ -3,6 +3,7 @@ import path from 'node:path'
 import { AssetRepository } from '@nikkisync/database'
 import { AssetResolver, type AssetResolverCandidate, type ResourceRole } from '@nikkisync/core'
 import type { DiscoveredResource, AssetSnapshot, ScanResult } from './types.js'
+import { ScanIndexFailure } from './ScanIndexFailure.js'
 
 function idFor(value: string): string { return `asset_${createHash('sha256').update(value).digest('hex').slice(0, 32)}` }
 function resourceIdFor(assetId: string, role: string, pathKey: string): string {
@@ -23,26 +24,42 @@ export class ScanReconciler {
   private readonly resolver = new AssetResolver()
   constructor(private readonly assets: AssetRepository, private readonly motionGraceMs = 2000) {}
 
-  async reconcile(resources: DiscoveredResource[], roots: string[]): Promise<Pick<ScanResult, 'assetsCreated' | 'assetsUpdated' | 'assetsDeleted' | 'journalRevisions' | 'pendingPaths'>> {
+  async reconcile(resources: DiscoveredResource[], roots: string[], onAssetProcessed?: () => void): Promise<Pick<ScanResult, 'assetsCreated' | 'assetsUpdated' | 'assetsDeleted' | 'journalRevisions' | 'pendingPaths'>> {
+    let operation: 'build-snapshots' | 'write-asset' | 'mark-missing' = 'build-snapshots'
+    let processedAssets=0
+    try {
     const now = new Date().toISOString(); const snapshots = this.buildSnapshots(resources, now)
-    let created = 0; let updated = 0; const revisions: number[] = []
+    let created = 0; let updated = 0; let superseded = 0; const revisions: number[] = []
+    const activeAssetIds=new Set(snapshots.map(snapshot=>snapshot.assetId))
+    operation='write-asset'
     for (const snapshot of snapshots) {
-      const result = this.assets.reconcile(snapshot)
+      const result = this.assets.reconcile(snapshot,{activeAssetIds,completedRoots:roots})
       if (result.kind === 'created') created += 1
       if (result.kind === 'updated') updated += 1
+      for(const change of result.supersededChanges??[]){revisions.push(change.revision);superseded++}
       if (result.revision !== undefined) revisions.push(result.revision)
+      processedAssets++
+      onAssetProcessed?.()
     }
+    operation='mark-missing'
     const deleted = this.assets.markMissingByRoots(snapshots.map((snapshot) => snapshot.assetId), roots)
     revisions.push(...deleted.map((item) => item.revision))
-    return { assetsCreated: created, assetsUpdated: updated, assetsDeleted: deleted.length, journalRevisions: revisions, pendingPaths: this.pending(resources) }
+    return { assetsCreated: created, assetsUpdated: updated, assetsDeleted: deleted.length+superseded, journalRevisions: revisions, pendingPaths: this.pending(resources,snapshots) }
+    } catch(error) { throw new ScanIndexFailure(error,operation,processedAssets,resources.length) }
   }
 
-  private pending(resources: DiscoveredResource[]): string[] {
-    const videos = new Set(resources.filter((item) => item.kind === 'motion_video').map((item) => `${item.uid ?? ''}|${item.normalizedStem}`))
-    return resources.filter((item) => item.kind === 'motion_cover' && !videos.has(`${item.uid ?? ''}|${item.normalizedStem}`)).map((item) => item.absolutePath)
+  private pending(resources: DiscoveredResource[],snapshots:AssetSnapshot[]): string[] {
+    const paired=new Set(snapshots.flatMap(snapshot=>snapshot.resources.filter(resource=>resource.role==='source_primary').map(resource=>resource.pathKey)))
+    return resources.filter(item=>item.kind==='motion_cover'&&!paired.has(item.pathKey)).map(item=>item.absolutePath)
   }
 
   private buildSnapshots(resources: DiscoveredResource[], now: string): AssetSnapshot[] {
+    const groups=new Map<string,DiscoveredResource[]>()
+    for(const resource of resources){const key=resource.extraNamespace??'';const list=groups.get(key)??[];list.push(resource);groups.set(key,list)}
+    return [...groups].flatMap(([namespace,items])=>this.buildGroupSnapshots(items,now,namespace))
+  }
+
+  private buildGroupSnapshots(resources:DiscoveredResource[],now:string,namespace:string):AssetSnapshot[]{
     const hq = resources.filter((item) => item.kind === 'high_quality')
     const lq = resources.filter((item) => item.kind === 'low_quality')
     const snapshots: AssetSnapshot[] = []
@@ -57,20 +74,28 @@ export class ScanReconciler {
       const key = `${resolved.uid ?? ''}|${resolved.stem}`
       if (!group.some((item) => item.kind === 'high_quality')) continue
       const first = group[0]; if (!first) continue
-      const uid = first.uid; const assetId = idFor(`infinity_nikki|photo|${key}`)
+      const uid = first.uid; const assetId = idFor(`infinity_nikki|photo|${namespace?namespace+'|':''}${key}`)
       snapshots.push(this.snapshot(assetId, 'photo', uid, group, now))
     }
     const covers = resources.filter((item) => item.kind === 'motion_cover')
     const videos = resources.filter((item) => item.kind === 'motion_video')
-    const motionCandidates = this.resolver.resolveMotionCandidates(
-      covers.map((item) => ({ resourceId: item.pathKey, fileName: item.fileName, sourcePath: item.absolutePath, role: 'source_primary' as const, ...(item.uid ? { uid: item.uid } : {}) })),
-      videos.map((item) => ({ resourceId: item.pathKey, fileName: item.fileName, sourcePath: item.absolutePath, role: 'source_motion' as const, ...(item.uid ? { uid: item.uid } : {}) }))
-    )
+    // A shared date/numeric token is a heuristic, not a source association. A
+    // native LIVE requires one exact-stem cover/video in the same UID+folder.
+    const keyFor=(item:DiscoveredResource)=>JSON.stringify([item.uid??'',path.dirname(item.absolutePath).toLowerCase(),item.normalizedStem])
+    const groupByKey=(items:DiscoveredResource[])=>{
+      const result=new Map<string,Map<string,DiscoveredResource>>()
+      for(const item of items){const key=keyFor(item);const group=result.get(key)??new Map<string,DiscoveredResource>();group.set(item.pathKey,item);result.set(key,group)}
+      return result
+    }
+    const coverGroups=groupByKey(covers),videoGroups=groupByKey(videos)
     for (const cover of covers) {
-      const match = motionCandidates.find((candidate) => candidate.stillResourceId === cover.pathKey)
-      const video = match ? videos.find((candidate) => candidate.pathKey === match.motionResourceId) : undefined
-      if (!video) continue
-      const key = `${cover.uid ?? ''}|${cover.normalizedStem}`; const assetId = idFor(`infinity_nikki|motion_photo|${key}`)
+      const keyForCover=keyFor(cover),group=videoGroups.get(keyForCover)
+      if(coverGroups.get(keyForCover)?.size!==1||group?.size!==1)continue
+      const video=group.values().next().value!
+      const match=this.resolver.scoreCandidate(
+        {resourceId:cover.pathKey,fileName:cover.fileName,sourcePath:cover.absolutePath,role:'source_primary',...(cover.uid?{uid:cover.uid}:{})},
+        {resourceId:video.pathKey,fileName:video.fileName,sourcePath:video.absolutePath,role:'source_motion',...(video.uid?{uid:video.uid}:{})})
+      const key = `${cover.uid ?? ''}|${cover.normalizedStem}`; const assetId = idFor(`infinity_nikki|motion_photo|${namespace?namespace+'|':''}${key}`)
       snapshots.push(this.snapshot(assetId, 'motion_photo', cover.uid, [cover, video], now, true, match))
     }
     return snapshots

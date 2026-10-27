@@ -6,14 +6,20 @@ public final class Models {
     private Models() {}
 
     public static final class PairingPayload {
+        private final List<String> hosts;
         private final String serverId, host, token, expiresAt, tlsFingerprintSha256;
         private final int port, protocolVersion;
         public PairingPayload(String serverId, String host, int port, String token, int protocolVersion, String expiresAt, String tlsFingerprintSha256) {
+            this(serverId,host,port,token,protocolVersion,expiresAt,tlsFingerprintSha256,List.of(host));
+        }
+        public PairingPayload(String serverId,String host,int port,String token,int protocolVersion,String expiresAt,String tlsFingerprintSha256,List<String> hosts){
+            this.hosts=app.nikkisync.mobile.net.EndpointCandidates.normalize(host,hosts);
             this.serverId = serverId; this.host = host; this.port = port; this.token = token;
             this.protocolVersion = protocolVersion; this.expiresAt = expiresAt; this.tlsFingerprintSha256 = tlsFingerprintSha256;
         }
         public String serverId() { return serverId; }
         public String host() { return host; }
+        public List<String> hosts() { return hosts; }
         public int port() { return port; }
         public String token() { return token; }
         public int protocolVersion() { return protocolVersion; }
@@ -22,11 +28,17 @@ public final class Models {
     }
 
     public static final class PairedServer {
+        private final List<String> hosts;
         private final String serverId, serverName, host, tlsFingerprintSha256, serverPublicKey, deviceCredential;
         private final int port;
         private final long lastRevision;
         public PairedServer(String serverId, String serverName, String host, int port, String tlsFingerprintSha256,
                             String serverPublicKey, String deviceCredential, long lastRevision) {
+            this(serverId,serverName,host,port,tlsFingerprintSha256,serverPublicKey,deviceCredential,lastRevision,List.of(host));
+        }
+        private PairedServer(String serverId,String serverName,String host,int port,String tlsFingerprintSha256,
+                             String serverPublicKey,String deviceCredential,long lastRevision,List<String> hosts){
+            this.hosts=app.nikkisync.mobile.net.EndpointCandidates.normalize(host,hosts);
             this.serverId = serverId; this.serverName = serverName; this.host = host; this.port = port;
             this.tlsFingerprintSha256 = tlsFingerprintSha256; this.serverPublicKey = serverPublicKey;
             this.deviceCredential = deviceCredential; this.lastRevision = lastRevision;
@@ -34,22 +46,28 @@ public final class Models {
         public String serverId() { return serverId; }
         public String serverName() { return serverName; }
         public String host() { return host; }
+        public List<String> hosts() { return hosts; }
         public int port() { return port; }
         public String tlsFingerprintSha256() { return tlsFingerprintSha256; }
         public String serverPublicKey() { return serverPublicKey; }
         public String deviceCredential() { return deviceCredential; }
         public long lastRevision() { return lastRevision; }
         public PairedServer withEndpoint(String newHost, int newPort) {
-            return new PairedServer(serverId, serverName, newHost, newPort, tlsFingerprintSha256, serverPublicKey, deviceCredential, lastRevision);
+            return new PairedServer(serverId, serverName, newHost, newPort, tlsFingerprintSha256, serverPublicKey, deviceCredential, lastRevision,hosts);
         }
         public PairedServer withRevision(long revision) {
-            return new PairedServer(serverId, serverName, host, port, tlsFingerprintSha256, serverPublicKey, deviceCredential, revision);
+            return new PairedServer(serverId, serverName, host, port, tlsFingerprintSha256, serverPublicKey, deviceCredential, revision,hosts);
         }
+        public PairedServer withHosts(List<String> values){return new PairedServer(serverId,serverName,host,port,tlsFingerprintSha256,serverPublicKey,deviceCredential,lastRevision,values);}
     }
 
     public static final class AssetSummary {
         private final String assetId, type, state, capturedAt, uid, thumbnailResourceId, previewResourceId;
         private final String gameVersion, gameVersionSource;
+        private final String thumbnailSha256, previewSha256, fullPreviewResourceId, fullPreviewSha256;
+        private final String mediaFingerprint;
+        private String sourcePath,sourceFolder;
+        private Long sizeBytes;
         private final long revision;
         private final Integer width, height;
         private final boolean hasMotion, hasMetadata;
@@ -57,10 +75,27 @@ public final class Models {
                             Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
                             String thumbnailResourceId, String previewResourceId,
                             String gameVersion, String gameVersionSource) {
+            this(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,
+                thumbnailResourceId,previewResourceId,gameVersion,gameVersionSource,null,null,null,null);
+        }
+        public AssetSummary(String assetId, String type, String state, String capturedAt, String uid, long revision,
+                            Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
+                            String thumbnailResourceId, String previewResourceId, String gameVersion, String gameVersionSource,
+                            String thumbnailSha256, String previewSha256, String fullPreviewResourceId, String fullPreviewSha256) {
+            this(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,thumbnailResourceId,previewResourceId,
+                gameVersion,gameVersionSource,thumbnailSha256,previewSha256,fullPreviewResourceId,fullPreviewSha256,null);
+        }
+        public AssetSummary(String assetId, String type, String state, String capturedAt, String uid, long revision,
+                            Integer width, Integer height, boolean hasMotion, boolean hasMetadata,
+                            String thumbnailResourceId, String previewResourceId, String gameVersion, String gameVersionSource,
+                            String thumbnailSha256, String previewSha256, String fullPreviewResourceId, String fullPreviewSha256,String mediaFingerprint) {
             this.assetId = assetId; this.type = type; this.state = state; this.capturedAt = capturedAt; this.uid = uid;
             this.revision = revision; this.width = width; this.height = height; this.hasMotion = hasMotion;
             this.hasMetadata = hasMetadata; this.thumbnailResourceId = thumbnailResourceId; this.previewResourceId = previewResourceId;
             this.gameVersion = gameVersion; this.gameVersionSource = gameVersionSource;
+            this.thumbnailSha256=thumbnailSha256;this.previewSha256=previewSha256;
+            this.fullPreviewResourceId=fullPreviewResourceId;this.fullPreviewSha256=fullPreviewSha256;
+            this.mediaFingerprint=mediaFingerprint;
         }
         public String assetId() { return assetId; }
         public String type() { return type; }
@@ -76,6 +111,18 @@ public final class Models {
         public String previewResourceId() { return previewResourceId; }
         public String gameVersion() { return gameVersion; }
         public String gameVersionSource() { return gameVersionSource; }
+        public String thumbnailSha256(){return thumbnailSha256;}
+        public String previewSha256(){return previewSha256;}
+        public String fullPreviewResourceId(){return fullPreviewResourceId;}
+        public String fullPreviewSha256(){return fullPreviewSha256;}
+        public String mediaFingerprint(){return mediaFingerprint;}
+        public String sourcePath(){return sourcePath;}
+        public String sourceFolder(){return sourceFolder;}
+        public Long sizeBytes(){return sizeBytes;}
+        public AssetSummary withSource(String path,String folder,Long size){
+            AssetSummary copy=new AssetSummary(assetId,type,state,capturedAt,uid,revision,width,height,hasMotion,hasMetadata,thumbnailResourceId,previewResourceId,gameVersion,gameVersionSource,thumbnailSha256,previewSha256,fullPreviewResourceId,fullPreviewSha256,mediaFingerprint);
+            copy.sourcePath=path;copy.sourceFolder=folder;copy.sizeBytes=size;return copy;
+        }
     }
 
     public static final class AssetPage {

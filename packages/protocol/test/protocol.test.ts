@@ -64,3 +64,17 @@ test('pairing QR payload is compact, stable and self-contained', () => {
   assert.equal(uri.endsWith(`|${'00'.repeat(32)}`), true)
   assert.equal(uri.split('|').length, 7)
 })
+
+test('multi-address pairing uses the legacy URI fields plus bounded optional hosts', () => {
+  const uri = buildPairingUri({
+    scheme: 'nikki-sync', action: 'pair', serverId: 'server_1', host: '192.168.1.5', port: 4242,
+    pairingToken: 'abc-_123', protocolVersion: 1, expiresAt: '2026-09-02T14:30:00.000Z',
+    tlsFingerprintSha256: '00'.repeat(32), hosts: ['192.168.1.5', '10.1.2.3', '10.1.2.3']
+  } as Parameters<typeof buildPairingUri>[0] & { hosts: string[] })
+  const parsed = new URL(uri)
+  assert.equal(parsed.protocol, 'nikki-sync:')
+  assert.equal(parsed.hostname, 'pair')
+  assert.equal(parsed.searchParams.get('host'), '192.168.1.5')
+  assert.equal(parsed.searchParams.get('token'), 'abc-_123')
+  assert.deepEqual(parsed.searchParams.get('hosts')?.split(','), ['192.168.1.5', '10.1.2.3'])
+})

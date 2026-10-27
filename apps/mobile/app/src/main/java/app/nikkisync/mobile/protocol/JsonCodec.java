@@ -192,8 +192,10 @@ public final class JsonCodec {
                 optionalString(row, "thumbnailResourceId"),
                 optionalString(row, "previewResourceId"),
                 optionalString(row, "gameVersion"),
-                gameVersionSource
-        );
+                gameVersionSource,
+                optionalString(row,"thumbnailSha256"), optionalString(row,"previewSha256"),
+                optionalString(row,"fullPreviewResourceId"), optionalString(row,"fullPreviewSha256"),optionalString(row,"mediaFingerprint")
+        ).withSource(optionalString(row,"sourcePath"),optionalString(row,"sourceFolder"),row.has("sizeBytes")&&!row.isNull("sizeBytes")?row.getLong("sizeBytes"):null);
     }
 
     private static String optionalString(JSONObject object, String key) {
