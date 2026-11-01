@@ -24,7 +24,7 @@ public final class SavedFilterSheet extends LinearLayout {
         void onCancel();
     }
 
-    private final Button[] filterButtons = new Button[3];
+    private final Button[] filterButtons = new Button[4];
     private final Button[] sortButtons = new Button[2];
     private int filter;
     private int sort;
@@ -45,7 +45,7 @@ public final class SavedFilterSheet extends LinearLayout {
         if(uid!=null)uids.add(uid);if(folder!=null)folders.add(folder);
         int position=form.getChildCount()-1;
         form.addView(scopeChoice("所属 UID",uids,uid,true),position++);form.addView(scopeChoice("来源文件夹",folders,folder,false),position);
-        if(gallery){sortButtons[0].setText("最新拍摄");sortButtons[1].setText("最早拍摄");recover.setVisibility(GONE);}
+        if(gallery){sortButtons[0].setText("最新拍摄");sortButtons[1].setText("最早拍摄");filterButtons[3].setVisibility(VISIBLE);recover.setVisibility(GONE);}
         return this;
     }
     private View scopeChoice(String title,java.util.SortedSet<String> options,String selected,boolean byUid){
@@ -119,6 +119,7 @@ public final class SavedFilterSheet extends LinearLayout {
         filterButtons[0]=choice(filters,"全部",SavedViewState.FILTER_ALL,true);
         filterButtons[1]=choice(filters,"LIVE",SavedViewState.FILTER_MOTION,true);
         filterButtons[2]=choice(filters,"普通",SavedViewState.FILTER_STILL,true);
+        filterButtons[3]=choice(filters,"视频",3,true);filterButtons[3].setVisibility(GONE);
         form.addView(filters);
 
         form.addView(section("排序方式",14));

@@ -165,6 +165,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
     }
 
     public void setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.Source source){setLivePhoto(new LivePhotoPlayback(activity,source));}
+    public void setRemoteVideo(app.nikkisync.mobile.net.NikkiSyncClient client,String assetId){setLivePhoto(LivePhotoPlayback.remoteVideo(activity,client,assetId));}
     void setLivePhoto(LivePhotoPlayback playback){
         clearLivePhoto();live=playback;
         // Texture content shares the photo transform; the gesture surface and buttons stay fixed.

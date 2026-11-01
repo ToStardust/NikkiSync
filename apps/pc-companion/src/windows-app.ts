@@ -211,6 +211,7 @@ async function main(): Promise<void> {
   markStartup('desktop-control')
   scanDirectories=new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop(),()=>runtime.server.accounts.sourceDirectoriesChanged())
   const dashboard = createDesktopControlServer({
+    inspirations:runtime.server.inspirations,
     accounts:runtime.server.accounts,
     deletions:runtime.deletions,
     scanDirectories,

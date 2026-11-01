@@ -17,7 +17,8 @@ public final class PlayerFacingDetails {
 
     public static String sourcePhoto(AssetSummary asset) {
         StringBuilder out = new StringBuilder();
-        if (asset.hasMotion()) out.append("LIVE 照片");
+        if (asset.isVideo()) out.append("视频");
+        else if (asset.hasMotion()) out.append("LIVE 照片");
         String captured = date(asset.capturedAt());
         if (captured != null) {
             if (out.length() > 0) out.append("\n");
@@ -78,9 +79,16 @@ public final class PlayerFacingDetails {
             String status = resolver == null ? "" : resolver.optString("status", "");
             boolean embedded = raw != null && (raw.optBoolean("sourceParametersPresent", false)
                     || !raw.optString("nativeParamToken", "").isBlank() || !raw.optString("nativeParamPayload", "").isBlank());
+            if (!"resolved".equals(status) && embedded && raw.has("sourceParametersComplete")) {
+                if(!raw.optBoolean("sourceParametersComplete"))return "检测到参数标记，但当前能读取的原始数据不完整。请保留原图，并在电脑补充包含 UID 的游戏相册目录。";
+                JSONObject identity=metadata.optJSONObject("identity");
+                if(identity==null||identity.optString("uid", "").isBlank())return "检测到原始参数，但未识别到所属 UID。请在电脑添加保留 UID 文件夹的原游戏相册后重新扫描。";
+            }
             if (!"resolved".equals(status) && (embedded || "failed".equals(status)))
                 return missing + "尚未解析完整，请保持电脑联网，并检查“同步设置”的在线参数解析。";
             if ("resolved".equals(status)) return missing + "未能完整读取，当前仅展示已读取的信息。";
+            if (raw != null && raw.optBoolean("sourceParametersChecked", false) && !raw.optBoolean("sourceParametersPresent"))
+                return "电脑当前索引未检测到可识别的游戏参数。普通截图可能没有保存这些信息；若有原图，请添加保留 UID 的原游戏相册并重新扫描。";
             return missing + "未能完整读取。普通截图或搬迁后的相册可能缺少原始数据，可在电脑“同步设置”补充原游戏相册目录。";
         } catch (Exception ignored) {
             return "照片参数暂不可用，请连接电脑重新同步。";

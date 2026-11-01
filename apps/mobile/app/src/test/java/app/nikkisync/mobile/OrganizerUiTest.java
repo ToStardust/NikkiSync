@@ -17,6 +17,20 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class) @Config(sdk=35)
 public class OrganizerUiTest {
     static AssetSummary photo(String id){return new AssetSummary(id,"photo","ready",null,null,1,100,100,false,false,null,null,null,null);}
+    @Test public void organizerFailureStaysVisibleAcrossRefreshAndClearsOnlyAfterSuccess()throws Exception{
+        var activity=Robolectric.buildActivity(MainActivity.class).get();ImageLoader images=new ImageLoader(activity);OrganizerStore store=new OrganizerStore(activity);
+        try{
+            var build=MainActivity.class.getDeclaredMethod("buildUi");build.setAccessible(true);build.invoke(activity);
+            var server=new PairedServer("failure-pc","PC","127.0.0.1",1,"fingerprint","","",0);store.enqueue(OrganizerStore.scope(server),List.of(photo("failure")));
+            var page=new OrganizerPage(activity,store,server,null,images,Runnable::run,new Handler(Looper.getMainLooper()),()->{});Shadows.shadowOf(Looper.getMainLooper()).idle();
+            var failure=OrganizerPage.class.getMethod("setSyncFailure",String.class);
+            String message="整理同步未完成，请更新电脑端后重试";failure.invoke(page,message);Shadows.shadowOf(Looper.getMainLooper()).idle();
+            Field field=OrganizerPage.class.getDeclaredField("note");field.setAccessible(true);TextView note=(TextView)field.get(page);
+            assertTrue(note.getText().toString().contains(message));page.refresh();Shadows.shadowOf(Looper.getMainLooper()).idle();assertTrue(note.getText().toString().contains(message));
+            assertEquals(1,store.outgoing(OrganizerStore.scope(server)).length());
+            failure.invoke(page,new Object[]{null});Shadows.shadowOf(Looper.getMainLooper()).idle();assertFalse(note.getText().toString().contains(message));assertTrue(note.getText().toString().contains("待处理 1 张"));
+        }finally{activity.navigationHost().close();images.shutdown();store.close();}
+    }
     @Test public void phoneCanLeaveOnlyAfterBatchVerificationAndNotDuringInitialPreparation()throws Exception{
         var activity=Robolectric.buildActivity(MainActivity.class).get();ImageLoader images=new ImageLoader(activity);OrganizerStore store=new OrganizerStore(activity);
         try{

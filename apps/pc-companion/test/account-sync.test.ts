@@ -47,6 +47,19 @@ test('only identified or explicitly marked spinning-momo directories get the sou
   assert.equal(isSpinningMomoDirectory({...root,mode:'native',source:'spinning_momo'}),false)
 })
 
+test('source cards count videos but choose only images for their photo previews',()=>{
+  const db=new DatabaseManager(':memory:');db.initialize()
+  const root={id:'test',mode:'images' as const,path:path.resolve('out/SpinningMomo')},assets=new AssetRepository(db),resources=new ResourceRepository(db)
+  try{
+    for(const [id,type,mime,role] of [['image','photo','image/jpeg','source_high_quality'],['video','video','video/mp4','source_motion']] as const){
+      assets.create({assetId:id,assetType:type,discoveredAt:'2026-10-27T00:00:00Z'})
+      const file=path.join(root.path,id);resources.create({resourceId:'r_'+id,assetId:id,role,sourcePath:file,pathKey:toPathKey(file),fileName:id,mimeType:mime,fileExt:type==='video'?'.mp4':'.jpeg',sizeBytes:1,sha256:'a'.repeat(64)})
+    }
+    const card=new AccountSyncSettings(db,()=>[root]).state().accounts.find(row=>row.uid==='source:spinning_momo')!
+    assert.equal(card.count,2);assert.deepEqual(card.samples,['image'])
+  }finally{db.close()}
+})
+
 test('authenticated mobile and loopback desktop enforce saved scope and full resync',async()=>{
   const db=new DatabaseManager(':memory:');db.initialize();const assets=new AssetRepository(db)
   for(const [id,uid] of [['visible','1001'],['hidden','2002']])assets.create({assetId:id!,uid:uid!,assetType:'photo',discoveredAt:'2026-10-27T00:00:00Z'})

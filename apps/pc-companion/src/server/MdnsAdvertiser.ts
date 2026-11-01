@@ -1,5 +1,5 @@
 import dgram from 'node:dgram'
-import { selectLanIpv4 } from './LanAddress.js'
+import { listLanIpv4 } from './LanAddress.js'
 
 const MULTICAST = '224.0.0.251'
 const PORT = 5353
@@ -26,13 +26,30 @@ function txt(...values: string[]): Buffer {
 }
 
 export class MdnsAdvertiser {
-  private socket: dgram.Socket | undefined
+  private readonly sockets = new Map<string, { socket: dgram.Socket; send(): void }>()
   private timer: NodeJS.Timeout | undefined
+  private generation = 0
 
   start(input: { serverId: string; name: string; port: number }): void {
     this.stop()
-    const ip = selectLanIpv4()
-    if (!ip) { this.timer = setTimeout(() => this.start(input), 10_000); return }
+    const generation = this.generation
+    const refresh = () => {
+      if (this.generation !== generation) return
+      const addresses = new Set(listLanIpv4())
+      for (const [ip, entry] of this.sockets) if (!addresses.has(ip)) this.retire(ip, entry.socket)
+      for (const ip of addresses) {
+        const entry = this.sockets.get(ip)
+        if (entry) entry.send()
+        else this.advertise(input, ip)
+      }
+    }
+    // Keep retrying even if bind/membership fails before the listening callback.
+    // A secondary Wi-Fi/hotspot must be discoverable while Ethernet stays up.
+    this.timer = setInterval(refresh, 15_000)
+    refresh()
+  }
+
+  private advertise(input: { serverId: string; name: string; port: number }, ip: string): void {
     const service = '_nikkisync._tcp.local'
     const safeName = input.name.replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'NikkiSync'
     const instance = `${safeName}.${service}`
@@ -48,10 +65,17 @@ export class MdnsAdvertiser {
     header.writeUInt16BE(0x8400, 2)
     header.writeUInt16BE(4, 6)
     const packet = Buffer.concat([header, ptr, srv, txtRecord, a])
-    const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true })
-    this.socket = socket
-    socket.on('error', () => undefined)
-    const send = () => { if (this.socket === socket) socket.send(packet, PORT, MULTICAST, () => undefined) }
+    let socket: dgram.Socket
+    try { socket = dgram.createSocket({ type: 'udp4', reuseAddr: true }) } catch { return }
+    let listening = false
+    const current = () => this.sockets.get(ip)?.socket === socket
+    const send = () => {
+      if (!current() || !listening) return
+      try { socket.send(packet, PORT, MULTICAST, error => { if (error) this.retire(ip, socket) }) }
+      catch { this.retire(ip, socket) }
+    }
+    this.sockets.set(ip, { socket, send })
+    socket.on('error', () => this.retire(ip, socket))
     socket.on('message', (message) => {
       // Multicast loopback delivers our own announcements here. Responding to a
       // response creates an unbounded packet loop and can starve service startup.
@@ -59,25 +83,28 @@ export class MdnsAdvertiser {
         || message.readUInt16BE(4) === 0) return
       if (message.includes(Buffer.from('_nikkisync')) && message.includes(Buffer.from('_tcp'))) send()
     })
-    socket.bind(PORT, () => {
-      if (this.socket !== socket) return
+    try { socket.bind(PORT, () => {
+      if (!current()) return
       try {
         socket.setMulticastInterface(ip)
         socket.addMembership(MULTICAST, ip)
-      } catch { /* another mDNS daemon may own membership */ }
-      socket.setMulticastTTL(255)
-      send(); this.timer = setInterval(() => {
-        if (this.socket !== socket) return
-        if (selectLanIpv4() !== ip) this.start(input)
-        else send()
-      }, 15_000)
-    })
+        socket.setMulticastTTL(255)
+        listening = true
+        send()
+      } catch { this.retire(ip, socket) }
+    }) } catch { this.retire(ip, socket) }
+  }
+
+  private retire(ip: string, socket: dgram.Socket): void {
+    if (this.sockets.get(ip)?.socket !== socket) return
+    this.sockets.delete(ip)
+    try { socket.close() } catch { /* a failed bind may already have closed it */ }
   }
 
   stop(): void {
+    this.generation++
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
-    this.socket?.close()
-    this.socket = undefined
+    for (const [ip, entry] of this.sockets) this.retire(ip, entry.socket)
   }
 }

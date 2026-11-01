@@ -72,7 +72,7 @@ test('APK export is offered only when the native desktop reports a bundled insta
   assert.equal(ui.element('#android-installer').hidden, true)
 })
 
-function mount(fetcher: (url: string,options?:{body?:string}) => Promise<unknown>, bridge?: unknown, organizerItems:unknown[] = [], confirmResult=true,previewFetcher?:()=>Promise<unknown>) {
+function mount(fetcher: (url: string,options?:{body?:string;signal?:AbortSignal}) => Promise<unknown>, bridge?: unknown, organizerItems:unknown[] = [], confirmResult=true,previewFetcher?:()=>Promise<unknown>) {
   let active: Element | undefined
   class Element {
     children:Element[]=[];style={cssText:''};className='';content='local-token'
@@ -112,6 +112,7 @@ function mount(fetcher: (url: string,options?:{body?:string}) => Promise<unknown
   const documentState = { hidden: false }
   const polls:(()=>Promise<void>)[]=[],prompts:string[]=[]
   const revoked:string[]=[];let blobs=0
+  const timeouts=new Map<number,()=>void>();let timeoutId=0
   let poll: (() => Promise<void>) | undefined
   runInNewContext(desktopPageScript, {
     document: {
@@ -123,16 +124,52 @@ function mount(fetcher: (url: string,options?:{body?:string}) => Promise<unknown
       get activeElement() { return active }
     },
     window: { chrome: bridge ? { webview: bridge } : undefined, addEventListener() {} },
-    fetch: (url:string,options?:{body?:string}) => url==='/api/organizer'?Promise.resolve({ok:true,json:async()=>({items:organizerItems})}):url.startsWith('/api/organizer/preview?')?(previewFetcher?previewFetcher():Promise.resolve({ok:false})):fetcher(url,options),
+    fetch: (url:string,options?:{body?:string;signal?:AbortSignal}) => url==='/api/organizer'?Promise.resolve({ok:true,json:async()=>({items:organizerItems})}):url.startsWith('/api/organizer/preview?')?(previewFetcher?previewFetcher():Promise.resolve({ok:false})):fetcher(url,options),
+    AbortController,
+    setTimeout:(callback:()=>void)=>{const id=++timeoutId;timeouts.set(id,callback);return id},
+    clearTimeout:(id:number)=>timeouts.delete(id),
     URL:{createObjectURL:()=>{blobs++;return 'blob:fixture-'+blobs},revokeObjectURL:(url:string)=>revoked.push(url)},
     confirm:(prompt:string)=>{prompts.push(prompt);return confirmResult},
     setInterval: (handler: () => Promise<void>) => { polls.push(handler);poll = handler; return polls.length },
     clearInterval() {}
   })
-  return { element, navigation, pages, projects, events, documentState, prompts, revoked,organizerPoll:()=>polls[0]!(), setOrganizerItems:(items:unknown[])=>{organizerItems=items},poll: () => poll!(), active: () => active }
+  return { element, navigation, pages, projects, events, documentState, prompts, revoked,expireRequests:()=>{for(const callback of [...timeouts.values()])callback()},organizerPoll:()=>polls[0]!(), setOrganizerItems:(items:unknown[])=>{organizerItems=items},poll: () => poll!(), active: () => active }
 }
 
 const organizerItem=(id:string,state='pending',online=true)=>({id,state,online,message:'等待电脑确认',count:2,files:[{name:id+'.jpeg',folder:'Photos',size:1048576},{name:id+'.mp4',folder:'Videos',size:5242880}]})
+
+test('a stalled approval releases controls and reconciles its outcome without resending approval',async()=>{
+ let posts=0,settled=false
+ const ui=mount(async(url,options)=>{
+   if(url!=='/api/organizer/approve-many')return {ok:true,json:async()=>({})}
+   posts++
+   return new Promise((_resolve,reject)=>options?.signal?.addEventListener('abort',()=>reject(new Error('timeout')),{once:true}))
+ },undefined,[organizerItem('ready')])
+ await new Promise(resolve=>setImmediate(resolve))
+ const action=ui.element('#organizer-approve-all').onclick!() as Promise<void>;void action.then(()=>{settled=true})
+ ui.setOrganizerItems([organizerItem('ready','confirming')]);ui.expireRequests()
+ await new Promise(resolve=>setImmediate(resolve))
+ assert.equal(settled,true,'a lost response must not leave the desktop permanently busy')
+ assert.equal(posts,1,'a timed-out approval might already be accepted; never resend automatically')
+ assert.match(ui.element('#organizer-availability').textContent,/等待手机核对/)
+ ui.setOrganizerItems([organizerItem('ready','recycled')]);await ui.organizerPoll()
+ assert.equal(ui.element('#organizer-list').children[0]?.className,'organizer-empty')
+})
+
+test('an offline unfinished preparation does not block confirming an online batch',async()=>{
+ const calls:{url:string;body:any}[]=[]
+ const initial=[organizerItem('online-ready'),organizerItem('old-device','preparing',false)]
+ const ui=mount(async(url,options)=>{calls.push({url,body:JSON.parse(options?.body||'null')});return {ok:true,json:async()=>({items:initial,approved:1,skipped:0})}},undefined,initial)
+ await new Promise(resolve=>setImmediate(resolve))
+ assert.equal(ui.element('#organizer-approve-all').disabled,false)
+ assert.match(ui.element('#organizer-availability').textContent,/可确认 1 张.*1 张等待手机/)
+ const offline=descendants(ui.element('#organizer-list').children[1]!)
+ assert.ok(offline.some(node=>node.className==='organizer-state'&&/等待手机/.test(node.textContent)))
+ await ui.element('#organizer-approve-all').onclick!()
+ assert.deepEqual(calls,[{url:'/api/organizer/approve-many',body:{ids:['online-ready']}}])
+ ui.setOrganizerItems([organizerItem('online-ready'),organizerItem('old-device','preparing',true)]);await ui.organizerPoll()
+ assert.equal(ui.element('#organizer-approve-all').disabled,true,'online preparations must still finish before approving the complete batch')
+})
 const descendants=(node:{textContent:string;className:string;children:any[]}):any[]=>[node,...node.children.flatMap(descendants)]
 
 test('failed reminders can be dismissed without approving or deleting files',async()=>{
@@ -208,7 +245,7 @@ test('cancelling the bulk confirmation sends no approval request',async()=>{
 })
 
 test('working states show progress instead of falsely asking users to reconnect or approve again',async()=>{
- const ui=mount(async()=>({}),undefined,['preparing','queued','checking','executing'].map(state=>organizerItem(state,state,false)))
+ const ui=mount(async()=>({}),undefined,['preparing','queued','checking','executing'].map(state=>organizerItem(state,state,state==='preparing')))
  await new Promise(resolve=>setImmediate(resolve));const nodes=descendants(ui.element('#organizer-list'))
  assert.equal(ui.element('#organizer-list').children.length,4);assert.match(ui.element('#organizer-availability').textContent,/正在核对 1 张.*全部核对完成/)
  assert.equal(ui.element('#organizer-approve-all').disabled,true)

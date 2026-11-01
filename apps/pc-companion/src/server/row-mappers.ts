@@ -26,10 +26,15 @@ function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhoto
     ? { ...(value.raw as Record<string, unknown>) }
     : undefined
   if (raw) {
+    if(raw.nativeParamToken || raw.nativeParamPayload || raw.nativeParamNuan5Md5){
+      raw.sourceParametersPresent=true
+      raw.sourceParametersComplete=Boolean(raw.nativeParamToken&&raw.nativeParamPayload&&raw.nativeParamNuan5Md5)
+    }
     // The full game-native payload can be tens of KB and is only required by the PC resolver.
     // Never send it over the LAN API; clients only need canonical decoded metadata and status.
     delete raw.nativeParamPayload
     delete raw.nativeParamNuan5Md5
+    delete raw.previousSourceMetadata
   }
   return raw ? { ...value, raw } as InfinityPhotoMetadata : value
 }
@@ -77,6 +82,16 @@ export function mapAssetRow(row: Record<string, unknown>, resourceRows: Record<s
   let metadata = publicMetadata(optionalString(row.metadata_json)
     ? JSON.parse(String(row.metadata_json)) as InfinityPhotoMetadata
     : undefined)
+  // This is an observation of the current PC index, not proof that the
+  // original file never contained parameters. Old/offline clients remain safe.
+  if (still && row.asset_state === 'ready' && String(row.asset_type) !== 'video') {
+    const raw = metadata?.raw as Record<string, unknown> | undefined
+    metadata = {
+      ...(metadata ?? { schemaVersion: 1, identity: {}, capture: {}, camera: {} }),
+      raw: { ...raw, sourceParametersChecked: true,
+        ...(!raw?.sourceParametersPresent ? { sourceParametersPresent: false, sourceParametersComplete: false } : {}) }
+    } as InfinityPhotoMetadata
+  }
   const inferred=summaryGameVersion(row).gameVersion
   const title=gameVersionEnglishName(inferred)
   if(metadata&&title)metadata={...metadata,identity:{...metadata.identity,...(!metadata.identity?.gameVersion&&inferred?{gameVersion:inferred}:{}),gameVersionEnglishName:title}}
@@ -141,7 +156,7 @@ export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Reco
     revision: Number(row.revision),
     ...(visual?.width === undefined ? {} : { width: visual.width }),
     ...(visual?.height === undefined ? {} : { height: visual.height }),
-    hasMotion: resources.some((resource) => resource.role === 'source_motion'),
+    hasMotion: String(row.asset_type) === 'motion_photo' && resources.some((resource) => resource.role === 'source_motion'),
     hasMetadata: Boolean(row.metadata_json),
     ...(fingerprint?{mediaFingerprint:fingerprint}:{}),
     ...(sourcePath?{sourcePath,sourceFolder:sourceFolder??''}:{}),

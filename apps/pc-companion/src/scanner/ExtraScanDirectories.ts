@@ -4,11 +4,19 @@ import {realpath,stat,readdir} from 'node:fs/promises'
 import path from 'node:path'
 import type {ExtraScanRoot} from './types.js'
 import type {ScannerService} from './ScannerService.js'
+import {gamePlayUid,nativePhotoLayout,nativePhotoAccountDirectory} from './NativePhotoLayout.js'
 
 const MAX_DIRECTORIES=16
 const key=(value:string)=>path.resolve(value).toLowerCase()
 const within=(value:string,root:string)=>key(value)===key(root)||key(value).startsWith(key(root)+path.sep)
 const overlaps=(a:string,b:string)=>within(a,b)||within(b,a)
+function namedAncestor(directory:string,name:RegExp):string|undefined {
+  for(let item=directory,depth=0;depth<8;depth++){
+    if(name.test(path.basename(item)))return item
+    const parent=path.dirname(item);if(parent===item)break;item=parent
+  }
+  return undefined
+}
 export const idFor=(value:string)=>'dir_'+createHash('sha256').update(key(value)).digest('hex').slice(0,24)
 
 export function loadExtraScanDirectories(file:string):ExtraScanRoot[]{
@@ -51,16 +59,27 @@ export class ExtraScanDirectories{
     let canonical:string
     try{canonical=await realpath(selected);if(!(await stat(canonical)).isDirectory())throw new Error()}catch{throw new Error('directory_unavailable')}
     if(key(canonical)===key(path.parse(canonical).root))throw new Error('choose_subfolder')
-    if(/(?:^|[/\\])NikkiPhotos_LowQuality(?:[/\\]|$)/i.test(canonical))throw new Error('thumbnail_only')
+    if(/(?:^|[/\\])(?:NikkiPhotos_LowQuality|CloudPhotos_LowQuality)(?:[/\\]|$)|[/\\]Collage[/\\]LowQuality(?:[/\\]|$)/i.test(canonical))throw new Error('thumbnail_only')
+    // A selected HQ/category folder can sit beside thumbnails, full sources and
+    // LIVE. Propose only its own account, with explicit confirmation as before.
+    const layout=nativePhotoLayout(path.join(canonical,'selected.jpeg'))
+    const nativeAccount=nativePhotoAccountDirectory(path.join(canonical,'selected.jpeg'))
+    if(layout?.kind==='high_quality'){
+      const gameplay=namedAncestor(canonical,/^GamePlayPhotos$/i),uid=gamePlayUid(path.join(canonical,'selected.jpeg'))
+      if(gameplay&&uid)canonical=path.join(gameplay,uid)
+      else if(nativeAccount)canonical=nativeAccount
+    }
     const roots:ExtraScanRoot[]=[]
-    const searchBase=/^ScreenShot$/i.test(path.basename(canonical))?path.dirname(canonical):canonical
+    const screenshot=namedAncestor(canonical,/^ScreenShot$/i)
+    const searchBase=screenshot?path.dirname(screenshot):canonical
     // Narrow game/install selections to actual media folders, avoiding Paks and engine caches.
     for(const relative of ['Saved/GamePlayPhotos','GamePlayPhotos','X6Game/Saved/GamePlayPhotos','X6Game/GamePlayPhotos']){
       const candidate=path.join(searchBase,relative)
       if(await directoryExists(candidate)){const resolved=await realpath(candidate);roots.push({id:idFor(resolved),path:resolved,mode:'native'})}
     }
     if(roots.length>0){
-      for(const relative of ['ScreenShot','X6Game/ScreenShot']){
+      if(screenshot)roots.push({id:idFor(canonical),path:canonical,mode:'images'})
+      for(const relative of screenshot?[]:['ScreenShot','X6Game/ScreenShot']){
         const candidate=path.join(searchBase,relative)
         if(await directoryExists(candidate)){const resolved=await realpath(candidate);roots.push({id:idFor(resolved),path:resolved,mode:'images'})}
       }
@@ -71,7 +90,7 @@ export class ExtraScanDirectories{
         for(const name of ['ScreenShot','Video','Videos']){const candidate=path.join(base,name);if(await directoryExists(candidate)){const resolved=await realpath(candidate);roots.push({id:idFor(resolved),path:resolved,mode:'images'})}}
         if(roots.length===0)throw new Error('choose_photo_folder')
       }else{
-        const native=/^(GamePlayPhotos|NikkiPhotos_HighQuality)$/i.test(path.basename(canonical))||await directoryExists(path.join(canonical,'NikkiPhotos_HighQuality'))||(/[/\\]GamePlayPhotos[/\\]/i.test(canonical)&&/^Videos?$/i.test(path.basename(canonical)))
+        const native=canonical===nativeAccount||/^(GamePlayPhotos|NikkiPhotos_HighQuality)$/i.test(path.basename(canonical))||await directoryExists(path.join(canonical,'NikkiPhotos_HighQuality'))||(/[/\\]GamePlayPhotos[/\\]/i.test(canonical)&&/^Videos?$/i.test(path.basename(canonical)))||!!(gamePlayUid(path.join(canonical,'selected.jpeg'))&&layout)
         roots.push({id:idFor(canonical),path:canonical,mode:native?'native':'images'})
       }
     }
@@ -92,7 +111,7 @@ export class ExtraScanDirectories{
       }
     }
     try{for(const root of unique)await visit(root.path,0)}catch{throw new Error('directory_unavailable')}
-    const hint=unique.some(root=>root.mode==='native')?'已找到原生相册，优先读取其中的穿搭、拍摄参数与 LIVE。若包含 ScreenShot，会补收拼图等独有照片并排除原图的导出副本。请确认以下目录。':'外部图片可浏览和保存；附近没有找到可补充参数的原生相册。截图本身不带参数时无法还原穿搭与拍摄信息。不会把普通录像当作 LIVE。'
+    const hint=unique.some(root=>root.mode==='native')?'已找到原生相册，优先读取其中的穿搭、拍摄参数与 LIVE。若包含 ScreenShot，会补收拼图等独有照片并排除原图的导出副本。请确认以下目录。':'外部图片与 MP4 录像可浏览和保存；附近没有找到可补充参数的原生相册。截图本身不带参数时无法还原穿搭与拍摄信息。'
     const proposal={id:randomBytes(18).toString('base64url'),roots:unique,images,videos,limited,hint}
     for(const [id,item]of this.proposals)if(item.expires<Date.now())this.proposals.delete(id)
     if(this.proposals.size>=8)this.proposals.delete(this.proposals.keys().next().value!)
@@ -101,8 +120,8 @@ export class ExtraScanDirectories{
   }
 
   add(id:string):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{
-    const item=this.proposals.get(id);this.proposals.delete(id)
-    if(!item||item.expires<Date.now())throw new Error('selection_expired')
+    const item=this.proposals.get(id)
+    if(!item||item.expires<Date.now()){this.proposals.delete(id);throw new Error('selection_expired')}
     const existing=await resolveScopes([...this.directories.map(value=>value.path),...this.scanner.getAutomaticRoots()])
     for(const root of item.proposal.roots){
       if(key(await realpath(root.path))!==key(root.path))throw new Error('directory_unavailable')
@@ -110,7 +129,8 @@ export class ExtraScanDirectories{
     }
     if(this.directories.length+item.proposal.roots.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     await this.change([...this.directories,...item.proposal.roots])
-    this.lastResult=this.scanner.getStatus().lastScan?.errors.length?'目录已添加，但部分文件暂不可读。请确认磁盘在线后重新扫描，之前的索引已保留。':'目录已加入扫描。新照片会继续自动收录；手机会通过现有连接同步更新。'
+    this.proposals.delete(id)
+    this.lastResult=this.scanner.getStatus().lastScan?.errors.length?'目录已添加，但部分文件暂不可读。请确认磁盘在线后重新扫描，之前的索引已保留。':'目录已加入扫描。新照片和录像会继续自动收录；手机会通过现有连接同步更新。'
     return this.state()
   }).then(()=>this.state())}
   remove(id:string):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{

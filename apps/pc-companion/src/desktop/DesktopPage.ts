@@ -6,9 +6,11 @@ import { metadataPrivacyHtml, metadataPrivacyDialog, metadataPrivacyScript } fro
 import {extraScanDirectoriesHtml} from './ExtraScanDirectoriesPanel.js'
 import {accountSyncHtml,accountSyncCss} from './AccountSyncPanel.js'
 import {organizerHtml, temporaryNetworkHtml, organizerCss} from './OrganizerPanel.js'
+import {inspirationHtml,inspirationCss} from './InspirationPanel.js'
 
 const css = `
 ${organizerCss}
+${inspirationCss}
 .about-summary{text-align:center}.about-mark{display:flex;justify-content:center;margin:2px 0 16px}.about-mark .brand-avatar{width:76px;height:76px;border-radius:24px}.about-summary h2{font-size:24px}.about-version{color:var(--secondary);font-size:12px;margin-top:8px}.about-author{margin-top:20px;font-size:13px}.about-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px}.repository-link{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 0;border-top:1px solid var(--line);color:var(--accent-dark);text-decoration:none}.repository-link:first-of-type{margin-top:14px}.repository-link strong{font-weight:600}.repository-link small{display:block;color:var(--secondary);font-size:11px;overflow-wrap:anywhere;margin-top:4px}.repository-link:hover strong{text-decoration:underline}.update-dot{margin-left:auto;background:var(--brand)}
 :root{color-scheme:light;--background:#FFF8F0;--surface:#FFFCF7;--text:#59475E;--secondary:#664F5E;--brand:#D780AA;--primary:#F6BCC0;--primary-foreground:#62425A;--primary-hover:#F0ABB6;--tint:#FBE6ED;--accent:#7B5068;--accent-dark:#62425A;--border:#EED5DD;--background-top:#F5DCE5;--background-middle:#FAE6DF;--line:var(--border)}
 *{box-sizing:border-box}body{margin:0;color:var(--text);background:var(--background);font:14px/1.55 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.48}button:focus-visible,input:focus-visible{outline:3px solid var(--brand);outline-offset:4px}[hidden]{display:none!important}h1,h2,h3,p{margin:0}.icon{width:20px;height:20px;flex:none;vertical-align:middle}.ambient{position:fixed;inset:0;pointer-events:none;background:linear-gradient(160deg,var(--background-top),var(--background-middle) 52%,var(--background));z-index:-1}
@@ -59,7 +61,7 @@ export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: stri
     ${token ? `<meta name="nikkisync-desktop-token" content="${token}">` : ''}<style>${css}${remoteToken ? remotePanelCss : ''}</style></head><body>
     <div class="ambient" aria-hidden="true"></div><div class="app-shell">
     <aside class="sidebar"><div class="brand">${avatar}<div><div class="brand-name">大喵相机助手</div><div class="brand-english">Momo Camera</div></div></div>
-      <nav class="navigation" aria-label="主导航"><button class="nav-item" data-view="connect" aria-current="page">${icon('phone')}手机连接</button><button class="nav-item" data-view="settings">${icon('settings')}同步设置</button><button class="nav-item" data-view="organizer">${icon('album')}最近删除<span id="organizer-nav-count" class="organizer-badge" hidden></span></button><button class="nav-item" data-view="about">${icon('info')}关于<span id="about-update-dot" class="status-dot update-dot" aria-label="有新版本" hidden></span></button></nav>
+      <nav class="navigation" aria-label="主导航"><button class="nav-item" data-view="connect" aria-current="page">${icon('phone')}手机连接</button><button class="nav-item" data-view="settings">${icon('settings')}同步设置</button><button class="nav-item" data-view="organizer">${icon('album')}最近删除<span id="organizer-nav-count" class="organizer-badge" hidden></span></button><button class="nav-item" data-view="inspiration">${icon('album')}灵感库</button><button class="nav-item" data-view="about">${icon('info')}关于<span id="about-update-dot" class="status-dot update-dot" aria-label="有新版本" hidden></span></button></nav>
       <div class="sidebar-footer"><span>Windows 客户端</span><span>无限暖暖 · 非官方摄影助手</span></div>
     </aside>
     <main class="workspace"><header class="page-header"><div><h1 id="desktop-title">暖暖相册</h1><p id="desktop-subtitle" class="page-subtitle">电脑里的风景与穿搭，在手机上慢慢欣赏。</p></div><span id="desktop-status" class="chip" data-state="ready" role="status"><span class="status-dot"></span><span id="desktop-status-text">同步服务运行中</span></span></header>
@@ -76,6 +78,7 @@ export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: stri
       ${metadataPrivacy?metadataPrivacyHtml:''}<p class="settings-about">大喵相机助手 · Momo Camera<br>《无限暖暖》非官方摄影助手</p>
     </div>
     <div data-page="organizer" hidden>${organizerHtml}</div>
+    <div data-page="inspiration" hidden>${inspirationHtml}</div>
     <div data-page="about" hidden>
       <section class="settings-card glass about-summary"><div class="about-mark">${avatar}</div><h2>大喵相机助手</h2><p id="desktop-version" class="about-version">Windows 客户端</p><p class="about-author">作者 · 星尘（支持粉毛拯救世界版）</p><p class="page-subtitle">《无限暖暖》非官方摄影助手 · Momo Camera</p></section>
       <section class="settings-card glass"><h2>版本更新</h2><p id="desktop-update-note" class="page-subtitle">网盘下载新版，或检查签名更新源进行一键更新。</p><div class="about-actions update-actions"><button id="check-updates" class="primary" disabled>检查更新</button><a class="download-link" data-project="downloads" href="https://pan.baidu.com/s/5bb_o2A8iJ2MR4f_hRBlPCw" target="_blank" rel="noopener noreferrer"><strong>百度网盘 ↗</strong><small>下载 / 订阅更新</small></a><a class="download-link" data-project="releases" href="https://github.com/ToStardust/NikkiSync/releases" target="_blank" rel="noopener noreferrer"><strong>GitHub ↗</strong><small>备用下载</small></a></div><p class="page-subtitle">可在网盘中订阅“大喵相机助手”文件夹。网盘版本需自行查看和下载；一键更新使用签名更新源。</p></section>

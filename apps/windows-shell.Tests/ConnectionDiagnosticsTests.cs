@@ -8,6 +8,17 @@ namespace NikkiSync.WindowsShell.Tests;
 
 public sealed class ConnectionDiagnosticsTests:IDisposable
 {
+    [Theory]
+    [InlineData("225",true)]
+    [InlineData("-1",true)]
+    [InlineData("\"private-token\"",false)]
+    [InlineData("1.5",false)]
+    [InlineData("2147483648",false)]
+    public void Native_error_code_export_accepts_only_int32(string value,bool expected)
+    {
+        using var report=JsonDocument.Parse(ConnectionDiagnosticsPackage.SanitizeLog("startup-diagnostics.log",Encoding.UTF8.GetBytes("{\"nativeErrorCode\":"+value+"}")));
+        Assert.Equal(expected,report.RootElement.TryGetProperty("nativeErrorCode",out _));
+    }
     [Fact] public void ScanStatusKeepsZeroCountsAndDropsPathsAndErrorText()
     {
         var input=Encoding.UTF8.GetBytes("{\"timestamp\":\"2026-10-24T06:50:30Z\",\"status\":\"running\",\"installationFound\":true,\"scanRootCount\":0,\"automaticRootCount\":0,\"extraRootCount\":0,\"roots\":[\"private-photo-path\"],\"lastScan\":{\"filesObserved\":0,\"resourcesAccepted\":0,\"resourcesIgnored\":0,\"errorCount\":1,\"errors\":[\"private-token\"]}}");

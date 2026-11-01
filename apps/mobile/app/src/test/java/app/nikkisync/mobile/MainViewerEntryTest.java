@@ -101,6 +101,20 @@ public class MainViewerEntryTest {
             assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
         } finally {cleanup(activity);}
     }
+    @Test public void standaloneVideoShowsVideoControlsAndSavesWithoutLiveChoices() throws Exception {
+        var activity=fixture();
+        try {
+            var asset=new AssetSummary("synthetic-video","video","ready",null,null,1,null,null,false,false,null,null,null,null);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+            var controls=(android.widget.LinearLayout)activity.navigationHost().findViewWithTag("live-playback-controls");
+            assertNotNull(controls);assertTrue(((Button)controls.getChildAt(0)).getText().toString().contains("视频"));
+            assertTrue(controls.getChildAt(1) instanceof android.widget.SeekBar);
+            assertNull(findButton(activity.navigationHost(),"分享"));
+            findButton(activity.navigationHost(),"保存").performClick();
+            assertEquals(1,activity.navigationHost().overlayCount());assertNull(findButton(activity.navigationHost(),"实况照片"));
+            assertEquals("请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+        } finally {cleanup(activity);}
+    }
     @Test public void mixedBatchOffersTheSameMotionSaveChoices() throws Exception {
         var activity=fixture();
         try {
@@ -163,9 +177,39 @@ public class MainViewerEntryTest {
             assertEquals(1,activity.navigationHost().overlayCount());
         } finally {cleanup(activity);}
     }
+    // Robolectric's API 31/32 AlertDialog window shadow resolves a Bluetooth class absent from those SDK jars.
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void missingSavedAndEditedItemsCanBeRemovedWithoutDeletingMedia() throws Exception {
+        var activity=fixture();var edits=new EditedVariantStore(activity);
+        try {
+            set(activity,"editedVariantStore",edits);
+            set(activity,"savedPhotoHealthStore",new app.nikkisync.mobile.storage.SavedPhotoHealthStore(activity));
+            var saved=new SavedPhotoStore(activity);
+            var asset=new AssetSummary("source-a","photo","ready",null,null,1,100,100,false,false,null,null,null,null);
+            String uri="content://example.test/unavailable";saved.record(asset,android.net.Uri.parse(uri),0,"JPEG");
+            var record=saved.load().get(0);
+            invoke(activity,"confirmRemoveSavedRecord",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            var alert=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+            assertTrue(org.robolectric.Shadows.shadowOf(alert).getMessage().toString().contains("不会删除"));
+            alert.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick();assertEquals(1,saved.load().size());
+            invoke(activity,"confirmRemoveSavedRecord",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertTrue(saved.load().isEmpty());
+            var variant=edits.link("source-a",null,"content://example.test/edit",1,"edit.jpg","image/jpeg").variant();
+            invoke(activity,"confirmRemoveEditedRecord",new Class<?>[]{EditedVariantStore.Variant.class},variant);
+            alert=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+            assertTrue(org.robolectric.Shadows.shadowOf(alert).getMessage().toString().contains("不会删除"));
+            alert.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();assertTrue(edits.loadAll().isEmpty());
+        }finally{edits.close();cleanup(activity);}
+    }
     private static void invoke(MainActivity activity,String name,Class<?>[] types,Object... args) throws Exception {
         Method method=MainActivity.class.getDeclaredMethod(name,types);method.setAccessible(true);
-        try {method.invoke(activity,args);}catch(InvocationTargetException error){throw (Exception)error.getCause();}
+        try {method.invoke(activity,args);}catch(InvocationTargetException error){
+            if(error.getCause() instanceof Exception failure)throw failure;
+            if(error.getCause() instanceof Error failure)throw failure;
+            throw error;
+        }
     }
     @Test public void savingRotatedPhotoKeepsViewerDirectionForFollowingShare() throws Exception {
         var activity=fixture();

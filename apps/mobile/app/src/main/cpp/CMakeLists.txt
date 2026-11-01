@@ -3,8 +3,13 @@ project(momo_jpeg C)
 include(ExternalProject)
 set(JPEG_BUILD "${CMAKE_CURRENT_BINARY_DIR}/jpeg-build")
 set(JPEG_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/jpeg-source")
+# An existing local archive can be used for offline builds; URL_HASH still verifies it.
+set(JPEG_ARCHIVE_URL "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz")
+if(DEFINED ENV{MOMO_LIBJPEG_ARCHIVE} AND NOT "$ENV{MOMO_LIBJPEG_ARCHIVE}" STREQUAL "")
+ file(TO_CMAKE_PATH "$ENV{MOMO_LIBJPEG_ARCHIVE}" JPEG_ARCHIVE_URL)
+endif()
 ExternalProject_Add(momo_jpeg_vendor
- URL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz
+ URL "${JPEG_ARCHIVE_URL}"
  URL_HASH SHA256=6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e
  SOURCE_DIR "${JPEG_SOURCE}" BINARY_DIR "${JPEG_BUILD}"
  CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM} -DANDROID_ABI=${ANDROID_ABI}

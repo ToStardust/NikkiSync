@@ -33,6 +33,17 @@ public class GalleryScopeIntegrationTest {
             assertTrue(((TextView)box.getChildAt(0)).getText().toString().contains("1001"));assertTrue(((TextView)box.getChildAt(2)).getText().toString().contains("2.35 MB"));
         }finally{for(String name:new String[]{"io","organizerIo","organizerNetworkIo"})((java.util.concurrent.ExecutorService)get(activity,name)).shutdownNow();}
     }
+    @Test public void videoFilterSelectsRecordingsAndCountsOnlyPhotosAsThumbnailCache()throws Exception{
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();call(activity,"buildUi");ImageLoader loader=new ImageLoader(activity);
+        try{
+            List<AssetSummary> assets=(List<AssetSummary>)get(activity,"assets");assets.add(photo("p","1001"));
+            assets.add(new AssetSummary("v","video","ready",null,null,1,null,null,false,false,null,null,null,null));
+            set(activity,"imageLoader",loader);set(loader,"offlineProgress",new ImageLoader.OfflineProgress(1,1,false,false,0));set(activity,"galleryType",3);
+            call(activity,"renderGallery");call(activity,"updateGalleryCacheCount");
+            var visible=((GalleryAdapter)get(activity,"adapter")).visiblePhotos();assertEquals(1,visible.size());assertTrue(visible.get(0).isVideo());
+            String count=((TextView)get(activity,"countLabel")).getText().toString();assertTrue(count.contains("已同步 2 项"));assertTrue(count.contains("已缓存 1 张照片"));
+        }finally{activity.navigationHost().close();loader.shutdown();for(String name:new String[]{"io","organizerIo","organizerNetworkIo"})((java.util.concurrent.ExecutorService)get(activity,name)).shutdownNow();}
+    }
     static AssetSummary photo(String id,String uid){return new AssetSummary(id,"photo","ready","2026-10-27T01:00:00Z",uid,1,100,200,false,false,null,"r",null,null);}
     static Object get(Object object,String name)throws Exception{Field f=object.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(object);}
     static void set(Object object,String name,Object value)throws Exception{Field f=object.getClass().getDeclaredField(name);f.setAccessible(true);f.set(object,value);}

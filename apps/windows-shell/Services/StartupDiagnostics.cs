@@ -9,8 +9,10 @@ namespace NikkiSync.WindowsShell.Services;
 // Bun exception output can contain source snippets, absolute paths and credentials.
 public sealed record StartupFailure(string Code, string Hint, int? ExitCode = null)
 {
+    public int? NativeErrorCode { get; init; }
     public string Message => $"{Hint}\n\n错误代码：{Code}" +
-        (ExitCode is int code ? $"\n服务退出码：{code}（0x{unchecked((uint)code):X8}）" : "");
+        (ExitCode is int code ? $"\n服务退出码：{code}（0x{unchecked((uint)code):X8}）" : "") +
+        (NativeErrorCode is int native ? $"\nWindows 系统错误码：{native}（0x{unchecked((uint)native):X8}）" : "");
 
     public static StartupFailure Create(string code, int? exitCode = null) => new(code, code switch
     {
@@ -48,21 +50,25 @@ public sealed record StartupFailure(string Code, string Hint, int? ExitCode = nu
         return Create("SERVICE_EXIT", exitCode);
     }
 
-    public static StartupFailure FromException(Exception error) => error switch
+    public static StartupFailure FromException(Exception error)
     {
-        ServiceStartException service => service.Failure,
-        Win32Exception { NativeErrorCode: 193 } => Create("WRONG_ARCHITECTURE"),
-        Win32Exception { NativeErrorCode: 126 } => Create("NATIVE_DEPENDENCY"),
-        Win32Exception { NativeErrorCode: 2 or 3 } => Create("MISSING_FILE"),
-        Win32Exception { NativeErrorCode: 5 } => Create("FILE_ACCESS"),
-        UnauthorizedAccessException => Create("FILE_ACCESS"),
-        PathTooLongException => Create("PATH_TOO_LONG"),
-        InvalidDataException or JsonException => Create("FILE_VALIDATION"),
-        IOException io when io.HResult is unchecked((int)0x80070005) => Create("FILE_ACCESS"),
-        IOException io when io.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021) => Create("FILE_BUSY"),
-        IOException io when io.HResult is unchecked((int)0x80070070) or unchecked((int)0x80070027) => Create("DISK_FULL"),
-        _ => Create("STARTUP_ERROR")
-    };
+        var failure = error switch
+        {
+            ServiceStartException service => service.Failure,
+            Win32Exception { NativeErrorCode: 193 } => Create("WRONG_ARCHITECTURE"),
+            Win32Exception { NativeErrorCode: 126 } => Create("NATIVE_DEPENDENCY"),
+            Win32Exception { NativeErrorCode: 2 or 3 } => Create("MISSING_FILE"),
+            Win32Exception { NativeErrorCode: 5 } => Create("FILE_ACCESS"),
+            UnauthorizedAccessException => Create("FILE_ACCESS"),
+            PathTooLongException => Create("PATH_TOO_LONG"),
+            InvalidDataException or JsonException => Create("FILE_VALIDATION"),
+            IOException io when io.HResult is unchecked((int)0x80070005) => Create("FILE_ACCESS"),
+            IOException io when io.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021) => Create("FILE_BUSY"),
+            IOException io when io.HResult is unchecked((int)0x80070070) or unchecked((int)0x80070027) => Create("DISK_FULL"),
+            _ => Create("STARTUP_ERROR")
+        };
+        return error is Win32Exception native ? failure with { NativeErrorCode = native.NativeErrorCode } : failure;
+    }
 }
 
 public static class StartupDiagnostics
@@ -121,6 +127,7 @@ public static class StartupDiagnostics
                 code = failure.Code, hint = failure.Hint, exitCode = failure.ExitCode,
                 exceptionKind = error is null ? null : ExceptionKind(error),
                 hresultHex = error is null ? null : $"0x{unchecked((uint)error.HResult):X8}",
+                nativeErrorCode = (error as Win32Exception)?.NativeErrorCode ?? failure.NativeErrorCode,
                 runtimeStep = phase == "runtime" && runtimeStep.HasValue && Enum.IsDefined(runtimeStep.Value) ? runtimeStep.Value.ToString() : null,
                 exitCodeHex = failure.ExitCode is int code ? $"0x{unchecked((uint)code):X8}" : null,
                 windows = Environment.OSVersion.VersionString,

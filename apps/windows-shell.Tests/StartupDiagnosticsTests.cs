@@ -6,6 +6,40 @@ namespace NikkiSync.WindowsShell.Tests;
 public sealed class StartupDiagnosticsTests
 {
     [Theory]
+    [InlineData(225)]
+    [InlineData(1260)]
+    [InlineData(87)]
+    [InlineData(193)]
+    public void Win32_native_code_survives_generic_hresult_and_safe_zip_sanitization(int native)
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"momo-native-code-"+Guid.NewGuid().ToString("N"));
+        try{
+            var error=new System.ComponentModel.Win32Exception(native,"C:\\Users\\PrivateUser\\private-token");
+            var failure=StartupFailure.FromException(error);
+            Assert.Contains("Windows",failure.Message);Assert.Contains(native.ToString(),failure.Message);
+            var file=StartupDiagnostics.Write(directory,"service",failure,error);
+            using var report=System.Text.Json.JsonDocument.Parse(ConnectionDiagnosticsPackage.SanitizeLog("startup-diagnostics.log",File.ReadAllBytes(file!)));
+            Assert.Equal(native,report.RootElement.GetProperty("nativeErrorCode").GetInt32());
+            Assert.Equal("win32",report.RootElement.GetProperty("exceptionKind").GetString());
+            Assert.DoesNotContain("PrivateUser",report.RootElement.GetRawText());Assert.DoesNotContain("private-token",failure.Message);
+        }finally{if(Directory.Exists(directory))Directory.Delete(directory,true);}
+    }
+
+    [Fact]
+    public void Real_windows_process_launch_failure_exports_the_original_system_code()
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"momo-invalid-exe-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
+        try{
+            var file=Path.Combine(directory,"generated-not-a-program.exe");File.WriteAllText(file,"generated invalid executable fixture");
+            var error=Assert.Throws<System.ComponentModel.Win32Exception>(()=>new ProcessServiceFactory().Start(file,"",new Dictionary<string,string>()));
+            Assert.NotEqual(0,error.NativeErrorCode);
+            var log=StartupDiagnostics.Write(directory,"service",StartupFailure.FromException(error),error);
+            using var report=System.Text.Json.JsonDocument.Parse(ConnectionDiagnosticsPackage.SanitizeLog("startup-diagnostics.log",File.ReadAllBytes(log!)));
+            Assert.Equal(error.NativeErrorCode,report.RootElement.GetProperty("nativeErrorCode").GetInt32());
+            Assert.DoesNotContain(directory,report.RootElement.GetRawText());
+        }finally{Directory.Delete(directory,true);}
+    }
+    [Theory]
     [InlineData(unchecked((int)0x80070005), "FILE_ACCESS")]
     [InlineData(unchecked((int)0x80070020), "FILE_BUSY")]
     [InlineData(unchecked((int)0x80070021), "FILE_BUSY")]

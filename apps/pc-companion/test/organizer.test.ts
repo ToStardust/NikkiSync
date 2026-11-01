@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {mkdtemp,mkdir,writeFile,readFile,rename,rm,realpath} from 'node:fs/promises'
+import {mkdtemp,mkdir,writeFile,readFile,rename,rm,realpath,link} from 'node:fs/promises'
 import {randomUUID,generateKeyPairSync,createHash,sign} from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
-import {DatabaseManager,AssetRepository} from '@nikkisync/database'
+import {DatabaseManager,AssetRepository,ResourceRepository} from '@nikkisync/database'
 import {mediaFingerprint} from '../src/server/MediaFingerprint.js'
 import {ScannerService} from '../src/scanner/ScannerService.js'
 import {DeletionQueue,type DeleteIntent} from '../src/organizer/DeletionQueue.js'
@@ -35,6 +35,77 @@ async function fixture(){
  const intent={id:randomUUID(),assetId:String(asset.asset_id),revision:Number(asset.revision)}
  return {root,source,copy,hq,screen,db,scanner,queue,intent,moved,advance:()=>now+=90000,close:async()=>{await queue.stop();await scanner.stop();db.close();await rm(root,{recursive:true,force:true})}}
 }
+test('a signed 500-photo modern confirmation fits the transport without splitting the authorization batch',async()=>{
+ const f=await fixture(),queue=new DeletionQueue(f.db,()=>f.scanner.getScanRoots(),async()=>{},undefined,()=>Date.now(),undefined,{
+  exportsFor:()=>[],recycleMany:async files=>files.map(file=>({path:file.path,recycled:false,reason:'generated_test_only'}))
+ })
+ const mobile=new LocalSyncServer(f.db,{host:'127.0.0.1',port:0,mdns:false,deletions:queue})
+ try{
+  const address=await mobile.start(),pair=new PairingService(f.db),keys=generateKeyPairSync('ed25519')
+  const qr=pair.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'00'.repeat(32)})
+  pair.pair({pairingToken:qr.pairingToken,device:{deviceId:'phone',deviceName:'test',platform:'android',appVersion:'test',publicKey:keys.publicKey.export({format:'pem',type:'spki'}).toString()}},'PC')
+  const route='/v1/organizer/sync'
+  const post=async(items:DeleteIntent[])=>{
+   const body=JSON.stringify({items}),stamp=String(Date.now()),nonce=randomUUID()
+   const signature=sign(null,Buffer.from(['POST',route,stamp,nonce,createHash('sha256').update(body).digest('hex')].join('\n')),keys.privateKey).toString('base64url')
+   return fetch(`http://127.0.0.1:${address.port}`+route,{method:'POST',body,headers:{'x-nikkisync-device-id':'phone','x-nikkisync-timestamp':stamp,'x-nikkisync-nonce':nonce,'x-nikkisync-signature':signature}})
+  }
+  const fingerprint=mediaFingerprint(f.db.connection.prepare('SELECT * FROM resources WHERE asset_id=?').all(f.intent.assetId))!
+  // Distinct intentions share a source to test transport and authorization only.
+  const intents=Array.from({length:500},()=>({...f.intent,id:randomUUID(),mediaFingerprint:fingerprint,batchVerification:true}))
+  assert.equal((await post(intents)).status,200);await queue.idle()
+  assert.equal((await queue.approveMany(intents.map(item=>item.id))).approved,500)
+  const response=await post(intents);assert.equal(response.status,200)
+  const challenges=(await response.json() as {items:Array<{id:string;approval:string}>}).items
+  const confirmed=intents.map(item=>({...item,approval:challenges.find(row=>row.id===item.id)!.approval}))
+  assert.ok(Buffer.byteLength(JSON.stringify({items:confirmed}))>128*1024)
+  // An incomplete batch must never grant permission to any member.
+  assert.equal((await post(confirmed.slice(0,499))).status,200);assert.ok(queue.list().every(row=>row.state==='confirming'))
+  assert.equal((await post(confirmed)).status,200);await queue.idle()
+  assert.ok(queue.list('phone').every(row=>row.batchVerified&&row.state==='failed'))
+  assert.ok(await readFile(f.source));assert.equal(f.moved.length,0)
+  assert.equal((await post([...intents,{...intents[0]!,id:randomUUID()}])).status,400)
+  const oversized=await fetch(`http://127.0.0.1:${address.port}`+route,{method:'POST',body:' '.repeat(256*1024+1)})
+  assert.equal(oversized.status,413)
+ }finally{await mobile.stop();await queue.stop();await f.close()}
+})
+
+test('450 distinct photos spanning native chunks keep exact partial results and never replay failed files',async()=>{
+ const f=await fixture(),assets=new AssetRepository(f.db),resources=new ResourceRepository(f.db),intents:DeleteIntent[]=[],calls:string[][]=[]
+ let rescans=0
+ const queue=new DeletionQueue(f.db,()=>[f.hq],async()=>{rescans++},undefined,()=>100000,undefined,{
+  exportsFor:()=>[],recycleMany:async files=>{
+   calls.push(files.map(file=>file.path));const results=[]
+   for(const file of files){
+    // A single in-use file is explicitly refused, not silently deleted or retried.
+    if(path.basename(file.path)==='fixture-334-0.jpeg'){results.push({path:file.path,recycled:false,reason:'not_recycled'});continue}
+    await rename(file.path,file.path+'.recycled');results.push({path:file.path,recycled:true})
+   }return results
+  }
+ })
+ try{
+  for(let i=0;i<450;i++){
+   const assetId='asset_'+i.toString(16).padStart(32,'0'),revision=assets.create({assetId,assetType:'photo',assetState:'ready',discoveredAt:'2026-01-01T00:00:00Z'})
+   for(let j=0;j<3;j++){
+    const name=`fixture-${i}-${j}.jpeg`,file=path.join(f.hq,name),bytes=Buffer.from(`generated test ${i}/${j}`);await writeFile(file,bytes)
+    const roles=['source_high_quality','source_low_quality','source_primary'] as const
+    resources.create({resourceId:`resource_${i}_${j}`,assetId,role:roles[j]!,fileName:name,sourcePath:file,pathKey:file.toLowerCase(),mimeType:'image/jpeg',fileExt:'.jpeg',sizeBytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')})
+   }
+   intents.push({id:randomUUID(),assetId,revision,batchVerification:true,mediaFingerprint:mediaFingerprint(f.db.connection.prepare('SELECT * FROM resources WHERE asset_id=?').all(assetId))!})
+  }
+  await sync(queue,'phone',intents);assert.equal((await queue.approveMany(intents.map(item=>item.id))).approved,450)
+  const challenges=await queue.sync('phone',intents),confirmed=intents.map(item=>({...item,approval:challenges.find(row=>row.id===item.id)!.approval!}))
+  await sync(queue,'phone',confirmed)
+  assert.deepEqual(calls.map(chunk=>chunk.length),[1000,350]);assert.equal(new Set(calls.flat()).size,1350);assert.equal(rescans,1)
+  const result=queue.list('phone');assert.equal(result.filter(row=>row.state==='recycled').length,449)
+  assert.equal(result.filter(row=>row.state==='failed').length,1);assert.match(result.find(row=>row.state==='failed')!.message,/2\/3/)
+  assert.ok(await readFile(path.join(f.hq,'fixture-334-0.jpeg')));assert.ok(await readFile(f.source))
+  // Both result polling and replay preserve the tombstone, without another helper call.
+  await sync(queue,'phone',confirmed);await sync(queue,'phone',intents.map(item=>({...item,resultAck:true})))
+  assert.equal(calls.length,2);assert.equal(queue.list().length,0)
+ }finally{await queue.stop();await f.close()}
+})
+
 test('content proof accepts metadata-only revisions and rejects real media changes',async()=>{
  const f=await fixture();try{
   const fingerprint=mediaFingerprint(f.db.connection.prepare('SELECT * FROM resources WHERE asset_id=?').all(f.intent.assetId))!
@@ -42,6 +113,47 @@ test('content proof accepts metadata-only revisions and rejects real media chang
   const intent={...f.intent,mediaFingerprint:fingerprint,batchVerification:true}
   await sync(f.queue,'phone',[intent]);assert.equal(f.queue.list()[0]?.state,'pending');assert.equal(f.moved.length,0)
   const wrong={...intent,id:randomUUID(),mediaFingerprint:'0'.repeat(64)};await sync(f.queue,'phone',[wrong]);assert.equal(f.queue.list().find(row=>row.id===wrong.id)?.state,'changed');assert.equal(f.moved.length,0)
+ }finally{await f.close()}
+})
+
+test('unrelated scan roots do not invalidate a prepared batch while removing its source scope still refuses recycling',async()=>{
+ const f=await fixture(),unrelated=path.join(f.root,'unrelated');await mkdir(unrelated)
+ let roots=f.scanner.getScanRoots(),calls=0
+ const queue=new DeletionQueue(f.db,()=>roots,async()=>{},undefined,()=>100000,undefined,{
+  exportsFor:()=>[],recycleMany:async files=>{calls++;return files.map(file=>({path:file.path,recycled:false,reason:'generated_refusal'}))}
+ })
+ try{
+  const intent={...f.intent,batchVerification:true,mediaFingerprint:mediaFingerprint(f.db.connection.prepare('SELECT * FROM resources WHERE asset_id=?').all(f.intent.assetId))!}
+  await sync(queue,'phone',[intent]);roots=[...roots,unrelated]
+  await queue.approveMany([intent.id]);const challenge=(await queue.sync('phone',[intent]))[0]!.approval!
+  roots=roots.filter(root=>root!==unrelated)
+  await sync(queue,'phone',[{...intent,approval:challenge}]);assert.equal(calls,1);assert.equal(queue.list()[0]?.state,'failed')
+  const next={...intent,id:randomUUID()};await sync(queue,'phone',[next]);await queue.approveMany([next.id])
+  const approval=(await queue.sync('phone',[next])).find(row=>row.id===next.id)!.approval!
+  roots=[unrelated];await sync(queue,'phone',[{...next,approval}])
+  assert.equal(calls,1);assert.equal(queue.list().find(row=>row.id===next.id)?.state,'changed');assert.ok(await readFile(f.source))
+ }finally{await queue.stop();await f.close()}
+})
+
+test('hard-linked originals stay untouched and explain the safety restriction instead of asking users to resync forever',async()=>{
+ const f=await fixture(),alias=path.join(f.root,'generated-hardlink.jpeg')
+ try{
+  await link(f.source,alias)
+  await sync(f.queue,'phone',[{...f.intent,batchVerification:true}])
+  assert.equal(f.queue.list()[0]?.state,'changed');assert.match(f.queue.list()[0]!.message,/硬链接/)
+  assert.ok(!f.queue.list()[0]!.message.includes(f.root));assert.equal(f.moved.length,0)
+  assert.deepEqual(await readFile(f.source),await readFile(alias))
+  await rm(alias);await sync(f.queue,'phone',[{...f.intent,id:randomUUID(),batchVerification:true}])
+  assert.equal(f.queue.list().filter(row=>row.state==='pending').length,1);assert.equal(f.moved.length,0)
+ }finally{await f.close()}
+})
+
+test('a missing source gets an actionable diagnostic without exposing its absolute path',async()=>{
+ const f=await fixture();try{
+  await rename(f.source,f.source+'.held')
+  await sync(f.queue,'phone',[{...f.intent,batchVerification:true}])
+  assert.equal(f.queue.list()[0]?.state,'changed');assert.match(f.queue.list()[0]!.message,/关联文件.*不存在|关联文件.*移动/)
+  assert.ok(!f.queue.list()[0]!.message.includes(f.root));assert.equal(f.moved.length,0)
  }finally{await f.close()}
 })
 test('one acknowledged new-client batch completes without further phone heartbeats and uses one native batch',async()=>{
@@ -97,6 +209,25 @@ test('failure acknowledgements retain replay protection and large old histories 
   await f.queue.sync('phone',[{...receipt,resultAck:false}]);assert.equal(f.queue.list().length,1);assert.equal(f.moved.length,0)
   assert.equal(Number(f.db.connection.prepare('SELECT COUNT(*) AS n FROM organizer_deletions').get().n),2001)
  }finally{await f.close()}
+})
+
+test('supplemental native metadata photos recycle only their verified original and exact export copy',async()=>{
+ const f=await fixture(),folder=path.join(path.dirname(f.hq),'CloudPhotos'),copy=path.join(f.screen,'CloudExport.jpeg')
+ await mkdir(folder)
+ const jpeg=Buffer.from([255,216,255,218,0,2,10,20,30,255,217]),file=path.join(folder,'CloudOriginal.jpeg')
+ await writeFile(file,Buffer.concat([jpeg,Buffer.from('own game parameters')]))
+ await writeFile(copy,jpeg);await f.scanner.fullScan()
+ const queue=new DeletionQueue(f.db,()=>f.scanner.getScanRoots(),()=>f.scanner.fullScan(),undefined,()=>100000,undefined,{
+  exportsFor:source=>f.scanner.exactExportCopies(source),recycleMany:async files=>{for(const item of files)await rename(item.path,item.path+'.recycled');return files.map(item=>({path:item.path,recycled:true}))}
+ })
+ try{
+  const asset=f.db.connection.prepare('SELECT a.asset_id,a.revision FROM assets a JOIN resources r ON a.asset_id=r.asset_id WHERE r.source_path=?').get(file)
+  const intent={id:randomUUID(),assetId:String(asset.asset_id),revision:Number(asset.revision),batchVerification:true}
+  await sync(queue,'phone',[intent]);assert.equal(queue.list()[0]?.count,2)
+  await queue.approveMany([intent.id]);const challenge=(await queue.sync('phone',[intent]))[0]!.approval!
+  await sync(queue,'phone',[{...intent,approval:challenge}]);assert.equal(queue.list()[0]?.state,'recycled')
+  assert.ok(await readFile(file+'.recycled'));assert.ok(await readFile(copy+'.recycled'));assert.ok(await readFile(f.source));assert.ok(await readFile(f.copy))
+ }finally{await queue.stop();await f.close()}
 })
 
 test('export lookup refreshes after deletion and restoration without rescanning unrelated images during preparation',async()=>{
@@ -213,6 +344,53 @@ test('cancelled preparation and process restart never authorize deletion or stra
   assert.equal(queue.list()[0]?.state,'preparing');await sync(queue,'phone',[f.intent]);assert.equal(queue.list()[0]?.state,'pending')
   const other={...f.intent,id:randomUUID()};await queue.sync('phone',[other]);await queue.sync('phone',[{...other,cancel:true}]);await queue.idle();assert.equal(queue.list().find(row=>row.id===other.id)?.state,'cancelled');assert.equal(f.moved.length,0)
  }finally{await queue.stop();await f.close()}
+})
+
+test('a signed reconnect heartbeat resumes interrupted preparation without authorizing or replaying deletion',async()=>{
+ const f=await fixture();let queue=f.queue
+ try{
+  await queue.sync('phone',[f.intent]);await queue.stop()
+  queue=new DeletionQueue(f.db,()=>f.scanner.getScanRoots(),async()=>{},async()=>{throw Error('must not recycle')},()=>100000)
+  assert.equal(queue.list()[0]?.state,'preparing')
+  // Another device cannot restart this phone's interrupted preparation.
+  await sync(queue,'other',[]);assert.equal(queue.list()[0]?.state,'preparing')
+  await sync(queue,'phone',[]);assert.equal(queue.list()[0]?.state,'pending')
+  assert.equal(queue.list()[0]?.online,true);assert.equal(queue.list()[0]?.count,2);assert.equal(f.moved.length,0)
+  await queue.decide(f.intent.id,false);await sync(queue,'phone',[])
+  assert.equal(queue.list()[0]?.state,'rejected');assert.ok(await readFile(f.source));assert.ok(await readFile(f.copy))
+ }finally{await queue.stop();await f.close()}
+})
+
+test('a capacity rejection does not partially insert a signed batch and explicit cancellations free slots first',async()=>{
+ const f=await fixture();try{
+  const intents=Array.from({length:499},()=>({...f.intent,id:randomUUID(),batchVerification:true}))
+  await sync(f.queue,'phone',intents)
+  const additions=Array.from({length:2},()=>({...f.intent,id:randomUUID(),batchVerification:true}))
+  await assert.rejects(f.queue.sync('phone',additions),/queue_full/);await f.queue.idle()
+  assert.equal(f.queue.list('phone').length,499)
+  assert.ok(additions.every(item=>!f.queue.list('phone').some(row=>row.id===item.id)))
+  await sync(f.queue,'phone',[{...intents[0]!,cancel:true},...additions])
+  assert.equal(f.queue.list('phone').filter(row=>row.state==='pending').length,500)
+  assert.equal(f.queue.list('phone').find(row=>row.id===intents[0]!.id)?.state,'cancelled');assert.equal(f.moved.length,0)
+  const cancelledBeforeUpload={...f.intent,id:randomUUID(),cancel:true}
+  await sync(f.queue,'phone',[cancelledBeforeUpload]);assert.equal(f.queue.list('phone').find(row=>row.id===cancelledBeforeUpload.id)?.state,'cancelled')
+ }finally{await f.close()}
+})
+
+test('separately approved modern groups sharing an exact export credit only files recycled in this worker pass',async()=>{
+ const f=await fixture();try{
+  const second=path.join(f.hq,'second.jpeg');await writeFile(second,Buffer.concat([await readFile(f.source),Buffer.from('distinct metadata')]));await f.scanner.fullScan()
+  const row=f.db.connection.prepare('SELECT a.asset_id,a.revision FROM assets a JOIN resources r ON a.asset_id=r.asset_id WHERE r.source_path=?').get(second)
+  const first=f.db.connection.prepare('SELECT revision FROM assets WHERE asset_id=?').get(f.intent.assetId)
+  const intents=[{...f.intent,revision:Number(first.revision),batchVerification:true},{id:randomUUID(),assetId:String(row.asset_id),revision:Number(row.revision),batchVerification:true}]
+  await sync(f.queue,'phone',intents)
+  for(const intent of intents)await f.queue.decide(intent.id,true)
+  const challenges=await f.queue.sync('phone',intents)
+  assert.equal(new Set(challenges.map(row=>row.approval)).size,2)
+  await sync(f.queue,'phone',intents.map(item=>({...item,approval:challenges.find(row=>row.id===item.id)!.approval!})))
+  assert.deepEqual(f.queue.list().map(row=>({state:row.state,message:row.message})),intents.map(()=>({state:'recycled',message:'已移入电脑回收站，可从回收站恢复'})))
+  assert.equal(f.moved.length,3);assert.equal(new Set(f.moved).size,3)
+ }finally{await f.close()}
 })
 
 test('batch file events coalesce after recycling and a full pass covers prior queued watcher events',async()=>{

@@ -4,7 +4,7 @@ public final class PhotoScopeFilter {
     private PhotoScopeFilter(){}
     private static String clean(String value){return value==null?"":value;}
     public static boolean matches(AssetSummary asset,int type,String uid,String folder){
-        return (type==0||asset!=null&&(type==1)==asset.hasMotion())
+        return (type==0||asset!=null&&(type==1?asset.hasMotion():type==2?!asset.hasMotion()&&!asset.isVideo():type==3&&asset.isVideo()))
             &&(uid==null||uid.equals(asset==null?"":clean(asset.uid())))
             &&(folder==null||folder.equals(asset==null?"":clean(asset.sourceFolder())));
     }

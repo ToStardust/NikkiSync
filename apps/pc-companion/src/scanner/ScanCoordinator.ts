@@ -11,6 +11,8 @@ export class ScanCoordinator {
     private readonly classifier = new ResourceClassifier()
   ) {}
 
+  invalidate(filePath:string):void {this.classifier.invalidate(filePath)}
+
   async scanRoot(root: string, onActivity?: (activity: ScanActivity) => void, extra?: ExtraScanRoot): Promise<{ resources: DiscoveredResource[]; filesObserved: number; errors: string[] }> {
     const resources: DiscoveredResource[] = []; const errors: string[] = []; let filesObserved = 0
     if(extra){try{if((await realpath(extra.path)).toLowerCase()!==path.resolve(extra.path).toLowerCase())throw new Error('scope_changed')}catch{return {resources,filesObserved,errors:['Directory unavailable']}}}

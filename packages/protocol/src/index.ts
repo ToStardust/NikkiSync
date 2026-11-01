@@ -102,6 +102,7 @@ export interface ServerInfoResponse {
     suitSearch?: true
     clothingSearch?: true
     profileStats?: true
+    inspirationV1?: true
   }
 }
 

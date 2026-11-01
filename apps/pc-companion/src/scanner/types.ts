@@ -8,6 +8,8 @@ export type DiscoveredResourceKind = 'high_quality' | 'low_quality' | 'motion_co
 
 export interface DiscoveredResource {
   extraNamespace?: string
+  /** Explicitly shared external folders may contain independent images and MP4s. */
+  standaloneAllowed?: boolean
   absolutePath: string
   pathKey: string
   uid?: string
@@ -89,7 +91,7 @@ export interface ScannerDependencies {
 
 export interface AssetSnapshot {
   assetId: string
-  assetType: 'photo' | 'motion_photo'
+  assetType: 'photo' | 'motion_photo' | 'video'
   uid?: string
   discoveredAt: string
   metadataSchemaVersion?: number

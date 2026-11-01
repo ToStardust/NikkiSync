@@ -6,6 +6,7 @@ import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import {SyncReadRepository,type DatabaseManager} from '@nikkisync/database'
 import {jpegImageLength} from '../scanner/JpegImageBoundary.js'
+import {isNativePhotoSource} from '../scanner/NativePhotoLayout.js'
 import {mediaFingerprint} from '../server/MediaFingerprint.js'
 import {recycleMany as nativeRecycleMany} from './NativeMediaOperations.js'
 
@@ -24,6 +25,18 @@ export type DeleteIntent={id:string;assetId:string;revision:number;cancel?:boole
 type Row={id:string;device:string;asset_id:string;state:string;plan:string;message:string;lease:number;approval:string;dismissed:number}
 const within=(file:string,root:string)=>{const rel=path.relative(root,file);return rel!==''&&!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel)}
 async function hash(file:string,end?:number):Promise<string>{const digest=createHash('sha256');for await(const bytes of createReadStream(file,end===undefined?{}:{end:end-1}))digest.update(bytes);return digest.digest('hex')}
+function planFailure(error:unknown,fallback:string):string{
+  const code=error instanceof Error?((error as NodeJS.ErrnoException).code??error.message):''
+  switch(code){
+    case 'hard_link':return '照片包含硬链接副本，暂不支持安全回收；原文件保留，请在电脑原位置处理'
+    case 'link':return '照片或目录使用了路径链接，暂不支持安全回收；原文件保留，请在电脑原位置处理'
+    case 'scope':return '照片已不在当前同步目录内，未执行删除；请检查同步目录后重新选择'
+    case 'ENOENT':case 'ENOTDIR':return '关联文件已不存在或位置已移动，未执行删除；请重新扫描后选择'
+    case 'EACCES':case 'EPERM':case 'EBUSY':return '无法读取关联文件，未执行删除；请检查是否被占用或没有访问权限'
+    case 'not_regular':return '关联路径不是普通照片文件，未执行删除；请检查电脑中的原文件'
+    default:return fallback
+  }
+}
 
 /** Phone submits intent only. Execution is exposed exclusively by the authenticated loopback desktop API. */
 export class DeletionQueue {
@@ -83,13 +96,13 @@ export class DeletionQueue {
               if(!this.closing&&this.row(id)?.state==='preparing'){
                 this.db.connection.prepare("UPDATE organizer_deletions SET plan=?,state='pending',message='等待电脑确认' WHERE id=?").run(JSON.stringify(plan),id);this.metrics.prepared++
               }
-            }catch{if(!this.closing&&this.row(id)?.state==='preparing')this.finish(id,'changed','照片或扫描范围已变化，请重新同步后选择')}
+            }catch(error){if(!this.closing&&this.row(id)?.state==='preparing')this.finish(id,'changed',planFailure(error,'照片或扫描范围已变化，请重新同步后选择'))}
           }else if(job.kind==='execute'&&row.state==='queued'&&row.approval===job.approval){
             if(row.approval.startsWith('authorized:')){
               if(!completedGroups.has(row.approval)){
                 completedGroups.add(row.approval)
                 const group=work.filter(([,next])=>next.kind==='execute'&&next.approval===row.approval).map(([key])=>this.row(key)).filter((item):item is Row=>!!item&&item.state==='queued'&&item.approval===row.approval)
-                await this.executeGroup(group)
+                await this.executeGroup(group,batch)
               }
             }else await this.execute(row,batch)
           }
@@ -142,6 +155,11 @@ export class DeletionQueue {
     }
     // Apply all cancellations before scheduling any filesystem work; long hashing/native calls never hold this lock.
     for(const item of intents)if(item.cancel){const row=existing.get(item.id);if(row&&['preparing','pending','confirming','queued','checking'].includes(row.state)){this.finish(item.id,'cancelled','手机已取消');this.jobs.delete(item.id)}}
+    // Reject new work as a whole before inserting any prefix of the request.
+    // Explicit cancellations above remain effective even when additions do not fit.
+    const activeCount=this.db.connection.prepare("SELECT count(*) AS n FROM organizer_deletions WHERE device=? AND state IN ('preparing','pending','confirming','queued','checking','executing')").get(device) as {n:number}
+    const additions=intents.filter(item=>!existing.has(item.id)&&!item.cancel&&!item.resultAck).length
+    if(activeCount.n+additions>500)throw new Error('queue_full')
     const approvals=new Set<string>()
     for(const item of intents){
       const row=existing.get(item.id)
@@ -156,8 +174,6 @@ export class DeletionQueue {
         continue
       }
       if(item.resultAck)continue
-      const count=this.db.connection.prepare("SELECT count(*) AS n FROM organizer_deletions WHERE device=? AND state IN ('preparing','pending','confirming','queued','checking','executing')").get(device) as {n:number}
-      if(count.n>=500)throw new Error('queue_full')
       const files=item.cancel?[]:this.reads.listResources(item.assetId).filter(resource=>/^source_/.test(String(resource.role))&&/\.(jpe?g|png|webp|mp4)$/i.test(String(resource.source_path))).map(resource=>({path:String(resource.source_path),sha256:String(resource.sha256),size:Number(resource.size_bytes)}))
       this.db.connection.prepare('INSERT INTO organizer_deletions(id,device,asset_id,state,plan,message,lease) VALUES(?,?,?,?,?,?,?)').run(item.id,device,item.assetId,item.cancel?'cancelled':'preparing',JSON.stringify({files,revision:item.revision,...(item.mediaFingerprint?{mediaFingerprint:item.mediaFingerprint}:{}),...(item.batchVerification?{batchVerification:true}:{})}),item.cancel?'手机已取消':'正在核对关联文件',received)
       if(!item.cancel)this.enqueue(item.id,{kind:'prepare'})
@@ -171,6 +187,9 @@ export class DeletionQueue {
     }
     // A signed request is a heartbeat for this device's whole batch, including jobs already being checked.
     this.db.connection.prepare("UPDATE organizer_deletions SET lease=? WHERE device=? AND state IN ('preparing','pending','confirming','queued','checking','executing')").run(received,device)
+    // A restart clears in-memory jobs. A reconnect can be a heartbeat or a page
+    // that omits an interrupted item; resume preparation, never its old approval.
+    for(const row of this.db.connection.prepare("SELECT id FROM organizer_deletions WHERE device=? AND state='preparing'").all(device))this.enqueue(String(row.id),{kind:'prepare'})
     return this.list(device,seen)
   })}
   async dismiss(ids:string[],allFailures=false){return this.lock(async()=>{
@@ -224,7 +243,7 @@ export class DeletionQueue {
       if(JSON.stringify(current)!==JSON.stringify({...plan,files:remaining}))throw new Error('changed')
       // All files are checked before any operation. The native helper also rechecks each file immediately before recycling.
       for(const file of remaining)await this.validate(file)
-    }catch{if(!this.closing&&this.row(id)?.state==='checking')this.finish(id,'changed','文件已变化，未执行删除；请重新同步后选择');return}
+    }catch(error){if(!this.closing&&this.row(id)?.state==='checking')this.finish(id,'changed',planFailure(error,'文件已变化，未执行删除；请重新同步后选择'));return}
     if(this.closing||this.pauseIfOffline(row))return
     this.finish(id,'executing','正在移入回收站')
     let completed=0
@@ -235,7 +254,7 @@ export class DeletionQueue {
     }
     this.needsRescan=true
   }
-  private async executeGroup(rows:Row[]){
+  private async executeGroup(rows:Row[],batch:Batch){
     const ready:Array<{row:Row;plan:Plan}>=[]
     for(const row of rows){
       if(this.closing)return
@@ -245,20 +264,22 @@ export class DeletionQueue {
       try{
         const asset=this.reads.getAsset(row.asset_id),resources=this.reads.listResources(row.asset_id)
         if(!asset||asset.asset_state==='deleted'||(plan.mediaFingerprint?mediaFingerprint(resources)!==plan.mediaFingerprint:Number(asset.revision)!==plan.revision))throw new Error('changed')
-        for(const file of plan.files)await this.checkFile(file)
+        for(const file of plan.files)if(!this.credited(file,batch))await this.checkFile(file)
         if(!this.closing&&this.row(row.id)?.state==='checking')ready.push({row,plan})
-      }catch{if(this.row(row.id)?.state==='checking')this.finish(row.id,'changed','照片文件或同步范围已变化，未执行删除；请重新选择')}
+      }catch(error){if(this.row(row.id)?.state==='checking')this.finish(row.id,'changed',planFailure(error,'照片文件或同步范围已变化，未执行删除；请重新选择'))}
     }
     if(this.closing)return
     const selected=ready.filter(item=>this.row(item.row.id)?.state==='checking'&&this.row(item.row.id)?.approval===item.row.approval)
     const files=new Map<string,FilePlan>()
     for(const item of selected)for(const file of item.plan.files){
+      if(this.credited(file,batch))continue
       const old=files.get(file.path.toLowerCase());if(old&&(old.sha256!==file.sha256||old.size!==file.size)){for(const candidate of selected)this.finish(candidate.row.id,'changed','本批关联文件已变化，未执行删除；请重新选择');return}
       files.set(file.path.toLowerCase(),file)
     }
     if(!selected.length)return
     for(const item of selected)this.finish(item.row.id,'executing','手机已核对本批，正在批量移入回收站；可关闭 App')
     const outcomes=new Map<string,FileResult>(),all=[...files.values()]
+    for(const item of selected)for(const file of item.plan.files)if(this.credited(file,batch))outcomes.set(file.path.toLowerCase(),{path:file.path,recycled:true})
     for(let start=0;start<all.length&&!this.closing;start+=1000){
       const chunk=all.slice(start,start+1000)
       try{
@@ -279,6 +300,9 @@ export class DeletionQueue {
         }
       }catch{for(const file of chunk)outcomes.set(file.path.toLowerCase(),{path:file.path,recycled:false,reason:'interrupted'})}
     }
+    // Separate desktop approvals can reference one exact export copy. Credit
+    // only matching files positively recycled in this pass; never retry them.
+    for(const file of all)if(outcomes.get(file.path.toLowerCase())?.recycled)batch.recycled.set(file.path.toLowerCase(),file)
     for(const item of selected){
       const results=item.plan.files.map(file=>outcomes.get(file.path.toLowerCase())),done=results.filter(result=>result?.recycled).length
       if(done===item.plan.files.length){this.finish(item.row.id,'recycled','已移入电脑回收站，可从回收站恢复');this.metrics.recycled++}
@@ -296,7 +320,7 @@ export class DeletionQueue {
     let allowed=false
     for(const root of this.roots())if(within(full,path.resolve(root))&&within(physical,await realpath(root)))allowed=true
     if(!allowed)throw new Error('scope')
-    const info=await lstat(full);if(!info.isFile()||info.nlink>1)throw new Error('not_regular')
+    const info=await lstat(full);if(!info.isFile())throw new Error('not_regular');if(info.nlink>1)throw new Error('hard_link')
     return info
   }
   private async validate(file:FilePlan){const info=await this.safe(file.path);if(info.size!==file.size||await hash(file.path)!==file.sha256)throw new Error('changed')}
@@ -313,7 +337,7 @@ export class DeletionQueue {
       if(!/\.(jpe?g|png|webp|mp4)$/i.test(file.path)||!/^source_/.test(String(resource.role))||!/[a-f0-9]{64}/.test(file.sha256))throw new Error('resource')
       if(this.credited(file,batch))continue
       if(requested?.batchVerification)await this.checkFile(file);else await this.validate(file);files.push(file)
-      if(String(resource.role)==='source_high_quality'&&/[/\\]NikkiPhotos_HighQuality[/\\]/i.test(file.path)&&/\.jpe?g$/i.test(file.path)){
+      if(String(resource.role)==='source_high_quality'&&isNativePhotoSource(file.path)&&/\.jpe?g$/i.test(file.path)){
         if(this.options.exportsFor){for(const copy of this.options.exportsFor(file.path)){await this.checkFile(copy);files.push(copy)}}
         else{const end=await jpegImageLength(file.path,file.size);if(end)imageHashes.add(await hash(file.path,end))}
       }

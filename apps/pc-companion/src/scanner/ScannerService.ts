@@ -8,6 +8,7 @@ import { ScanCoordinator } from './ScanCoordinator.js'
 import { ScanReconciler } from './ScanReconciler.js'
 import { ScanProgressTracker } from './ScanProgressTracker.js'
 import {idFor} from './ExtraScanDirectories.js'
+import {isNativePhotoSource} from './NativePhotoLayout.js'
 import type { ExtraScanRoot, ScannerConfig, ScannerMetrics, ScannerStatus, ScanResult } from './types.js'
 
 export class ScannerService {
@@ -18,6 +19,8 @@ export class ScannerService {
   private readonly pendingRoots = new Map<string, string>()
   private pendingWaiters: Array<{ resolve: (result: ScanResult) => void; reject: (error: unknown) => void }> = []
   private draining: Promise<void> | undefined
+  private refreshing:Promise<void>|undefined
+  private stopping=false
   private extraDirectories:ExtraScanRoot[]=[]
   private nativeImages=new Map<string,string>()
   private exportImages=new Map<string,{path:string;size:number;sha256:string;imageHash:string}>()
@@ -35,6 +38,7 @@ export class ScannerService {
   private readonly config: ScannerConfig
 
   async start(): Promise<ScanResult> {
+    this.stopping=false
     this.status = 'discovering'; this.installation = await new ScannerDiscovery(this.config).discover()
     if (!this.installation&&!this.config.allowMissingInstallation&&this.extraDirectories.length===0) { this.status = 'error'; throw new Error('Infinity Nikki installation was not found') }
     // Compare physical scope aliases without changing existing asset/resource path identities.
@@ -45,27 +49,50 @@ export class ScannerService {
       if(!active.some(scope=>within(physical,scope)||within(scope,physical)))retired.push(root,physical)
     }
     if(retired.length)new AssetRepository(this.database).markMissingByRoots([],retired)
+    this.refreshWatcher()
     const result = await this.fullScan()
     this.progress?.stage('scan-watch')
-    if (this.config.watcher !== false) {
-      this.watcher = new ScannerWatcher(this.config.debounceMs ?? 250)
-      this.watcher.start(result.roots, event=>this.watcherChanged(event.path))
-    }
     this.status = 'running'; return result
   }
   async stop(): Promise<void> {
+    this.stopping=true
     this.watcher?.stop(); this.watcher = undefined
+    await this.refreshing
     await this.draining
     this.status = 'stopped'
   }
   async fullScan(): Promise<ScanResult> {
-    if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
+    await this.refreshMediaRoots()
     if (!this.installation&&!this.config.allowMissingInstallation&&this.extraDirectories.length===0) throw new Error('Infinity Nikki installation was not found')
     // This pass covers events already collected by an active deletion batch.
     if(this.watcherHolds)this.deferredWatchPaths.clear()
     return this.enqueueScan(this.getScanRoots())
   }
-  private watcherChanged(file:string){if(this.watcherHolds){this.deferredWatchPaths.add(file);return}void this.rescanPath(file).catch(()=>{})}
+  private refreshMediaRoots():Promise<void>{
+    return this.refreshing??=this.discoverMediaRoots().finally(()=>{this.refreshing=undefined})
+  }
+  private async discoverMediaRoots():Promise<void>{
+    const discovery=new ScannerDiscovery(this.config)
+    this.installation=this.installation?await discovery.refresh(this.installation):await discovery.discover()
+    this.refreshWatcher()
+  }
+  private refreshWatcher(){
+    if(this.config.watcher===false||this.stopping)return
+    this.watcher??=new ScannerWatcher(this.config.debounceMs??250)
+    // Shallow parent handles detect first-time media directories without watching
+    // Content/Paks or unrelated game files recursively.
+    const parents=this.installation?[this.installation.x6GameRoot,path.join(this.installation.x6GameRoot,'Saved')]:[]
+    this.watcher.start(this.getScanRoots(),event=>this.watcherChanged(event.path),parents)
+  }
+  private watcherChanged(file:string){
+    if(this.stopping)return
+    if(!this.getScanRoots().some(root=>within(file,root))){
+      const relative=this.installation?path.relative(this.installation.x6GameRoot,file).replaceAll('\\','/'):''
+      if(!/^(?:Saved(?:\/(?:GamePlayPhotos|Videos?))?|GamePlayPhotos|ScreenShot|Videos?)$/i.test(relative))return
+    }
+    if(this.watcherHolds){this.deferredWatchPaths.add(file);return}
+    void this.rescanPath(file).catch(()=>{})
+  }
   async withDeferredWatchEvents(work:()=>Promise<void>):Promise<void>{
     this.watcherHolds++
     try{await work()}finally{
@@ -73,6 +100,7 @@ export class ScannerService {
     }
   }
   async rescanPath(filePath: string): Promise<ScanResult> {
+    this.coordinator.invalidate(filePath)
     if (!this.installation) this.installation = await new ScannerDiscovery(this.config).discover()
     const allRoots = this.getScanRoots()
     const sourceRoot = allRoots.find((root) => within(filePath,root))
@@ -100,7 +128,7 @@ export class ScannerService {
       for(const file of this.nativeImages.keys())if(removed.some(item=>within(file,item.path)))this.nativeImages.delete(file)
       for(const file of this.exportImages.keys())if(removed.some(item=>within(file,item.path)))this.exportImages.delete(file)
     }
-    if(this.config.watcher!==false){this.watcher??=new ScannerWatcher(this.config.debounceMs??250);this.watcher.start(this.getScanRoots(),event=>this.watcherChanged(event.path))}
+    this.refreshWatcher()
     // Adding a small export folder must not rehash an already indexed, potentially huge game album.
     // Watchers stay active during the new pass; their events join the same serialized scan queue.
     return added.length?this.enqueueScan([...added.map(item=>item.path),...(added.some(item=>item.mode==='native')?this.screenRoots():[])]):removed.length?this.enqueueScan([...this.screenRoots(),...this.getAutomaticRoots().filter(root=>removed.some(item=>within(root,item.path)||within(item.path,root)))]):this.fullScan()
@@ -141,7 +169,7 @@ export class ScannerService {
     // An unplugged drive or unreadable folder is not evidence that its originals were deleted.
     const completedRoots=roots.filter((_root,index)=>all[index]?.errors.length===0)
     for(const file of this.nativeImages.keys())if(completedRoots.some(root=>within(file,root)))this.nativeImages.delete(file)
-    for(const resource of discovered)if(resource.imageSha256&&/[/\\]NikkiPhotos_HighQuality[/\\]/i.test(resource.absolutePath))this.nativeImages.set(resource.absolutePath,resource.imageSha256)
+    for(const resource of discovered)if(resource.imageSha256&&isNativePhotoSource(resource.absolutePath))this.nativeImages.set(resource.absolutePath,resource.imageSha256)
     for(const file of this.exportImages.keys())if(completedRoots.some(root=>within(file,root)))this.exportImages.delete(file)
     for(const resource of discovered)if(resource.imageSha256&&resource.sha256&&/[/\\]ScreenShot[/\\]/i.test(resource.absolutePath))this.exportImages.set(resource.absolutePath,{path:resource.absolutePath,size:resource.sizeBytes,sha256:resource.sha256,imageHash:resource.imageSha256})
     this.exportsByImage=new Map();for(const file of this.exportImages.values()){const group=this.exportsByImage.get(file.imageHash)??[];group.push({path:file.path,size:file.size,sha256:file.sha256});this.exportsByImage.set(file.imageHash,group)}

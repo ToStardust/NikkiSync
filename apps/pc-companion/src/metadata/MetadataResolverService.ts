@@ -109,6 +109,16 @@ export class MetadataResolverService {
             : undefined
           if (!uid || !token) continue
           const fingerprint = inputFingerprint(uid, token, payload, nuan5Md5)
+          const inputIsCurrent = () => {
+            const current = this.assets.getById(assetId)
+            const raw = current ? metadataOf(current).raw : undefined
+            const matches = !!current && current.asset_state !== 'deleted'
+              && inputFingerprint(String(current.uid ?? ''), String(raw?.nativeParamToken ?? ''),
+                typeof raw?.nativeParamPayload === 'string' ? raw.nativeParamPayload : undefined,
+                typeof raw?.nativeParamNuan5Md5 === 'string' ? raw.nativeParamNuan5Md5 : undefined) === fingerprint
+            if (!matches) externallyChanged = true
+            return matches
+          }
           const payloadMd5 = payload ? createHash('md5').update(payload, 'ascii').digest('hex') : undefined
           const payloadFormat = classifyPayload(payload)
           const payloadDecodedBytes = payloadFormat ? Buffer.from(payload!, 'base64').length : undefined
@@ -142,6 +152,9 @@ export class MetadataResolverService {
               ...(nuan5Md5 ? { nativeParamNuan5Md5: nuan5Md5 } : {})
             })
             if(this.stopped||!this.config.canResolve())return resolved
+            // A scan or scope removal may replace this input while the network
+            // request is in flight. Never attach the old photo's response/error.
+            if(!inputIsCurrent())continue
             const enrichedMetadata = this.dictionaryEnricher?.enrichMetadata(result.metadata) ?? result.metadata
             const providerRaw = enrichedMetadata.raw && typeof enrichedMetadata.raw === 'object'
               ? enrichedMetadata.raw as Record<string, unknown>
@@ -165,6 +178,7 @@ export class MetadataResolverService {
             resolved++
           } catch (error) {
             if(this.stopped||!this.config.canResolve())return resolved
+            if(!inputIsCurrent())continue
             retryAt = Math.min(retryAt, Date.parse(attemptedAt) + this.config.retryAfterMs)
             recordMutation(this.assets.updateMetadata(assetId, {
               raw: {

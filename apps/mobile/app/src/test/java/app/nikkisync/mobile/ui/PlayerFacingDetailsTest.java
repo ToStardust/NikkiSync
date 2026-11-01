@@ -55,6 +55,14 @@ public final class PlayerFacingDetailsTest {
         assertEquals(notice,PlayerFacingDetails.metadataNotice("{\"camera\":{},\"dressing\":{\"clothes\":[]}}"));
     }
 
+    @Test public void checkedIndexWithoutParameterMarkerExplainsEvidenceAndNextStep() {
+        String notice=PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false,\"sourceParametersComplete\":false}}");
+        assertTrue(notice.contains("未检测到"));
+        assertTrue(notice.contains("原图"));
+        assertFalse(notice.contains("一定"));
+        assertFalse(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":false}}").contains("未检测到"));
+    }
+
     @Test public void knownNativeDataAndResolverFailureAreUnparsedRatherThanLost() {
         for(String raw:new String[]{"{\"nativeParamToken\":\"private-token\"}","{\"sourceParametersPresent\":true}","{\"resolver\":{\"status\":\"failed\",\"error\":\"private-error\"}}"}) {
             String notice=PlayerFacingDetails.metadataNotice("{\"raw\":"+raw+"}");
@@ -68,6 +76,13 @@ public final class PlayerFacingDetailsTest {
         assertTrue(notice.startsWith("穿搭数据未能完整读取"));assertFalse(notice.contains("联网"));assertFalse(notice.contains("缺少原始数据"));
         String partial=PlayerFacingDetails.metadataNotice("{\"dressing\":{\"clothes\":[{\"id\":\"123\"}]}}");
         assertTrue(partial.startsWith("部分拍摄参数"));
+    }
+
+    @Test public void incompleteEnvelopeAndMissingUidGetSpecificActionableGuidance() {
+        String partial=PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":true,\"sourceParametersComplete\":false}}");
+        assertTrue(partial.contains("原始数据不完整"));assertTrue(partial.contains("原图"));
+        String noUid=PlayerFacingDetails.metadataNotice("{\"identity\":{},\"raw\":{\"sourceParametersPresent\":true,\"sourceParametersComplete\":true}}");
+        assertTrue(noUid.contains("未识别到所属 UID"));assertTrue(noUid.contains("重新扫描"));
     }
 
     @Test public void decodedIdsWithoutNamesOrIconsAreNotMissingOutfitData() {

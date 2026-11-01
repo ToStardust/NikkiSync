@@ -11,10 +11,21 @@ function resourceIdFor(assetId: string, role: string, pathKey: string): string {
 }
 
 function capturedAtFor(group: DiscoveredResource[]): string | undefined {
-  const preferredKinds: DiscoveredResource['kind'][] = ['high_quality', 'motion_cover', 'low_quality']
+  const preferredKinds: DiscoveredResource['kind'][] = ['high_quality', 'motion_cover', 'low_quality', 'motion_video']
   for (const kind of preferredKinds) {
     const source = group.find((item) => item.kind === kind)
-    if (!source || !Number.isFinite(source.mtimeMs) || source.mtimeMs <= 0) continue
+    if (!source) continue
+    // The game's exact timestamped filename survives copying when filesystem
+    // modification times do not. Do not infer dates from arbitrary filenames.
+    const match = /^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_\d+\.(?:jpe?g|png|webp)$/i.exec(source.fileName)
+    if (match) {
+      const [year,month,day,hour,minute,second] = match.slice(1,7).map(Number) as [number,number,number,number,number,number]
+      const date = new Date(year,month-1,day,hour,minute,second)
+      if (year >= 2024 && year <= 2100 && date.getFullYear() === year && date.getMonth() === month-1
+          && date.getDate() === day && date.getHours() === hour && date.getMinutes() === minute && date.getSeconds() === second)
+        return date.toISOString()
+    }
+    if (!Number.isFinite(source.mtimeMs) || source.mtimeMs <= 0) continue
     return new Date(source.mtimeMs).toISOString()
   }
   return undefined
@@ -88,6 +99,7 @@ export class ScanReconciler {
       return result
     }
     const coverGroups=groupByKey(covers),videoGroups=groupByKey(videos)
+    const pairedCovers=new Set<string>(),pairedVideos=new Set<string>()
     for (const cover of covers) {
       const keyForCover=keyFor(cover),group=videoGroups.get(keyForCover)
       if(coverGroups.get(keyForCover)?.size!==1||group?.size!==1)continue
@@ -97,11 +109,22 @@ export class ScanReconciler {
         {resourceId:video.pathKey,fileName:video.fileName,sourcePath:video.absolutePath,role:'source_motion',...(video.uid?{uid:video.uid}:{})})
       const key = `${cover.uid ?? ''}|${cover.normalizedStem}`; const assetId = idFor(`infinity_nikki|motion_photo|${namespace?namespace+'|':''}${key}`)
       snapshots.push(this.snapshot(assetId, 'motion_photo', cover.uid, [cover, video], now, true, match))
+      pairedCovers.add(cover.pathKey);pairedVideos.add(video.pathKey)
+    }
+    // Outside the native album, a suffix alone does not prove that an image is
+    // a LIVE cover; ordinary recordings also have no companion image.
+    for(const cover of covers)if(cover.standaloneAllowed&&!pairedCovers.has(cover.pathKey)){
+      const assetId=idFor(`infinity_nikki|photo|external-cover|${namespace}|${cover.pathKey}`)
+      snapshots.push(this.snapshot(assetId,'photo',cover.uid,[cover],now))
+    }
+    for(const video of videos)if(video.standaloneAllowed&&!pairedVideos.has(video.pathKey)){
+      const assetId=idFor(`infinity_nikki|video|${namespace}|${video.pathKey}`)
+      snapshots.push(this.snapshot(assetId,'video',video.uid,[video],now))
     }
     return snapshots
   }
 
-  private snapshot(assetId: string, assetType: 'photo' | 'motion_photo', uid: string | undefined, group: DiscoveredResource[], now: string, motion = false, motionMatch?: AssetResolverCandidate): AssetSnapshot {
+  private snapshot(assetId: string, assetType: 'photo' | 'motion_photo' | 'video', uid: string | undefined, group: DiscoveredResource[], now: string, motion = false, motionMatch?: AssetResolverCandidate): AssetSnapshot {
     const resources = group.map((item) => {
       const role: ResourceRole = item.kind === 'high_quality' ? 'source_high_quality' : item.kind === 'low_quality' ? 'source_low_quality' : item.kind === 'motion_video' ? 'source_motion' : 'source_primary'
       return {

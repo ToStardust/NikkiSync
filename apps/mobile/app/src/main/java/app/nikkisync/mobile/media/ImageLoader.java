@@ -69,6 +69,7 @@ public final class ImageLoader {
         pin.getParentFile().mkdirs();try(FileOutputStream out=new FileOutputStream(pin)){if(!bitmap.compress(Bitmap.CompressFormat.JPEG,85,out))throw new java.io.IOException("thumbnail");}finally{bitmap.recycle();}
     }
     public void loadOffline(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,ImageView target){
+        if(asset.isVideo()){showVideoPlaceholder(asset,target);return;}
         loadPhoto(null,server,asset,target,false,false);
     }
     /** Display previews only. Original and share-card exports retain their separate full-quality paths. */
@@ -134,10 +135,12 @@ public final class ImageLoader {
     }
 
     public void load(NikkiSyncClient client, AssetSummary asset, ImageView target) {
+        if(asset.isVideo()){showVideoPlaceholder(asset,target);return;}
         if(client!=null)loadPhoto(client,client.server(),asset,target,false,true);
         else{target.setTag(R.id.photo_source_asset_id,asset.assetId());target.setTag(R.id.photo_source_identity,"unpaired:"+asset.assetId());target.setTag("unpaired:"+asset.assetId());target.setImageDrawable(null);}
     }
     public void loadPreview(NikkiSyncClient client,AssetSummary asset,ImageView target){
+        if(asset.isVideo()){showVideoPlaceholder(asset,target);return;}
         if(client==null)return;
         if(asset.fullPreviewResourceId()!=null){loadPhoto(client,client.server(),asset,target,true,true);return;}
         loadPhoto(null,client.server(),asset,target,true,false);
@@ -154,7 +157,11 @@ public final class ImageLoader {
         return new AssetSummary(asset.assetId(),asset.type(),asset.state(),asset.capturedAt(),asset.uid(),asset.revision(),asset.width(),asset.height(),asset.hasMotion(),asset.hasMetadata(),
             asset.thumbnailResourceId(),asset.previewResourceId(),asset.gameVersion(),asset.gameVersionSource(),asset.thumbnailSha256(),asset.previewSha256(),original.resourceId(),original.sha256(),asset.mediaFingerprint());
     }
-    public void loadOfflinePreview(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,ImageView target){loadPhoto(null,server,asset,target,true,false);}
+    public void loadOfflinePreview(app.nikkisync.mobile.model.Models.PairedServer server,AssetSummary asset,ImageView target){if(asset.isVideo()){showVideoPlaceholder(asset,target);return;}loadPhoto(null,server,asset,target,true,false);}
+    public static void showVideoPlaceholder(AssetSummary asset,ImageView target){
+        target.setTag("video:"+asset.assetId());target.setTag(R.id.photo_source_asset_id,asset.assetId());target.setTag(R.id.photo_source_identity,"video:"+asset.assetId());
+        target.setScaleType(ImageView.ScaleType.CENTER_INSIDE);target.setImageResource(android.R.drawable.ic_media_play);
+    }
     public PhotoCachePreferences preferences(){return preferences;}
     public OfflineProgress offlineProgress(){return offlineProgress;}
     public void offlineSnapshot(int cached,int total){if(!networkAvailable)offlineProgress=new OfflineProgress(cached,total,false,false,0);}
@@ -171,6 +178,8 @@ public final class ImageLoader {
     public synchronized void retryOfflineCaching(){pauseOfflineCaching();}
     public synchronized void warmThumbnails(NikkiSyncClient client,List<AssetSummary> assets,Consumer<OfflineProgress> listener){
         if(closed||client==null)return;
+        // Independent recordings can be many gigabytes; never fetch them as images.
+        assets=assets.stream().filter(asset->!asset.isVideo()).toList();
         String owner=client.server().serverId()+"\n"+client.server().tlsFingerprintSha256();
         if(!owner.equals(signatureOwner)||!signatureAssets.equals(assets)){
             // A large library must not allocate one giant concatenated UTF-8 key

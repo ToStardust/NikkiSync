@@ -29,6 +29,7 @@
     "pc:exe": "npm run build && npm run package:windows -w @nikkisync/pc-companion",
     "mobile:validate": "node apps/mobile/scripts/validate-m2.mjs",
     "test:ui": "node --test --test-isolation=none tools/ui-theme.test.mjs",
+    "test:inspiration": "node --test --test-isolation=none apps/pc-companion/dist/test/inspiration-sync.test.js apps/pc-companion/dist/test/desktop-inspiration-ui.test.js",
     "mobile:build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\apps\\mobile\\scripts\\build-android.ps1",
     "mobile:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\apps\\mobile\\scripts\\build-android.ps1 -Install",
     "release:bundle": "npm run mobile:build && npm run pc:exe && powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Copy-Item -Force '.\\apps\\mobile\\app\\build\\outputs\\apk\\debug\\app-debug.apk' '.\\release\\NikkiSync\\NikkiSync-Android.apk'\"",

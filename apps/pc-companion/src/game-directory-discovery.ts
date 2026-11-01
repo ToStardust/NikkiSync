@@ -174,7 +174,7 @@ async function childDirectories(root: string): Promise<string[]> {
   }
 }
 
-async function discoverMediaRoots(x6GameRoot: string): Promise<Pick<InfinityNikkiInstallation, 'photoRoots' | 'motionRoots' | 'supplementalRoots'>> {
+export async function discoverMediaRoots(x6GameRoot: string): Promise<Pick<InfinityNikkiInstallation, 'photoRoots' | 'motionRoots' | 'supplementalRoots'>> {
   const gamePlayPhotoCandidates = [
     path.join(x6GameRoot, 'Saved', 'GamePlayPhotos'),
     path.join(x6GameRoot, 'GamePlayPhotos')

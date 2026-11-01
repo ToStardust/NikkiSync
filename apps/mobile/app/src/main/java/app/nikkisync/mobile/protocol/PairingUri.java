@@ -26,7 +26,7 @@ public final class PairingUri {
         if (protocol != 1) throw new IllegalArgumentException("PC 协议版本不兼容");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("端口无效");
         if (!tls.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("TLS 指纹无效");
-        if (Instant.parse(expiresAt).isBefore(Instant.now())) throw new IllegalArgumentException("配对二维码已经过期");
+        Instant.parse(expiresAt); // Validate syntax; only the computer can check the one-use token's expiry.
         String alternatives=uri.getQueryParameter("hosts");
         java.util.List<String> hosts=alternatives==null?java.util.List.of(host):java.util.Arrays.asList(alternatives.substring(0,Math.min(256,alternatives.length())).split(","));
         return new PairingPayload(serverId, host, port, token, protocol, expiresAt, tls,hosts);
@@ -38,7 +38,6 @@ public final class PairingUri {
         int port = Integer.parseInt(p[3]); long expires = Long.parseLong(p[5]); String tls = p[6].replace(":", "").toLowerCase(Locale.ROOT);
         if (port < 1 || port > 65535) throw new IllegalArgumentException("端口无效");
         if (!tls.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("TLS 指纹无效");
-        if (Instant.ofEpochSecond(expires).isBefore(Instant.now())) throw new IllegalArgumentException("配对二维码已经过期");
         return new PairingPayload(p[1], p[2], port, p[4], 1, Instant.ofEpochSecond(expires).toString(), tls);
     }
 

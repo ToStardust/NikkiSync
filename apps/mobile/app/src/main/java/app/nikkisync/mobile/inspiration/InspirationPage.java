@@ -21,17 +21,23 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.PickVisualMediaRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 import app.nikkisync.mobile.R;
 import app.nikkisync.mobile.ui.GalleryUxStyle;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Offline-first Outfit Inspiration notebook; no PC connection or game access is required. */
 public final class InspirationPage implements AutoCloseable {
     private final android.app.Activity activity;
+    private final Runnable requestSync;
     private boolean closed;
     private app.nikkisync.mobile.ui.chrome.ChromeNavigationHost navigation;
     private app.nikkisync.mobile.ui.chrome.ChromeHost chrome;
@@ -42,24 +48,38 @@ public final class InspirationPage implements AutoCloseable {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<Uri> pendingImages = new ArrayList<>();
+    private final LinkedHashSet<String> removedImageIds = new LinkedHashSet<>();
+    private final ActivityResultLauncher<PickVisualMediaRequest> referencePicker;
+    private InspirationEditorForm editorForm;
+    private InspirationStore.Entry editingEntry;
     private InspirationStore store;
     private InspirationImageStore imageStore;
     private LinearLayout results;
     private EditText search, categoryFilter;
+    private TextView syncNote;
     private Spinner statusFilter;
     private app.nikkisync.mobile.ui.chrome.ChromeSheetLayout activeEditor;
 
-    public InspirationPage(android.app.Activity activity) {
+    public InspirationPage(android.app.Activity activity) {this(activity,()->Toast.makeText(activity,"请回到相册主页并连接电脑后同步",Toast.LENGTH_LONG).show());}
+    private InspirationPage(android.app.Activity activity,Runnable requestSync) {
         this.activity=activity;
+        this.requestSync=requestSync;
         navigation=((app.nikkisync.mobile.ui.chrome.ChromePage.Owner)activity).navigationHost();
+        referencePicker=((ComponentActivity)activity).getActivityResultRegistry().register(
+                "inspiration-reference-"+java.util.UUID.randomUUID(),new ActivityResultContracts.PickMultipleVisualMedia(5),this::receiveReferenceImages);
         store=new InspirationStore(activity);imageStore=new InspirationImageStore(activity);
         buildScreen();refresh();
     }
     public static InspirationPage show(android.app.Activity activity) {return show(activity,()->{});}
     public static InspirationPage show(android.app.Activity activity,Runnable afterClose) {
-        InspirationPage page=new InspirationPage(activity);
+        return show(activity,afterClose,()->Toast.makeText(activity,"请回到相册主页并连接电脑后同步",Toast.LENGTH_LONG).show());
+    }
+    public static InspirationPage show(android.app.Activity activity,Runnable afterClose,Runnable requestSync) {
+        InspirationPage page=new InspirationPage(activity,requestSync);
         page.navigation.push(page.chrome,()->{page.close();afterClose.run();});return page;
     }
+    public void setSyncStatus(String message){if(!closed&&syncNote!=null)syncNote.setText(message);}
+    public void refreshAfterSync(){if(!closed)refresh();}
     public void receiveIntent(Intent intent) {
         InspirationShareImport.Incoming incoming=InspirationShareImport.from(intent);
         if(!incoming.sourceText().isBlank()||!incoming.imageUris().isEmpty())
@@ -67,7 +87,7 @@ public final class InspirationPage implements AutoCloseable {
     }
     @Override public void close() {
         if(closed)return;closed=true;
-        chrome.backdrop().close();io.execute(store::close);io.shutdown();
+        referencePicker.unregister();chrome.backdrop().close();io.execute(store::close);io.shutdown();
     }
     private boolean isFinishing(){return closed||activity.isFinishing();}
     private boolean isDestroyed(){return activity.isDestroyed();}
@@ -88,6 +108,8 @@ public final class InspirationPage implements AutoCloseable {
 
         TextView subtitle = text("收藏搭配码和染色码，按分类与状态慢慢整理。", 13, false);
         subtitle.setTextColor(activity.getColor(R.color.text_secondary)); subtitle.setPadding(0, dp(5), 0, dp(15)); root.addView(subtitle);
+        syncNote=text("灵感保存在手机本地，连接支持同步的电脑后可同步。",12,false);syncNote.setTextColor(activity.getColor(R.color.text_secondary));root.addView(syncNote);
+        Button sync=button("立即同步");sync.setOnClickListener(v->requestSync.run());root.addView(sync,rowParams());
         Button add = button("＋ 记录新的灵感"); add.setOnClickListener(v -> showEditor(null, null)); root.addView(add, rowParams());
 
         search = field("搜索分享码或分类", "");
@@ -124,6 +146,13 @@ public final class InspirationPage implements AutoCloseable {
             LinearLayout card = column(); card.setPadding(dp(14), dp(12), dp(14), dp(12));
             card.setBackgroundResource(R.drawable.bg_glass_card);
             card.addView(text(entry.title().isBlank()?typeLabel(entry.code().type()):entry.title(), 17, true));
+            if(!entry.images().isEmpty()) {
+                ImageView cover=new ImageView(activity);cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                cover.setBackgroundResource(R.drawable.bg_gallery_photo);cover.setClipToOutline(true);
+                LinearLayout.LayoutParams coverLp=new LinearLayout.LayoutParams(-1,dp(160));coverLp.topMargin=dp(8);card.addView(cover,coverLp);
+                cover.setContentDescription("查看穿搭参考图");cover.setOnClickListener(v->showImages(entry));
+                loadPrivateThumbnail(cover,entry.images().get(0).localName(),480);
+            }
             String code = entry.code().rawCode().isBlank() ? "尚未填写分享码" : entry.code().rawCode();
             TextView info = text(statusLabel(entry.status()) + " · " + typeLabel(entry.code().type())
                     + "\n" + code + (entry.categories().isEmpty() ? "" : "\n分类：" + String.join("、", entry.categories()))
@@ -148,10 +177,13 @@ public final class InspirationPage implements AutoCloseable {
     private void showEditor(InspirationStore.Entry existing, InspirationShareImport.Incoming incoming) {
         if(activeEditor!=null)return;
         pendingImages.clear();
+        removedImageIds.clear();editingEntry=existing;
         if(incoming!=null)pendingImages.addAll(incoming.imageUris());
         String initialCode=existing!=null?existing.code().rawCode():incoming==null||incoming.codeSuggestion().isBlank()?"":incoming.sourceText();
         var form=new InspirationEditorForm(activity,initialCode,existing==null?"outfit":existing.code().type(),
                 existing==null?"want":existing.status(),existing==null?List.of():existing.categories());
+        editorForm=form;
+        if(existing==null&&incoming!=null&&!InspirationCodeExtractor.candidates(incoming.sourceText()).isEmpty())form.applyPastedText(incoming.sourceText());
         ScrollView scroll=new ScrollView(activity);scroll.setFillViewport(true);scroll.addView(form);
         TextView heading=text(existing==null?"记录穿搭灵感":"编辑穿搭灵感",20,true);
         heading.setPadding(0,0,0,dp(12));
@@ -160,53 +192,91 @@ public final class InspirationPage implements AutoCloseable {
         var editor=new app.nikkisync.mobile.ui.chrome.ChromeSheetLayout(activity,heading,scroll,footer);
         activeEditor=editor;cancel.setOnClickListener(v->navigation.dismiss(editor));
         form.onAddCategory(()->showNewCategory(form));
+        form.onAddReference(()->{
+            if(referenceCount()>=5){toast("一条灵感最多添加 5 张参考图");return;}
+            try{referencePicker.launch(new PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE).build());}
+            catch(Exception ignored){toast("无法打开系统选图，请检查手机相册");}
+        });
+        renderEditorReferences();
         save.setOnClickListener(v->{
             String codeText=form.rawCode(),typeValue=form.codeType(),statusValue=form.status();
+            String pastedSource=form.pastedSource();
             List<String> categoryList=form.categories();
             ArrayList<Uri> images=new ArrayList<>(pendingImages);
+            LinkedHashSet<String> removals=new LinkedHashSet<>(removedImageIds);
             if(existing==null&&codeText.isBlank()&&images.isEmpty()&&(incoming==null||incoming.sourceText().isBlank())) {
                 toast("请先填入染色码或搭配码");return;
             }
             save.setEnabled(false);cancel.setEnabled(false);
             io.execute(()->{
+                List<InspirationImageStore.Saved> staged=new ArrayList<>();
                 try {
-                    InspirationStore.Entry entry;long now=System.currentTimeMillis();
-                    if(existing==null)entry=store.create(new InspirationStore.Draft("",codeText,typeValue,
-                            incoming==null?"":incoming.sourceText(),incoming==null?null:incoming.sourceUrl(),
-                            "",List.of(),categoryList,statusValue),now);
-                    else {
-                        // Hidden legacy fields are user-owned data, not deleted form values.
-                        store.updateUserFields(existing.id(),existing.title(),existing.notes(),existing.tags(),categoryList,statusValue,now);
-                        if(!codeText.equals(existing.code().rawCode())||!typeValue.equals(existing.code().type()))
-                            store.updateCode(existing.id(),codeText,typeValue,now+1);
-                        entry=store.get(existing.id());
+                    try {for(Uri uri:images)staged.add(imageStore.copyUri(activity.getContentResolver(),uri));}
+                    catch(Exception error){throw new IOException("参考图无法读取，请检查图片格式和大小（每张不超过 15 MB）",error);}
+                    long now=System.currentTimeMillis();
+                    // Hidden legacy fields and share text are user-owned, even when not shown in the form.
+                    InspirationStore.Draft draft=existing==null
+                            ?new InspirationStore.Draft("",codeText,typeValue,incoming==null?pastedSource:incoming.sourceText(),
+                                    incoming==null?null:incoming.sourceUrl(),"",List.of(),categoryList,statusValue)
+                            :new InspirationStore.Draft(existing.title(),codeText,typeValue,existing.code().sourceText(),
+                                    existing.code().sourceUrl(),existing.notes(),existing.tags(),categoryList,statusValue);
+                    store.saveWithImages(existing,draft,staged,List.copyOf(removals),now);
+                    if(existing!=null)for(InspirationStore.Image old:existing.images())if(removals.contains(old.id())) {
+                        try{imageStore.deleteLocal(old.localName());}catch(IOException ignored){}
                     }
-                    int failedImages=0;
-                    for(Uri uri:images) {
-                        InspirationImageStore.Saved copied=null;
-                        try {
-                            copied=imageStore.copyUri(activity.getContentResolver(),uri);
-                            store.attachImage(entry.id(),copied.localName(),copied.mimeType(),copied.bytes(),now);
-                        }catch(Exception error) {
-                            failedImages++;if(copied!=null)try{imageStore.deleteLocal(copied.localName());}catch(IOException ignored){}
-                        }
-                    }
-                    int failures=failedImages;
                     main.post(()->{
                         if(isFinishing()||isDestroyed())return;
                         navigation.dismiss(editor);refresh();
-                        toast(failures==0?"灵感已保存在手机":"代码已保存，"+failures+" 张分享附图未能复制");
+                        toast("灵感已保存在手机");
+                        requestSync.run();
                     });
                 }catch(Exception error) {
+                    for(InspirationImageStore.Saved image:staged)try{imageStore.deleteLocal(image.localName());}catch(IOException ignored){}
                     main.post(()->{if(activeEditor==editor){save.setEnabled(true);cancel.setEnabled(true);}showError(error);});
                 }
             });
         });
-        navigation.showSheet(editor,()->{if(activeEditor==editor){activeEditor=null;pendingImages.clear();}});
+        navigation.showSheet(editor,()->{if(activeEditor==editor){activeEditor=null;editorForm=null;editingEntry=null;pendingImages.clear();removedImageIds.clear();}});
         io.execute(()->{
             List<String> categories=store.categoryNames();
             main.post(()->{if(activeEditor==editor&&!isFinishing()&&!isDestroyed())form.availableCategories(categories);});
         });
+    }
+
+    private int referenceCount(){return pendingImages.size()+(editingEntry==null?0:(int)editingEntry.images().stream().filter(image->!removedImageIds.contains(image.id())).count());}
+    void receiveReferenceImages(List<Uri> images){
+        if(activeEditor==null||editorForm==null||images==null)return;
+        boolean limited=false;
+        for(Uri uri:images){
+            if(uri==null||!"content".equals(uri.getScheme())||pendingImages.contains(uri))continue;
+            if(referenceCount()>=5){limited=true;break;}
+            pendingImages.add(uri);
+        }
+        renderEditorReferences();if(limited)toast("一条灵感最多添加 5 张参考图");
+    }
+    private void renderEditorReferences(){
+        InspirationEditorForm form=editorForm;if(form==null)return;
+        form.clearReferences(referenceCount());
+        if(editingEntry!=null)for(InspirationStore.Image image:editingEntry.images())if(!removedImageIds.contains(image.id())){
+            ImageView view=form.addReferenceThumbnail(image.id(),()->{removedImageIds.add(image.id());renderEditorReferences();});
+            loadPrivateThumbnail(view,image.localName(),240);
+        }
+        for(Uri uri:List.copyOf(pendingImages)){
+            ImageView view=form.addReferenceThumbnail(uri.toString(),()->{pendingImages.remove(uri);renderEditorReferences();});
+            io.execute(()->{try {
+                Bitmap bitmap=activity.getContentResolver().loadThumbnail(uri,new android.util.Size(240,240),null);
+                main.post(()->{if(!closed&&uri.toString().equals(view.getTag()))view.setImageBitmap(bitmap);});
+            }catch(Exception ignored) {}});
+        }
+    }
+    private void loadPrivateThumbnail(ImageView view,String localName,int max){
+        io.execute(()->{try{
+            String path=imageStore.resolve(localName).getAbsolutePath();
+            BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(path,bounds);
+            BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=Math.max(1,Math.max(bounds.outWidth,bounds.outHeight)/max);
+            Bitmap bitmap=BitmapFactory.decodeFile(path,options);
+            main.post(()->{if(!closed&&bitmap!=null)view.setImageBitmap(bitmap);});
+        }catch(Exception ignored){}});
     }
 
     private void showNewCategory(InspirationEditorForm form) {
@@ -235,7 +305,7 @@ public final class InspirationPage implements AutoCloseable {
                 .setNegativeButton("取消",null).setPositiveButton("删除",(d,w)->io.execute(()->{
                     store.delete(entry.id(),System.currentTimeMillis());
                     for(InspirationStore.Image image:entry.images())try{imageStore.deleteLocal(image.localName());}catch(IOException ignored){}
-                    main.post(this::refresh);
+                    main.post(()->{refresh();requestSync.run();});
                 })).show();
     }
 

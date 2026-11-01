@@ -99,6 +99,7 @@ public final class Models {
         }
         public String assetId() { return assetId; }
         public String type() { return type; }
+        public boolean isVideo() { return "video".equals(type); }
         public String state() { return state; }
         public String capturedAt() { return capturedAt; }
         public String uid() { return uid; }

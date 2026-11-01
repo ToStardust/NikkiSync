@@ -117,7 +117,8 @@ public partial class App : System.Windows.Application
                 File.WriteAllText(Path.Combine(directory, "verification.json"), JsonSerializer.Serialize(new {
                     ok = false, error = StartupFailure.FromException(error).Code,
                     exceptionKind = StartupDiagnostics.ExceptionKind(error),
-                    hresultHex = $"0x{unchecked((uint)error.HResult):X8}", runtimeStep = preparationStep.ToString()
+                    hresultHex = $"0x{unchecked((uint)error.HResult):X8}", runtimeStep = preparationStep.ToString(),
+                    nativeErrorCode = (error as System.ComponentModel.Win32Exception)?.NativeErrorCode
                 }));
                 verificationWindow?.Close();
                 Shutdown(1);

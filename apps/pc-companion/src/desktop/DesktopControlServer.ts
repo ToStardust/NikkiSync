@@ -12,8 +12,11 @@ import type {ExtraScanDirectories} from '../scanner/ExtraScanDirectories.js'
 import type {DeletionQueue} from '../organizer/DeletionQueue.js'
 import type {AccountSyncSettings} from '../server/AccountSyncSettings.js'
 import {nativePreview} from '../organizer/NativeMediaOperations.js'
+import type {InspirationRepository} from '../inspiration/InspirationRepository.js'
+import {inspirationRoute} from '../inspiration/InspirationRoutes.js'
 
 export interface DesktopControlServerConfig {
+  inspirations?:InspirationRepository
   accounts?:AccountSyncSettings
   deletions?:DeletionQueue
   scanDirectories?:ExtraScanDirectories
@@ -50,13 +53,13 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
     const remote = config.remoteBridge
-    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments || config.scanDirectories || config.deletions || config.accounts) {
+    if (remote || config.wechatGallery || config.metadataPrivacy || config.legalDocuments || config.scanDirectories || config.deletions || config.accounts || config.inspirations) {
       const host = request.headers.host
       const localHosts = [`127.0.0.1:${request.socket.localPort}`, `localhost:${request.socket.localPort}`]
       if (!host || !localHosts.includes(host)) { json(response, 403, { error: 'forbidden' }); return }
     }
     if ((remote && requestUrl.pathname.startsWith('/api/remote/')) || (config.wechatGallery && requestUrl.pathname.startsWith('/api/wechat/'))
-        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))||(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories'))||(config.deletions&&requestUrl.pathname.startsWith('/api/organizer'))||(config.accounts&&requestUrl.pathname.startsWith('/api/sync-accounts'))) {
+        ||(config.metadataPrivacy&&requestUrl.pathname.startsWith('/api/privacy/'))||(config.scanDirectories&&requestUrl.pathname.startsWith('/api/scan-directories'))||(config.deletions&&requestUrl.pathname.startsWith('/api/organizer'))||(config.accounts&&requestUrl.pathname.startsWith('/api/sync-accounts'))||(config.inspirations&&requestUrl.pathname.startsWith('/api/inspiration'))) {
       const token = request.headers['x-nikkisync-desktop-token']
       const origin = request.headers.origin
       if (typeof token !== 'string' || Buffer.byteLength(token) !== Buffer.byteLength(desktopToken)
@@ -66,6 +69,9 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
         json(response, 403, { error: 'forbidden' }); return
       }
       try {
+        if(config.inspirations&&(requestUrl.pathname==='/api/inspiration'||requestUrl.pathname.startsWith('/api/inspiration/'))){
+          await inspirationRoute(request,response,requestUrl,'/api/inspiration',config.inspirations,()=>true);return
+        }
         if(config.accounts&&requestUrl.pathname.startsWith('/api/sync-accounts')){
           if(request.method==='GET'&&requestUrl.pathname==='/api/sync-accounts'){json(response,200,config.accounts.state());return}
           if(request.method==='GET'&&requestUrl.pathname==='/api/sync-accounts/thumbnail'){
@@ -220,7 +226,7 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
     }
     if (requestUrl.pathname === '/' && request.method === 'GET') {
       const qrSvg = status.firstRun ? await config.qrSvg(config.createPairingUri()) : undefined
-      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...((config.metadataPrivacy||config.scanDirectories||config.deletions||config.accounts)?{desktopToken}:{}), ...(config.metadataPrivacy?{metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
+      const page = renderDesktopPage(status, { ...(qrSvg ? { qrSvg } : {}), ...(remote || config.wechatGallery ? { remoteToken: desktopToken } : {}), ...((config.metadataPrivacy||config.scanDirectories||config.deletions||config.accounts||config.inspirations)?{desktopToken}:{}), ...(config.metadataPrivacy?{metadataPrivacy:true}:{}), wechat: Boolean(config.wechatGallery), branded: Boolean(config.brandImage) })
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' }); response.end(page); return
     }
     response.writeHead(404); response.end()

@@ -1,6 +1,7 @@
 import {extraScanDirectoriesScript} from './ExtraScanDirectoriesPanel.js'
 import {organizerScript} from './OrganizerPanel.js'
 import {accountSyncScript} from './AccountSyncPanel.js'
+import {inspirationScript} from './InspirationPanel.js'
 export const desktopPageScript = `
 ${organizerScript}
 (()=>{
@@ -24,7 +25,7 @@ ${organizerScript}
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
   });
 
-  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。'],organizer:['最近删除','核对手机整理的照片，确认后移入电脑回收站。'],about:['关于','版本、更新与项目仓库。']};
+  const headings={connect:['暖暖相册','电脑里的风景与穿搭，在手机上慢慢欣赏。'],settings:['同步设置','管理这台电脑的连接与启动偏好。'],organizer:['最近删除','核对手机整理的照片，确认后移入电脑回收站。'],inspiration:['灵感库','收藏喜欢的染色码、搭配码和穿搭参考图。'],about:['关于','版本、更新与项目仓库。']};
   const navigation=[...document.querySelectorAll('[data-view]')];
   let desktopView='connect';
   function showDesktopView(view){
@@ -34,8 +35,10 @@ ${organizerScript}
     document.querySelector('#desktop-title').textContent=headings[view][0];
     document.querySelector('#desktop-subtitle').textContent=headings[view][1];
     if(view==='settings')void loadExtraDirectories();
+    if(view==='inspiration')void loadInspiration();
   }
   for(const button of navigation)button.onclick=()=>showDesktopView(button.dataset.view);
+  ${inspirationScript}
   document.querySelector('#open-network-settings').onclick=()=>{showDesktopView('settings');document.querySelector('#network-permission-section').scrollIntoView?.({block:'start'});};
   document.querySelector('#open-scan-settings').onclick=()=>{showDesktopView('settings');showDirectoryGuide(true);document.querySelector('#extra-scan-section').scrollIntoView?.({block:'start'});document.querySelector('#scan-directory-help').focus();};
 
@@ -156,7 +159,7 @@ ${organizerScript}
       }
     }finally{polling=false;}
   };
-  const timer=setInterval(async()=>{await updateStatus();if(desktopView==='settings'&&!document.hidden&&!disposed)await loadExtraDirectories();},2000);
+  const timer=setInterval(async()=>{await updateStatus();if(desktopView==='settings'&&!document.hidden&&!disposed)await loadExtraDirectories();if(desktopView==='inspiration'&&!document.hidden&&!disposed)maybeRefreshInspiration();},2000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)void updateStatus();});
   window.addEventListener('pagehide',()=>{disposed=true;generation++;qr.replaceChildren();clearInterval(timer);});
 })();

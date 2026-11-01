@@ -24,5 +24,11 @@ public class PhotoScopeFilterTest {
         try(var store=new SavedSourceStore(RuntimeEnvironment.getApplication())){store.put(a);assertEquals(a.sourcePath(),store.get("a").sourcePath());assertEquals(a.sizeBytes(),store.get("a").sizeBytes());}
         try(var store=new SavedSourceStore(RuntimeEnvironment.getApplication())){assertEquals("1001",store.get("a").uid());}
     }
+    @Test public void independentVideosHaveTheirOwnFilterRatherThanBeingOrdinaryPhotosOrLive(){
+        var video=new AssetSummary("v","video","ready",null,null,1,null,null,false,false,null,null,null,null);
+        assertTrue(PhotoScopeFilter.matches(video,0,null,null));assertTrue(PhotoScopeFilter.matches(video,3,null,null));
+        assertFalse(PhotoScopeFilter.matches(video,1,null,null));assertFalse(PhotoScopeFilter.matches(video,2,null,null));
+        assertFalse(PhotoScopeFilter.matches(asset("p",null),3,null,null));
+    }
     static AssetSummary asset(String id,String uid){return new AssetSummary(id,"photo","ready","2026-10-27T01:00:00Z",uid,1,100,200,false,false,null,"r",null,null);}
 }

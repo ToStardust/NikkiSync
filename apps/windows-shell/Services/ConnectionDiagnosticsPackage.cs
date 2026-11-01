@@ -82,6 +82,7 @@ public static class ConnectionDiagnosticsPackage
                 Number(index,values,"processedAssets");Number(index,values,"observedResources");safe["index"]=values;
             }
             Choice(source,safe,"exceptionKind","access-denied","path-too-long","file-not-found","directory-not-found","invalid-data","invalid-json","io","win32","security","not-supported","argument","cancelled","unknown");
+            if(source.TryGetProperty("nativeErrorCode",out var nativeError)&&nativeError.ValueKind==JsonValueKind.Number&&nativeError.TryGetInt32(out var nativeCode))safe["nativeErrorCode"]=nativeCode;
             foreach(var key in new[]{"hresultHex","exitCodeHex"})
                 if(source.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.String&&System.Text.RegularExpressions.Regex.IsMatch(value.GetString()??"",@"\A0x[0-9A-Fa-f]{8}\z"))safe[key]=value.GetString();
             Choice(source,safe,"runtimeStep",Enum.GetNames<PayloadPreparationStep>());

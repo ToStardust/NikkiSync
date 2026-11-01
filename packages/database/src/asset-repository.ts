@@ -19,6 +19,17 @@ function mergeMetadata(base: unknown, incoming: unknown): unknown {
   return result
 }
 
+/** Keep the preceding source's metadata locally, but never attach it to new image bytes. */
+function metadataForReplacement(value:unknown):unknown {
+  if(!isObject(value))return undefined
+  const previous={...value}
+  if(isObject(previous.raw)){const raw={...previous.raw};delete raw.previousSourceMetadata;previous.raw=raw}
+  const retained={...value}
+  for(const key of ['identity','capture','camera','pose','filter','lighting','photography','nikki','dressing','interactions','location','raw'])delete retained[key]
+  retained.raw={previousSourceMetadata:previous}
+  return retained
+}
+
 export class AssetRepository {
   private readonly journal: ChangeJournalRepository
 
@@ -68,7 +79,12 @@ export class AssetRepository {
       const resourceById = new Map(existingResources.map((row) => [String(row.resource_id), row]))
       const expectedIds = new Set(input.resources.map((resource) => resource.resourceId))
       const existingMetadata = existing?.metadata_json ? JSON.parse(String(existing.metadata_json)) : undefined
-      const mergedMetadata = input.metadata === undefined ? existingMetadata : mergeMetadata(existingMetadata, input.metadata)
+      const roles=['source_high_quality','source_primary','source_motion']
+      const oldSource=roles.map(role=>existingResources.find(row=>row.role===role)).find(Boolean)
+      const newSource=roles.map(role=>input.resources.find(row=>row.role===role)).find(Boolean)
+      const sourceChanged=!!scan&&!!oldSource&&!!newSource&&String(oldSource.sha256)!==newSource.sha256
+      const metadataBase=sourceChanged?metadataForReplacement(existingMetadata):existingMetadata
+      const mergedMetadata = input.metadata === undefined ? metadataBase : mergeMetadata(metadataBase, input.metadata)
       const mergedMetadataJson = mergedMetadata === undefined ? null : JSON.stringify(mergedMetadata)
       const metadataSchemaVersion = input.metadataSchemaVersion ??
         (existing?.metadata_schema_version === null || existing?.metadata_schema_version === undefined
@@ -94,16 +110,18 @@ export class AssetRepository {
 
       if (existing && !assetChanged && !resourcesChanged) return { kind: 'unchanged' }
 
-      // Old fuzzy LIVE matching could commit a video to an orphan cover before
-      // failing on its real pair. Release only that obsolete, same-byte motion
-      // association within a completed scan, in this target asset's transaction.
+      // A completed scan can replace an obsolete LIVE association, or change an
+      // external pair into independent media (and back). Transfer only the exact
+      // same source bytes and UID; never take resources from an active snapshot.
       const supersededChanges: Array<{ assetId: string; revision: number }> = []
-      if (scan && input.assetType === 'motion_photo') for (const resource of input.resources) {
-        if (resource.role !== 'source_motion' || resourceById.has(resource.resourceId)) continue
+      if (scan) for (const resource of input.resources) {
+        if (!['source_motion','source_primary','source_high_quality'].includes(resource.role) || resourceById.has(resource.resourceId)) continue
         if (toPathKey(resource.sourcePath) !== resource.pathKey || !scan.completedRoots.some(root => resource.pathKey.startsWith(toPathKey(root) + '/'))) continue
-        const old = this.database.connection.prepare(`SELECT r.resource_id,r.asset_id,r.role,r.sha256,r.size_bytes,r.source_path,a.asset_type,a.uid,a.asset_state
+        const old = this.database.connection.prepare(`SELECT r.resource_id,r.asset_id,r.role,r.mime_type,r.sha256,r.size_bytes,r.source_path,a.asset_type,a.uid,a.asset_state
           FROM resources r JOIN assets a ON a.asset_id=r.asset_id WHERE r.path_key=? AND r.asset_id<>?`).get(resource.pathKey,input.assetId)
-        if (!old || old.asset_type !== 'motion_photo' || old.role !== 'source_motion' || scan.activeAssetIds.has(String(old.asset_id))
+        const motionTransfer=resource.role==='source_motion'&&old?.role==='source_motion'&&['video','motion_photo'].includes(input.assetType)&&['video','motion_photo'].includes(String(old?.asset_type))
+        const imageTransfer=['source_primary','source_high_quality'].includes(resource.role)&&['source_primary','source_high_quality'].includes(String(old?.role))&&String(old?.mime_type).startsWith('image/')&&resource.mimeType.startsWith('image/')&&['photo','motion_photo'].includes(input.assetType)&&['photo','motion_photo'].includes(String(old?.asset_type))
+        if (!old || !(motionTransfer||imageTransfer) || scan.activeAssetIds.has(String(old.asset_id))
           || String(old.uid ?? '') !== String(input.uid ?? '') || old.sha256 !== resource.sha256 || Number(old.size_bytes) !== resource.sizeBytes
           || toPathKey(String(old.source_path)) !== resource.pathKey) continue
         // FK cascade removes candidates referring to the obsolete resource only.
@@ -221,7 +239,7 @@ export class AssetRepository {
   }
 
   getById(assetId: string): Record<string, unknown> | undefined {
-    return this.database.connection.prepare('SELECT * FROM assets WHERE asset_id = ?').get(assetId) as
+    return (this.database.connection.prepare('SELECT * FROM assets WHERE asset_id = ?').get(assetId) ?? undefined) as
       | Record<string, unknown>
       | undefined
   }

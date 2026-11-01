@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, rm, utimes, writeFile, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile, readFile, rename } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -25,6 +25,63 @@ test('an installation without photo folders completes an empty scan instead of l
     assert.deepEqual(result.roots, [])
     assert.equal(scanner.getStatus().status, 'running')
   } finally { await scanner.stop(); database.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('manual rescan discovers native photos and LIVE roots created after an export-only startup',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'nikkisync-late-native-')),game=path.join(root,'InfinityNikki'),x6=path.join(game,'X6Game')
+  await mkdir(path.join(x6,'ScreenShot'),{recursive:true});await mkdir(path.join(x6,'Video'),{recursive:true});await writeFile(path.join(game,'InfinityNikki.exe'),'')
+  await writeFile(path.join(x6,'Video/Old_cover.jpeg'),'old-cover');await writeFile(path.join(x6,'Video/Old.mp4'),'old-video')
+  const database=new DatabaseManager(':memory:');database.initialize()
+  const scanner=new ScannerService(database,{startingPaths:[game],runningExecutablePaths:[],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  try{
+    await scanner.start()
+    const uid=path.join(x6,'Saved/GamePlayPhotos/30003')
+    await mkdir(path.join(uid,'NikkiPhotos_HighQuality'),{recursive:true});await mkdir(path.join(uid,'Videos/session'),{recursive:true})
+    await writeFile(path.join(uid,'NikkiPhotos_HighQuality/New.jpeg'),'new-photo')
+    await writeFile(path.join(uid,'Videos/session/New_cover.jpeg'),'new-cover');await writeFile(path.join(uid,'Videos/session/New.mp4'),'new-video')
+    const result=await scanner.fullScan()
+    assert.equal(result.errors.length,0)
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,3,'manual rescan finds new native photo and LIVE while retaining the old export LIVE')
+    assert.ok(scanner.getScanRoots().includes(path.join(x6,'Saved/GamePlayPhotos')))
+    assert.ok(scanner.getScanRoots().includes(path.join(x6,'Video')),'previously shared export media stays in the watched scope')
+    const ids=database.connection.prepare("SELECT asset_id FROM assets WHERE asset_state='ready' ORDER BY asset_id").all()
+    await scanner.fullScan()
+    assert.deepEqual(database.connection.prepare("SELECT asset_id FROM assets WHERE asset_state='ready' ORDER BY asset_id").all(),ids)
+  }finally{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}
+})
+
+test('watching an initially empty installation discovers a new Saved album without restarting',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'nikkisync-watch-new-root-')),game=path.join(root,'InfinityNikki'),x6=path.join(game,'X6Game')
+  await mkdir(x6,{recursive:true});await writeFile(path.join(game,'InfinityNikki.exe'),'')
+  const database=new DatabaseManager(':memory:');database.initialize()
+  const scanner=new ScannerService(database,{startingPaths:[game],runningExecutablePaths:[],debounceMs:10,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  try{
+    await scanner.start()
+    const photo=path.join(x6,'Saved/GamePlayPhotos/30003/NikkiPhotos_HighQuality/First.jpeg')
+    await mkdir(path.dirname(photo),{recursive:true});await writeFile(photo,'first-photo')
+    const until=Date.now()+1500
+    while(Date.now()<until&&!database.connection.prepare("SELECT 1 FROM assets WHERE asset_state='ready'").get())await new Promise(resolve=>setTimeout(resolve,20))
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,1)
+    await scanner['draining']
+    const second=path.join(path.dirname(photo),'Second.jpeg');await writeFile(second,'second-photo')
+    const secondUntil=Date.now()+1500
+    while(Date.now()<secondUntil&&database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c!==2)await new Promise(resolve=>setTimeout(resolve,20))
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,2,'the discovered media root remains recursively watched')
+  }finally{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}
+})
+
+test('media root refresh retains indexed originals while a previously discovered drive is unavailable',async()=>{
+  const f=await fixture(),database=new DatabaseManager(':memory:');database.initialize()
+  const scanner=new ScannerService(database,{startingPaths:[f.game],runningExecutablePaths:[],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  try{
+    await writeFile(path.join(f.uid,'NikkiPhotos_HighQuality/Keep.jpeg'),'keep');await scanner.start()
+    await rename(f.photos,f.photos+'-temporarily-offline')
+    const result=await scanner.fullScan()
+    assert.ok(result.errors.length);assert.ok(scanner.getScanRoots().includes(f.photos))
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,1)
+    await rename(f.photos+'-temporarily-offline',f.photos)
+    assert.equal((await scanner.fullScan()).assetsCreated,0)
+  }finally{await scanner.stop();database.close();await rm(f.root,{recursive:true,force:true})}
 })
 
 async function fixture() {
@@ -159,6 +216,32 @@ test('classifier extracts the 2.9 trailer token and payload before the versioned
   await rm(f.root, { recursive: true, force: true })
 })
 
+test('native trailers accept bounded variable V2 lengths and whitespace without changing the hashed bytes', async () => {
+ const f=await fixture(),classifier=new ResourceClassifier(),target=path.join(f.uid,'NikkiPhotos_HighQuality','Flexible.jpeg')
+ const prefix=Buffer.from([255,216,255,217]),payload=Buffer.from('payload').toString('base64'),token=Buffer.alloc(32,7).toString('base64')
+ const hashed=Buffer.concat([prefix,Buffer.from(' \r\n'+payload+'\t')])
+ try{
+  for(const digits of ['12','000012','0000012','00000012']){
+   await writeFile(target,Buffer.concat([hashed,Buffer.from([255,217]),Buffer.from(' \r\n'+token+'[V2]'+digits+'\r\n')]))
+   const result=await classifier.classify(target,f.photos)
+   assert.equal(result.nativeParamToken,token);assert.equal(result.nativeParamPayload,payload)
+   assert.equal(result.nativeParamNuan5Md5,createHash('md5').update(hashed.subarray(-12)).digest('hex'))
+  }
+  for(const suffix of ['[V2]0','[V2]99999999999999999999','[V2]999999','[V2]12junk']){
+   await writeFile(target,Buffer.concat([hashed,Buffer.from([255,217]),Buffer.from(token+suffix)]))
+   assert.equal((await classifier.classify(target,f.photos)).nativeParamNuan5Md5,undefined)
+  }
+ }finally{await rm(f.root,{recursive:true,force:true})}
+})
+
+test('nested migrated native sessions resolve UID from GamePlayPhotos rather than an outer backup date',async()=>{
+ const f=await fixture(),classifier=new ResourceClassifier(),root=path.join(f.root,'20261028/GamePlayPhotos/30003/Videos/session')
+ try{await mkdir(root,{recursive:true});const file=path.join(root,'Live_cover.jpeg');await writeFile(file,'cover')
+  const result=await classifier.classify(file,root,undefined,{id:'moved',path:root,mode:'native'})
+  assert.equal(result.uid,'30003')
+ }finally{await rm(f.root,{recursive:true,force:true})}
+})
+
 test('scanner persists the local NUAN5 MD5 without persisting source bytes', async () => {
   const f = await fixture()
   const target = path.join(f.uid, 'NikkiPhotos_HighQuality', 'Persisted.jpeg')
@@ -192,6 +275,25 @@ test('scanner stores source photo mtime as capturedAt for chronological gallery 
   await scanner.stop(); database.close(); await rm(f.root, { recursive: true, force: true })
 })
 
+test('native game photo filenames retain capture time across file copying and rescan', async () => {
+  const f = await fixture()
+  const target = path.join(f.uid, 'NikkiPhotos_HighQuality', '2026_09_18_17_54_57_3499251.jpeg')
+  await writeFile(target, 'photo')
+  const copied = new Date(2026, 9, 15, 23, 16, 52)
+  await utimes(target, copied, copied)
+  const database = new DatabaseManager(':memory:'); database.initialize()
+  const scanner = new ScannerService(database, { startingPaths: [f.game], runningExecutablePaths: [], watcher: false, stability: { pollIntervalMs: 0, stableChecks: 1, maxWaitMs: 1000 } })
+  try {
+    await scanner.start()
+    const expected = new Date(2026, 8, 18, 17, 54, 57).toISOString()
+    assert.equal(database.connection.prepare('SELECT captured_at FROM assets').get()?.captured_at, expected)
+    // Simulate the timestamp previously indexed by an older version.
+    database.connection.prepare('UPDATE assets SET captured_at=?').run(copied.toISOString())
+    await scanner.fullScan()
+    assert.equal(database.connection.prepare('SELECT captured_at FROM assets').get()?.captured_at, expected)
+  } finally { await scanner.stop(); database.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
 test('file stability guard waits for stable readable content', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-stable-')); const target = path.join(dir, 'x.jpg')
   await writeFile(target, 'a')
@@ -217,6 +319,17 @@ test('watcher debounces duplicate events by canonical path', async () => {
   watcher.start([], (event) => seen.push(event.path)); const p = path.join(os.tmpdir(), 'nikkisync-duplicate.jpg')
   watcher.push({ type: 'change', path: p }); watcher.push({ type: 'change', path: p }); await new Promise((resolve) => setTimeout(resolve, 20)); watcher.stop()
   assert.equal(seen.length, 1)
+})
+
+test('an unavailable watch handle does not crash the service and can be reopened',async()=>{
+  const f=await fixture(),watcher=new ScannerWatcher(5)
+  try{
+    watcher.start([f.photos],()=>{})
+    const handle=watcher['watchers'][0];assert.ok(handle)
+    assert.doesNotThrow(()=>handle.emit('error',Object.assign(new Error('watch directory unavailable'),{code:'EPERM'})))
+    watcher.start([f.photos],()=>{})
+    assert.ok(watcher['watchers'][0]);assert.notEqual(watcher['watchers'][0],handle)
+  }finally{watcher.stop();await rm(f.root,{recursive:true,force:true})}
 })
 
 test('stopping a multi-root watcher closes every directory handle', async () => {

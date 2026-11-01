@@ -5,12 +5,14 @@ import path from 'node:path'
 import { toPathKey } from '@nikkisync/core'
 import type { DiscoveredResource, DiscoveredResourceKind, ExtraScanRoot } from './types.js'
 import {jpegImageLength} from './JpegImageBoundary.js'
+import {gamePlayUid,nativePhotoLayout,nativePhotoAccountDirectory} from './NativePhotoLayout.js'
 
 function normalizeStem(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '').replace(/_cover$/i, '').replace(/\s+/g, '_').toLowerCase()
 }
 
 function uidFor(filePath: string, gamePlayRoot: string): string | undefined {
+  const structured=gamePlayUid(filePath);if(structured)return structured
   const relative = path.relative(gamePlayRoot, filePath).split(path.sep)
   return relative.find((part) => /^\d{5,}$/.test(part)) ?? filePath.split(path.sep).find((part) => /^\d{5,}$/.test(part))
 }
@@ -22,6 +24,7 @@ function classifyKind(filePath: string): DiscoveredResourceKind {
   if (ext === '.bin') return 'binary_companion'
   if (ext === '.mp4' && /\/videos?\//i.test(lower)) return 'motion_video'
   if (/\.(jpe?g|png|webp)$/i.test(ext)) {
+    const layout=nativePhotoLayout(filePath);if(layout)return layout.kind
     if (/nik k iphotos_highquality|nikk iphotos_highquality/.test(lower.replaceAll(' ', ''))) return 'high_quality'
     if (/nikkiphotos_highquality/.test(lower)) return 'high_quality'
     if (/nikkiphotos_lowquality/.test(lower)) return 'low_quality'
@@ -81,15 +84,16 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string, 
       if (result.bytesRead !== window.length) return {}
       const finalEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]))
       if (finalEoi < 0) return {}
-      const trailer = window.subarray(finalEoi + 2)
-      if (trailer.length < 44) return {}
-      const token = trailer.subarray(0, 44).toString('ascii')
-      if (!/^[A-Za-z0-9+/]{43}=$/.test(token) || Buffer.from(token, 'base64').length !== 32) return {}
-      const suffix = trailer.subarray(44).toString('ascii')
-      if (suffix !== '' && !/^\[V2\]\d{7}$/.test(suffix)) return {}
+      // Game trailers use variable-width decimal windows, including six digits
+      // in real HQ photos. Trim envelope text only; the MD5 covers original bytes.
+      const trailer = window.subarray(finalEoi + 2).toString('latin1').replace(/^[ \t\r\n]+|[ \t\r\n]+$/g,'')
+      const match=/^([A-Za-z0-9+/]{43}=)(?:\[V2\](\d{1,16}))?$/.exec(trailer)
+      if(!match)return {}
+      const token=match[1]!
+      if(Buffer.from(token,'base64').length!==32)return {}
       const boundary = windowStart + finalEoi
-      const versionedMatch = /^\[V2\](\d{7})$/.exec(suffix)
-      const hashLength = versionedMatch ? Number(versionedMatch[1]) : boundary
+      const versioned=match[2]!==undefined
+      const hashLength = versioned ? Number(match[2]) : boundary
       if (!Number.isSafeInteger(hashLength) || hashLength <= 0 || hashLength > boundary) return { token }
 
       const previousEoi = window.lastIndexOf(Buffer.from([0xff, 0xd9]), finalEoi - 1)
@@ -101,19 +105,24 @@ async function nativePhotoEnvelope(filePath: string, size: number, ext: string, 
       }
       const payloadBytes = window.subarray(previousEoi + 2, finalEoi)
       if (payloadBytes.length === 0 || payloadBytes.length > 2 * 1024 * 1024) return { token }
-      const payload = payloadBytes.toString('ascii')
+      const payload = payloadBytes.toString('latin1').replace(/^[ \t\r\n]+|[ \t\r\n]+$/g,'')
       const printable = /^[\x20-\x7e]+$/.test(payload)
       if (!printable) return { token }
       // NUAN5's current decode-photo2 contract hashes every source byte before the final EOI.
       // [V2]N changes that boundary to the final N bytes before the delimiter EOI. The bytes
       // remain local; only this 32-character digest is retained for the resolver.
-      const hashStart = versionedMatch ? boundary - hashLength : 0
+      const hashStart = versioned ? boundary - hashLength : 0
       return { token, payload, nuan5Md5: await md5Range(filePath, hashStart, boundary, onRead) }
     }
   } finally { window?.fill(0); await handle.close() }
 }
 
 export class ResourceClassifier {
+  private readonly videoHashes=new Map<string,{signature:string;digest:string}>()
+  invalidate(filePath:string):void {
+    const key=toPathKey(filePath)
+    for(const cached of this.videoHashes.keys())if(cached===key||cached.startsWith(key+'/'))this.videoHashes.delete(cached)
+  }
   classifyPath(filePath: string, extra?: ExtraScanRoot): DiscoveredResourceKind {
     const original=classifyKind(filePath)
     if(extra?.mode!=='images')return original
@@ -128,19 +137,35 @@ export class ResourceClassifier {
     const kind = this.classifyPath(filePath,extra)
     const fileName = path.basename(filePath)
     const shouldHash = !['ignored', 'unknown_image', 'binary_companion'].includes(kind)
-    const digest = shouldHash ? await sha256File(filePath, onRead) : undefined
+    let digest:string|undefined
+    if(shouldHash&&kind==='motion_video'&&extra?.mode==='images'){
+      const key=toPathKey(filePath),signature=(value:typeof info)=>`${value.size}|${value.mtimeMs}|${value.ctimeMs}|${value.dev}|${value.ino}`
+      const before=signature(info),cached=this.videoHashes.get(key)
+      if(cached?.signature===before)digest=cached.digest
+      else{
+        digest=await sha256File(filePath,onRead)
+        if(signature(await stat(filePath))!==before)throw new Error('Video changed during scan')
+        this.videoHashes.set(key,{signature:before,digest})
+        if(this.videoHashes.size>50_000)this.videoHashes.delete(this.videoHashes.keys().next().value!)
+      }
+    }else if(shouldHash)digest=await sha256File(filePath,onRead)
     const nativeEnvelope = (kind === 'high_quality' || kind === 'motion_cover')
       ? await nativePhotoEnvelope(filePath, info.size, fileExt, onRead)
       : {}
     const imageLength=kind==='high_quality'&&/\.jpe?g$/i.test(fileExt)?await jpegImageLength(filePath,info.size):undefined
-    const imageSha256=imageLength&&imageLength<info.size?await sha256File(filePath,onRead,imageLength):digest
+    const imageSha256=/^\.(jpe?g|png|webp)$/i.test(fileExt)
+      ? imageLength&&imageLength<info.size?await sha256File(filePath,onRead,imageLength):digest
+      : undefined
     const container=path.dirname(filePath)
     const parentUid=/^(NikkiPhotos_(High|Low)Quality|Videos?)$/i.test(path.basename(container))?path.basename(path.dirname(container)):undefined
-    const uid=extra?(parentUid&&/^\d{5,}$/.test(parentUid)?parentUid:extra.mode==='native'?uidFor(filePath,gamePlayRoot):undefined):uidFor(filePath,gamePlayRoot)
+    const account=nativePhotoAccountDirectory(filePath)
+    const uid=gamePlayUid(filePath)??(account?path.basename(account):undefined)??(extra?(parentUid&&/^\d{5,}$/.test(parentUid)?parentUid:extra.mode==='native'?uidFor(filePath,gamePlayRoot):undefined):uidFor(filePath,gamePlayRoot))
+    const layout=nativePhotoLayout(filePath)
     let groupDirectory=path.dirname(filePath)
     if(/^NikkiPhotos_(High|Low)Quality$/i.test(path.basename(groupDirectory)))groupDirectory=path.dirname(groupDirectory)
     return {
-      ...(extra?{extraNamespace:`extra:${extra.id}:${toPathKey(groupDirectory)}${extra.mode==='images'&&classifyKind(filePath)==='unknown_image'&&kind==='high_quality'?'|'+fileName.toLowerCase():''}`} : {}),
+      ...(extra?{extraNamespace:`extra:${extra.id}:${toPathKey(layout?.supplemental?layout.groupDirectory:groupDirectory)}${extra.mode==='images'&&classifyKind(filePath)==='unknown_image'&&kind==='high_quality'?'|'+fileName.toLowerCase():''}`} : layout?.supplemental?{extraNamespace:`native-category:${toPathKey(layout.groupDirectory)}`} : {}),
+      ...(extra?.mode==='images'?{standaloneAllowed:true}:{}),
       absolutePath: path.resolve(filePath), pathKey: toPathKey(filePath), ...(uid ? { uid } : {}), kind,
       fileName, normalizedStem: normalizeStem(fileName), sizeBytes: info.size, mtimeMs: info.mtimeMs,
       ...(info.birthtimeMs ? { birthtimeMs: info.birthtimeMs } : {}), ...(digest ? { sha256: digest } : {}),

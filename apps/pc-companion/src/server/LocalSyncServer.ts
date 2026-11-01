@@ -37,6 +37,8 @@ import { searchSuitLibrary, type SuitSearchAsset } from './SuitSearchIndex.js'
 import { WebSocketHub } from './WebSocketHub.js'
 import type {DeletionQueue,DeleteIntent} from '../organizer/DeletionQueue.js'
 import {AccountSyncSettings} from './AccountSyncSettings.js'
+import {InspirationRepository} from '../inspiration/InspirationRepository.js'
+import {inspirationRoute} from '../inspiration/InspirationRoutes.js'
 
 export interface LocalSyncServerConfig {
   accountSourceDirectories?:()=>readonly import('../scanner/types.js').ExtraScanRoot[]
@@ -94,13 +96,15 @@ function decodeCursor(value: string | null): CursorValue | undefined {
   return undefined
 }
 
+class RequestBodyTooLarge extends Error {}
+
 async function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of req) {
     const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     total += data.length
-    if (total > maxBytes) throw new Error('request body too large')
+    if (total > maxBytes) throw new RequestBodyTooLarge('request body too large')
     chunks.push(data)
   }
   return Buffer.concat(chunks)
@@ -136,6 +140,7 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 }
 
 export class LocalSyncServer {
+  readonly inspirations:InspirationRepository
   readonly accounts:AccountSyncSettings
   private readonly deletions:DeletionQueue|undefined
   private exportBusy = false
@@ -157,6 +162,7 @@ export class LocalSyncServer {
   private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge' | 'connectionHosts'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
+    this.inspirations=new InspirationRepository(database)
     this.deletions=config.deletions
     this.accounts=new AccountSyncSettings(database,config.accountSourceDirectories)
     this.reads = new SyncReadRepository(database,()=>this.accounts.selection(),()=>this.accounts.sourceGroups())
@@ -232,8 +238,14 @@ export class LocalSyncServer {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://nikkisync.local')
+      if(url.pathname==='/v1/inspiration'||url.pathname.startsWith('/v1/inspiration/')){
+        await inspirationRoute(req,res,url,'/v1/inspiration',this.inspirations,body=>Boolean(this.auth.verifyRequest(req,body)));return
+      }
       if(req.method==='POST'&&url.pathname==='/v1/organizer/sync'){
-        const body=await readBody(req,128*1024)
+        // 500 current Android intents fit under 128 KiB until the desktop adds
+        // their whole-batch challenge. Keep that signed confirmation atomic and
+        // allow bounded headroom for fingerprints, challenges and result receipts.
+        const body=await readBody(req,256*1024)
         const device=this.auth.verifyRequest(req,body)
         if(!device)return json(res,401,errorBody('unauthorized','Request signature is missing or invalid'))
         if(!this.deletions)return json(res,404,errorBody('not_found','Organizer requires a newer desktop'))
@@ -277,6 +289,7 @@ export class LocalSyncServer {
       }
       json(res, 404, errorBody('not_found', 'Route not found'))
     } catch (error) {
+      if(error instanceof RequestBodyTooLarge)return json(res,413,errorBody('bad_request','Request body too large'))
       json(res, 500, errorBody('internal_error', error instanceof Error ? error.message : 'Internal server error'))
     }
   }
@@ -287,7 +300,7 @@ export class LocalSyncServer {
       serverId: this.serverId,
       name: this.config.name,
       libraryRevision: this.reads.currentRevision(),
-      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true, profileStats: true }
+      capabilities: { websocketEvents: true, rangeRequests: true, metadataV1: true, motionAssets: true, suitSearch: true, clothingSearch: true, profileStats: true, inspirationV1: true }
     }
     json(res, 200, { ...body, ...(this.config.connectionHosts ? { connectionHosts: this.config.connectionHosts().slice(0, 8) } : {}) })
   }
@@ -532,6 +545,11 @@ export class LocalSyncServer {
     try { info = await stat(sourcePath) }
     catch { return json(res, 404, errorBody('resource_not_ready', 'Source file is unavailable')) }
     const size = info.size
+    // Playback requests only ranges, so it cannot hash the complete file on
+    // every seek. Refuse a video whose indexed size or modification time changed.
+    if(String(row.mime_type)==='video/mp4'&&(size!==Number(row.size_bytes)||
+      (row.modified_at&&Math.trunc(info.mtimeMs)!==Date.parse(String(row.modified_at)))))
+      return json(res,409,errorBody('resource_not_ready','Video changed; rescan before playback'))
     const range = parseRange(Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range, size)
     if (range === null) {
       res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Accept-Ranges': 'bytes' }); res.end(); return

@@ -1,10 +1,16 @@
 package app.nikkisync.mobile.inspiration;
 
 import android.content.Context;
+import android.content.ClipboardManager;
 import android.graphics.Typeface;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import app.nikkisync.mobile.R;
@@ -17,10 +23,16 @@ import java.util.List;
 public final class InspirationEditorForm extends LinearLayout {
     private final EditText code;
     private final LinearLayout categoryChoices;
+    private final LinearLayout referenceChoices, codeSuggestions;
+    private final TextView codeNotice, referenceNotice;
+    private final Button restorePaste;
     private final LinkedHashSet<String> available=new LinkedHashSet<>(), selected=new LinkedHashSet<>();
     private final List<Button> typeButtons=new ArrayList<>(), statusButtons=new ArrayList<>();
     private String codeType, status;
     private Runnable addCategory=()->{};
+    private Runnable addReference=()->{};
+    private String pastedSource="";
+    private boolean updatingCode, largeInsertion;
 
     public InspirationEditorForm(Context context,String initialCode,String initialType,String initialStatus,List<String> categories) {
         super(context);setOrientation(VERTICAL);setPadding(0,dp(8),0,dp(8));
@@ -39,6 +51,35 @@ public final class InspirationEditorForm extends LinearLayout {
         code.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(20000)});
         LayoutParams codeLp=new LayoutParams(-1,-2);codeLp.topMargin=dp(8);codes.addView(code,codeLp);
 
+        Button paste=button("粘贴");codes.addView(paste,new LayoutParams(-1,dp(44)));
+        codeNotice=label("可粘贴分享文字，识别后请核对。",12,false);
+        codeNotice.setTextColor(context.getColor(R.color.text_secondary));codes.addView(codeNotice);
+        codeSuggestions=new LinearLayout(context);codeSuggestions.setOrientation(VERTICAL);codes.addView(codeSuggestions);
+        restorePaste=button("恢复粘贴原文");restorePaste.setVisibility(View.GONE);codes.addView(restorePaste,new LayoutParams(-1,dp(42)));
+        restorePaste.setOnClickListener(v->{setCodeSilently(pastedSource);codeSuggestions.removeAllViews();restorePaste.setVisibility(View.GONE);codeNotice.setText("已恢复原文，可手动修改。");});
+        paste.setOnClickListener(v->{
+            try {
+                ClipboardManager clip=(ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE);
+                if(clip==null||!clip.hasPrimaryClip()||clip.getPrimaryClip()==null||clip.getPrimaryClip().getItemCount()==0){codeNotice.setText("剪贴板没有文字。");return;}
+                CharSequence value=clip.getPrimaryClip().getItemAt(0).coerceToText(context);
+                if(value==null||value.length()==0){codeNotice.setText("剪贴板没有文字。");return;}
+                if(value.length()>20000){codeNotice.setText("文字太长，请缩短后粘贴。");return;}
+                applyPastedText(value.toString());
+            }catch(Exception ignored){codeNotice.setText("无法读取剪贴板，请长按输入框粘贴。");}
+        });
+        code.addTextChangedListener(new TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){largeInsertion=after-count>2;}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count){}
+            @Override public void afterTextChanged(Editable value){if(!updatingCode&&largeInsertion){largeInsertion=false;applyPastedText(value.toString());}}
+        });
+
+        LinearLayout references=section("参考图（可选）");
+        referenceNotice=label("添加穿搭照片后，可在灵感卡片中直接预览。最多 5 张，每张不超过 15 MB。",12,false);
+        referenceNotice.setTextColor(context.getColor(R.color.text_secondary));references.addView(referenceNotice);
+        HorizontalScrollView referenceScroll=new HorizontalScrollView(context);referenceScroll.setHorizontalScrollBarEnabled(false);
+        referenceChoices=new LinearLayout(context);referenceScroll.addView(referenceChoices);references.addView(referenceScroll);
+        Button addImage=button("＋ 添加参考图");addImage.setOnClickListener(v->addReference.run());references.addView(addImage,new LayoutParams(-1,dp(44)));
+
         LinearLayout categoriesSection=section("选择分类");categoryChoices=new LinearLayout(context);categoryChoices.setOrientation(VERTICAL);
         categoriesSection.addView(categoryChoices);
         Button create=button("＋ 新增分类");create.setOnClickListener(v->addCategory.run());categoriesSection.addView(create,new LayoutParams(-1,dp(42)));
@@ -56,10 +97,32 @@ public final class InspirationEditorForm extends LinearLayout {
         updateChoices(statusButtons,status);
     }
     public String rawCode(){return code.getText().toString();}
+    public String pastedSource(){return pastedSource;}
     public String codeType(){return codeType;}
     public String status(){return status;}
     public List<String> categories(){return List.copyOf(selected);}
     public void onAddCategory(Runnable action){addCategory=action;}
+    public void onAddReference(Runnable action){addReference=action;}
+    public void clearReferences(int count){referenceChoices.removeAllViews();referenceNotice.setText("已选 "+count+" 张，最多 5 张；每张不超过 15 MB，保存后可离线查看。");}
+    public ImageView addReferenceThumbnail(String key,Runnable remove){
+        LinearLayout item=new LinearLayout(getContext());item.setOrientation(VERTICAL);item.setPadding(0,dp(6),dp(8),0);
+        ImageView image=new ImageView(getContext());image.setTag(key);image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackgroundResource(R.drawable.bg_gallery_photo);image.setClipToOutline(true);item.addView(image,new LayoutParams(dp(92),dp(92)));
+        Button delete=button("移除");delete.setOnClickListener(v->remove.run());item.addView(delete,new LayoutParams(dp(92),dp(40)));
+        referenceChoices.addView(item);return image;
+    }
+    void applyPastedText(String value){
+        pastedSource=value;List<String> candidates=InspirationCodeExtractor.candidates(value);
+        codeSuggestions.removeAllViews();restorePaste.setVisibility(View.GONE);
+        if(candidates.size()==1){
+            setCodeSilently(candidates.get(0));codeNotice.setText("已提取可能的分享码，请核对后保存。");
+            if(!value.equals(candidates.get(0)))restorePaste.setVisibility(View.VISIBLE);
+        }else if(candidates.size()>1){
+            setCodeSilently(value);codeNotice.setText("发现多个可能的码，请选择并核对：");
+            for(String candidate:candidates){Button pick=button(candidate);pick.setOnClickListener(v->{setCodeSilently(candidate);codeSuggestions.removeAllViews();restorePaste.setVisibility(View.VISIBLE);codeNotice.setText("已选择可能的分享码，请核对后保存。");});codeSuggestions.addView(pick,new LayoutParams(-1,dp(42)));}
+        }else{setCodeSilently(value);codeNotice.setText("未识别到完整分享码，已保留原文，可手动修改。");}
+    }
+    private void setCodeSilently(String value){updatingCode=true;try{code.setText(value);code.setSelection(code.length());}finally{updatingCode=false;largeInsertion=false;}}
     public void availableCategories(List<String> names){available.addAll(names);renderCategories();}
     public void addCategory(String name){available.add(name);selected.add(name);renderCategories();}
     private void renderCategories() {

@@ -19,6 +19,8 @@ import java.util.concurrent.Executor;
 public final class OrganizerPage {
     private final Activity activity;private final OrganizerStore store;private final String scope;private final Executor worker;private final Handler main;private final Runnable changed;
     private final GalleryAdapter adapter;private final TextView note;private final Button cancel;private List<OrganizerStore.Entry> entries=List.of();private boolean closed;private boolean loading,refreshAgain;private final ChromePage page;
+    private String syncFailure;private boolean syncStatusChanged;
+    public void setSyncFailure(String failure){if(Objects.equals(syncFailure,failure))return;syncFailure=failure;syncStatusChanged=true;refresh();}
     public boolean isOpen(){return !closed&&page.isShowing();}
     public OrganizerPage(Activity activity,OrganizerStore store,PairedServer server,NikkiSyncClient client,ImageLoader images,Executor worker,Handler main,Runnable changed){
         this.activity=activity;this.store=store;this.scope=OrganizerStore.scope(server);this.worker=worker;this.main=main;this.changed=changed;
@@ -50,7 +52,10 @@ public final class OrganizerPage {
         cancel.setEnabled(adapter.selectedCount()>0);
         long processing=next.stream().filter(entry->Set.of("preparing","queued","checking","executing").contains(entry.state())).count();
         boolean verified=processing>0&&next.stream().filter(entry->Set.of("preparing","queued","checking","executing").contains(entry.state())).allMatch(OrganizerStore.Entry::batchVerified);
-        if(!unchanged||!adapter.hasSelection())note.setText(processing>0?"正在核对或移入回收站 "+processing+" 张 · 结果自动更新\n"+(verified?"本批已核对，可关闭 App；完成后可从电脑回收站恢复。":"请保持 App 打开，尚未开始的照片仍可取消。 "):"待处理 "+pending+" 张 · 点选照片可取消待删除\n电脑确认后移入回收站，可从回收站恢复。");
+        if(syncStatusChanged||!unchanged||!adapter.hasSelection()){
+            note.setText(syncFailure!=null?syncFailure+"\n记录仍保留；恢复连接后核对处理结果。":processing>0?"正在核对或移入回收站 "+processing+" 张 · 结果自动更新\n"+(verified?"本批已核对，可关闭 App；完成后可从电脑回收站恢复。":"请保持 App 打开，尚未开始的照片仍可取消。 "):"待处理 "+pending+" 张 · 点选照片可取消待删除\n电脑确认后移入回收站，可从回收站恢复。");
+            syncStatusChanged=false;
+        }
         if(refreshAgain){refreshAgain=false;refresh();}
     });});}
 }

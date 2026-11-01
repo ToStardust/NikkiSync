@@ -135,6 +135,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         }
         PhotoHolder photo = (PhotoHolder) holder;
         AssetSummary asset = row.asset;
+        photo.cell.image.setScaleType(asset.isVideo()?ImageView.ScaleType.CENTER_INSIDE:ImageView.ScaleType.CENTER_CROP);
         photo.cell.bind(asset, selected.contains(asset.assetId()));
         photo.cell.check.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);
         photo.cell.check.setText(selected.contains(asset.assetId())?"✓":"○");
@@ -259,7 +260,8 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
         }
 
         void bind(AssetSummary asset, boolean isSelected) {
-            live.setVisibility(asset.hasMotion() ? VISIBLE : GONE);
+            live.setText(asset.isVideo()?"视频":"LIVE");
+            live.setVisibility(asset.isVideo()||asset.hasMotion() ? VISIBLE : GONE);
             check.setVisibility(isSelected ? VISIBLE : GONE);
             selectedOverlay.setVisibility(isSelected ? VISIBLE : GONE);
             setAlpha(1f);

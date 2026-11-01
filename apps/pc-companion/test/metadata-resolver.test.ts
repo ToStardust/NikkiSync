@@ -21,6 +21,44 @@ function seedFirstRun(assets: AssetRepository, count: number): void {
   })
 }
 
+test('an in-flight parameter response cannot overwrite a changed photo input', async () => {
+  const db=new DatabaseManager(':memory:');db.initialize()
+  const assets=new AssetRepository(db);seedFirstRun(assets,1)
+  let calls=0
+  const resolver:PhotoMetadataResolver={id:'changing-source',resolve:async request=>{
+    calls++
+    if(calls===1)assets.updateMetadata(request.assetId,{raw:{nativeParamToken:'replacement-input'}})
+    return {provider:'changing-source',metadata:{camera:{focalLength:calls===1?35:85}}}
+  }}
+  const service=new MetadataResolverService(db,resolver)
+  try{
+    assert.equal(await service.runOnce(),0,'stale remote result must not be published')
+    let metadata=JSON.parse(String(assets.getById('first-run-000')!.metadata_json))
+    assert.equal(metadata.camera.focalLength,undefined)
+    assert.equal(metadata.raw.resolver,undefined)
+    assert.equal(await service.runOnce(),1)
+    metadata=JSON.parse(String(assets.getById('first-run-000')!.metadata_json))
+    assert.equal(metadata.camera.focalLength,85)
+  }finally{service.stop();db.close()}
+})
+
+test('a removed photo or replaced input does not receive an old resolver failure', async () => {
+  for(const removed of [true,false]){
+    const db=new DatabaseManager(':memory:');db.initialize()
+    const assets=new AssetRepository(db);seedFirstRun(assets,1)
+    const service=new MetadataResolverService(db,{id:'obsolete-failure',resolve:async request=>{
+      if(removed)assets.softDelete(request.assetId)
+      else assets.updateMetadata(request.assetId,{raw:{nativeParamToken:'replacement-input'}})
+      throw new Error('old source rejected')
+    }})
+    try{
+      await service.runOnce()
+      const metadata=JSON.parse(String(assets.getById('first-run-000')!.metadata_json))
+      assert.equal(metadata.raw.resolver,undefined)
+    }finally{service.stop();db.close()}
+  }
+})
+
 test('metadata diagnostic report contains only aggregate counts and allowlisted failure categories', () => {
   const db = new DatabaseManager(':memory:'); db.initialize()
   const assets = new AssetRepository(db); seedFirstRun(assets, 3)
