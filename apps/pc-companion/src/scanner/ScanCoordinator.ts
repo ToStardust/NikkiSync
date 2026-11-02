@@ -13,9 +13,9 @@ export class ScanCoordinator {
 
   invalidate(filePath:string):void {this.classifier.invalidate(filePath)}
 
-  async scanRoot(root: string, onActivity?: (activity: ScanActivity) => void, extra?: ExtraScanRoot): Promise<{ resources: DiscoveredResource[]; filesObserved: number; errors: string[] }> {
+  async scanRoot(root: string, onActivity?: (activity: ScanActivity) => void, extra?: ExtraScanRoot, validateExtraRoot = true): Promise<{ resources: DiscoveredResource[]; filesObserved: number; errors: string[] }> {
     const resources: DiscoveredResource[] = []; const errors: string[] = []; let filesObserved = 0
-    if(extra){try{if((await realpath(extra.path)).toLowerCase()!==path.resolve(extra.path).toLowerCase())throw new Error('scope_changed')}catch{return {resources,filesObserved,errors:['Directory unavailable']}}}
+    if(extra&&validateExtraRoot){try{if((await realpath(extra.path)).toLowerCase()!==path.resolve(extra.path).toLowerCase())throw new Error('scope_changed')}catch{return {resources,filesObserved,errors:['Directory unavailable']}}}
     const visit = async (directory: string): Promise<void> => {
       let entries
       try { entries = await readdir(directory, { withFileTypes: true }) } catch (error) { errors.push(String(error)); return }

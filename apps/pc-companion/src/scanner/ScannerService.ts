@@ -163,7 +163,13 @@ export class ScannerService {
     const progress = this.progress = new ScanProgressTracker(this.config.onProgress)
     progress.stage('scan-files')
     this.status = 'scanning'; const scanId = `scan_${Date.now().toString(36)}`; const all = [] as Awaited<ReturnType<ScanCoordinator['scanRoot']>>[]
-    for (const root of roots) all.push(await this.coordinator.scanRoot(root, activity => progress.add(activity),this.extraDirectories.find(item=>within(root,item.path))??(/^ScreenShot$/i.test(path.basename(root))?{id:idFor(root),path:root,mode:'images'}:undefined)))
+    for (const root of roots) {
+      const configured=this.extraDirectories.find(item=>within(root,item.path))
+      const automaticScreen=!configured&&/^ScreenShot$/i.test(path.basename(root))
+      // The synthetic ScreenShot classification is an automatic game root, not
+      // a user-approved canonical extra root; its parent may have an alias.
+      all.push(await this.coordinator.scanRoot(root, activity => progress.add(activity),configured??(automaticScreen?{id:idFor(root),path:root,mode:'images'}:undefined),!automaticScreen))
+    }
     this.status = 'reconciling'; const discovered = all.flatMap((item) => item.resources)
     progress.stage('scan-index')
     // An unplugged drive or unreadable folder is not evidence that its originals were deleted.

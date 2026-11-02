@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile,readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile,readFile,realpath } from 'node:fs/promises'
 import net from 'node:net'
 import tls from 'node:tls'
 import os from 'node:os'
@@ -126,7 +126,7 @@ function signedHeaders(privateKey: string, deviceId: string, method: string, req
 }
 
 test('scanned standalone video obeys source selection and serves authenticated ranges',async()=>{
-  const temp=await mkdtemp(path.join(os.tmpdir(),'momo-video-api-')),game=path.join(temp,'Game'),folder=path.join(temp,'SpinningMomo')
+  const temp=await realpath(await mkdtemp(path.join(os.tmpdir(),'momo-video-api-'))),game=path.join(temp,'Game'),folder=path.join(temp,'SpinningMomo')
   await mkdir(path.join(game,'X6Game'),{recursive:true});await writeFile(path.join(game,'InfinityNikki.exe'),'');await mkdir(folder)
   const file=path.join(folder,'recording.mp4'),bytes=Buffer.from('0123456789abcdef');await writeFile(file,bytes)
   const db=new DatabaseManager(':memory:');db.initialize()
@@ -134,7 +134,8 @@ test('scanned standalone video obeys source selection and serves authenticated r
   const scanner=new ScannerService(db,{startingPaths:[game],runningExecutablePaths:[],extraDirectories:[root],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
   const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,accountSourceDirectories:()=>[root]})
   try{
-    await scanner.start();const address=await server.start(),base=`http://127.0.0.1:${address.port}`
+    const scan=await scanner.start();assert.deepEqual(scan.errors,[])
+    const address=await server.start(),base=`http://127.0.0.1:${address.port}`
     const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
     const pairing=new PairingService(db),qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'0'.repeat(64)})
     pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'video_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC')

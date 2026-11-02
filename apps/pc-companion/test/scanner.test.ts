@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, rm, utimes, writeFile, readFile, rename } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile, readFile, rename, symlink, realpath } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -40,13 +40,46 @@ test('manual rescan discovers native photos and LIVE roots created after an expo
     await writeFile(path.join(uid,'NikkiPhotos_HighQuality/New.jpeg'),'new-photo')
     await writeFile(path.join(uid,'Videos/session/New_cover.jpeg'),'new-cover');await writeFile(path.join(uid,'Videos/session/New.mp4'),'new-video')
     const result=await scanner.fullScan()
-    assert.equal(result.errors.length,0)
+    assert.deepEqual(result.errors,[])
     assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,3,'manual rescan finds new native photo and LIVE while retaining the old export LIVE')
     assert.ok(scanner.getScanRoots().includes(path.join(x6,'Saved/GamePlayPhotos')))
     assert.ok(scanner.getScanRoots().includes(path.join(x6,'Video')),'previously shared export media stays in the watched scope')
     const ids=database.connection.prepare("SELECT asset_id FROM assets WHERE asset_state='ready' ORDER BY asset_id").all()
     await scanner.fullScan()
     assert.deepEqual(database.connection.prepare("SELECT asset_id FROM assets WHERE asset_state='ready' ORDER BY asset_id").all(),ids)
+  }finally{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}
+})
+
+test('automatic ScreenShot scan works when the game parent has a filesystem alias',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'nikkisync-screen-alias-'))
+  const physical=path.join(root,'physical'),alias=path.join(root,'alias')
+  await mkdir(path.join(physical,'Game/X6Game/ScreenShot'),{recursive:true})
+  await writeFile(path.join(physical,'Game/InfinityNikki.exe'),'')
+  await writeFile(path.join(physical,'Game/X6Game/ScreenShot/collage.jpg'),'collage')
+  await symlink(physical,alias,'junction')
+  const database=new DatabaseManager(':memory:');database.initialize()
+  const scanner=new ScannerService(database,{startingPaths:[path.join(alias,'Game')],runningExecutablePaths:[],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  try{
+    const result=await scanner.start()
+    assert.deepEqual(result.errors,[])
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,1)
+  }finally{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}
+})
+
+test('a configured extra root replaced by a junction remains unavailable',async()=>{
+  const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'nikkisync-extra-retarget-')))
+  const chosen=path.join(root,'Chosen'),outside=path.join(root,'Outside'),game=path.join(root,'Game')
+  await mkdir(chosen);await mkdir(outside);await mkdir(path.join(game,'X6Game'),{recursive:true})
+  await writeFile(path.join(game,'InfinityNikki.exe'),'');await writeFile(path.join(outside,'private.jpg'),'private')
+  const database=new DatabaseManager(':memory:');database.initialize()
+  const scanner=new ScannerService(database,{startingPaths:[game],runningExecutablePaths:[],extraDirectories:[{id:'chosen',path:chosen,mode:'images'}],watcher:false})
+  try{
+    await scanner.start()
+    await rename(chosen,path.join(root,'Original'))
+    await symlink(outside,chosen,'junction')
+    const result=await scanner.fullScan()
+    assert.deepEqual(result.errors,['Directory unavailable'])
+    assert.equal(database.connection.prepare("SELECT COUNT(*) AS c FROM assets WHERE asset_state='ready'").get()?.c,0)
   }finally{await scanner.stop();database.close();await rm(root,{recursive:true,force:true})}
 })
 
