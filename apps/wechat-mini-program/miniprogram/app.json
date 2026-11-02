@@ -1,0 +1,9 @@
+{
+  "pages": ["pages/index/index", "pages/diagnostics/index", "pages/tcp-diagnostics/index", "pages/encrypted-diagnostics/index", "pages/image-diagnostics/index", "pages/local-gallery/index", "pages/live-diagnostics/index"],
+  "window": {
+    "navigationBarTitleText": "大喵相机助手",
+    "navigationBarBackgroundColor": "#F5DCE5",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#FFF8F0"
+  }
+}

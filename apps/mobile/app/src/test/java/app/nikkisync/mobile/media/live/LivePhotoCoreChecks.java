@@ -35,8 +35,8 @@ public final class LivePhotoCoreChecks {
         eq(LivePhotoProfile.XIAOMI, LivePhotoProfile.defaultFor("Xiaomi", "POCO"), "Xiaomi baseline");
         eq(LivePhotoProfile.OPLUS, LivePhotoProfile.defaultFor("OnePlus", "oneplus"), "Oplus route");
         eq(LivePhotoProfile.VIVO_LEGACY_PAIR, LivePhotoProfile.defaultFor("vivo", "iQOO"), "legacy candidate");
-        eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor("HONOR", "HONOR"), "Honor is not Huawei");
-        eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor("HUAWEI", "HUAWEI"), "private tail is opt-in");
+        eq(LivePhotoProfile.HONOR_COMPAT, LivePhotoProfile.defaultFor("HONOR", "HONOR"), "independent Honor compatibility route");
+        eq(LivePhotoProfile.HUAWEI_LEGACY, LivePhotoProfile.defaultFor("HUAWEI", "HUAWEI"), "reported working Huawei format is automatic");
         eq(LivePhotoProfile.STANDARD, LivePhotoProfile.defaultFor(null, null), "unknown is unverified standard");
         rejects(() -> LivePhotoProfile.fromId("invented-sdk"), "unknown profile is rejected");
 
@@ -81,6 +81,11 @@ public final class LivePhotoCoreChecks {
                 if (profile == LivePhotoProfile.OPLUS) {
                     byte[] output = Files.readAllBytes(product.primary().toPath());
                     eq((long)JpegSegments.endOffset(output), JpegSegments.mpfPrimarySize(output), "MPF final JPEG size");
+                    byte[] xmp = JpegSegments.xmp(output);
+                    eq("500000",attribute(xmp,"http://ns.oplus.com/photos/1.0/camera/","MotionPhotoPrimaryPresentationTimestampUs"), "Oplus private cover time matches actual sample");
+                    eq("0",itemAttribute(xmp,"Primary","Length"), "Oplus explicit zero primary length");
+                    eq("0",itemAttribute(xmp,"Primary","Padding"), "Oplus explicit zero primary padding");
+                    eq("0",itemAttribute(xmp,"MotionPhoto","Padding"), "Oplus explicit zero motion padding");
                 }
                 if (profile == LivePhotoProfile.VIVO_LEGACY_PAIR) {
                     eq(ID,VivoLegacyMetadata.readId(product.primary()),"paired image ID");
@@ -90,7 +95,7 @@ public final class LivePhotoCoreChecks {
                     byte[] b = Files.readAllBytes(product.primary().toPath());
                     eq("SEFT",new String(b,b.length-4,4,StandardCharsets.US_ASCII),"SEF remains last");
                 }
-                if (profile == LivePhotoProfile.HUAWEI_LEGACY) {
+                if (profile.usesHuaweiTail()) {
                     byte[] b = Files.readAllBytes(product.primary().toPath());
                     eq("LIVE_",new String(b,b.length-20,5,StandardCharsets.US_ASCII),"Huawei tail location");
                 }
@@ -107,6 +112,33 @@ public final class LivePhotoCoreChecks {
             var product = MotionContainer.write(LivePhotoProfile.STANDARD,padded,mp4,padDir,options);
             MotionContainerVerifier.verify(LivePhotoProfile.STANDARD,product,mp4,options);
             eq(5L,MotionXmp.primaryPadding(JpegSegments.xmp(Files.readAllBytes(product.primary().toPath()))),"source tail padding accounted for");
+            File oplusPadDir = new File(dir,"oplus-padded"); oplusPadDir.mkdir();
+            byte[] paddedBefore = Files.readAllBytes(padded.toPath());
+            var oplusPadded = MotionContainer.write(LivePhotoProfile.OPLUS,padded,mp4,oplusPadDir,options);
+            MotionContainerVerifier.verify(LivePhotoProfile.OPLUS,oplusPadded,mp4,options);
+            byte[] oplusBytes = Files.readAllBytes(oplusPadded.primary().toPath());
+            eq(oplusBytes.length-VIDEO.length,JpegSegments.endOffset(oplusBytes),"Oplus video starts immediately after JPEG EOI");
+            eq(0L,MotionXmp.primaryPadding(JpegSegments.xmp(oplusBytes)),"Oplus zero padding even with source trailer");
+            ok(Arrays.equals(paddedBefore,Files.readAllBytes(padded.toPath())),"Oplus source trailer unchanged");
+            ok(Arrays.equals(VIDEO,Arrays.copyOfRange(oplusBytes,oplusBytes.length-VIDEO.length,oplusBytes.length)),"Oplus complete video unchanged");
+            ok(Arrays.equals(Arrays.copyOfRange(paddedBefore,indexOf(paddedBefore,new byte[]{(byte)255,(byte)218}),JpegSegments.endOffset(paddedBefore)),
+                    Arrays.copyOfRange(oplusBytes,indexOf(oplusBytes,new byte[]{(byte)255,(byte)218}),JpegSegments.endOffset(oplusBytes))),"Oplus compressed pixels unchanged");
+            byte[] validXmp = MotionXmp.create(LivePhotoProfile.OPLUS,VIDEO.length,500000,0);
+            String validXml = new String(validXmp,StandardCharsets.UTF_8);
+            String privateTime = " OpCamera:MotionPhotoPrimaryPresentationTimestampUs=\"500000\"";
+            for(String[] mutation : new String[][]{
+                    {"missing-private-time",validXml.replace(privateTime,"")},
+                    {"conflicting-private-time",validXml.replace(privateTime,privateTime.replace("500000","500001"))},
+                    {"wrong-vendor-length",validXml.replace("OpCamera:VideoLength=\""+VIDEO.length+"\"","OpCamera:VideoLength=\"1\"")},
+                    {"wrong-primary-length",validXml.replace("Item:Length=\"0\"","Item:Length=\"1\"")},
+                    {"wrong-motion-padding",validXml.replace("Item:Length=\""+VIDEO.length+"\" Item:Padding=\"0\"","Item:Length=\""+VIDEO.length+"\" Item:Padding=\"1\"")},
+                    {"duplicate-private-time",validXml.replace("</rdf:RDF>","<rdf:Description xmlns:Op='http://ns.oplus.com/photos/1.0/camera/' Op:MotionPhotoPrimaryPresentationTimestampUs='500000'/></rdf:RDF>")}
+            }){
+                var invalid=oplusFixture(dir,mutation[0],mutation[1],new byte[0]);
+                rejects(() -> MotionContainerVerifier.verify(LivePhotoProfile.OPLUS,invalid,mp4,options),"Oplus rejects "+mutation[0]);
+            }
+            var gap = oplusFixture(dir,"unexpected-jpeg-gap",validXml.replace("Item:Padding=\"0\"","Item:Padding=\"1\""),new byte[]{42});
+            rejects(() -> MotionContainerVerifier.verify(LivePhotoProfile.OPLUS,gap,mp4,options),"Oplus rejects gap even if declared in XMP");
             rejects(() -> new MotionContainer.Options(-1,0,30,1000000,ID,"m"),"unknown cover never silently zero");
             rejects(() -> new MotionContainer.Options(1000000,30,30,1000000,ID,"m"),"cover cannot point beyond video");
             rejects(() -> MotionContainer.huaweiTail(new MotionContainer.Options(900000,120,150,1000000,ID,"m"),40),"Huawei short cover field never truncated");
@@ -132,6 +164,27 @@ public final class LivePhotoCoreChecks {
     }
     private static void segment(ByteArrayOutputStream b,int marker,byte[] payload) throws IOException {
         int n=payload.length+2; b.write(255);b.write(marker);b.write(n>>>8);b.write(n);b.write(payload);
+    }
+    private static MotionContainer.Product oplusFixture(File dir,String name,String xml,byte[] gap) throws IOException {
+        byte[] image=jpeg(null,null),xmp=xml.getBytes(StandardCharsets.UTF_8);
+        byte[] primary=JpegSegments.rewrite(image,xmp,MotionContainer.mpfSegment(0));
+        primary=JpegSegments.rewrite(image,xmp,MotionContainer.mpfSegment(JpegSegments.endOffset(primary)));
+        File file=new File(dir,name+".jpg");Files.write(file.toPath(),concat(concat(primary,gap),VIDEO));
+        return new MotionContainer.Product(file,List.of());
+    }
+    private static org.w3c.dom.Document xml(byte[] bytes) throws Exception {
+        var factory=javax.xml.parsers.DocumentBuilderFactory.newInstance();factory.setNamespaceAware(true);
+        return factory.newDocumentBuilder().parse(new java.io.ByteArrayInputStream(bytes));
+    }
+    private static String attribute(byte[] bytes,String ns,String name) throws Exception {
+        var nodes=xml(bytes).getElementsByTagName("*");
+        for(int i=0;i<nodes.getLength();i++){var e=(org.w3c.dom.Element)nodes.item(i);if(e.hasAttributeNS(ns,name))return e.getAttributeNS(ns,name);}
+        return "";
+    }
+    private static String itemAttribute(byte[] bytes,String semantic,String field) throws Exception {
+        var nodes=xml(bytes).getElementsByTagNameNS(MotionXmp.CONTAINER,"Item");
+        for(int i=0;i<nodes.getLength();i++){var e=(org.w3c.dom.Element)nodes.item(i);if(semantic.equals(e.getAttributeNS(MotionXmp.ITEM,"Semantic")))return e.getAttributeNS(MotionXmp.ITEM,field);}
+        return "";
     }
     private static byte[] concat(byte[] a,byte[] b) { byte[] out=Arrays.copyOf(a,a.length+b.length);System.arraycopy(b,0,out,a.length,b.length);return out; }
     private static int indexOf(byte[] a,byte[] b) { outer:for(int i=0;i<=a.length-b.length;i++){for(int j=0;j<b.length;j++)if(a[i+j]!=b[j])continue outer;return i;}return -1; }

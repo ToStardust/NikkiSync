@@ -1,12 +1,13 @@
 param(
     [switch]$Install,
     [switch]$CheckOnly,
-    [string]$JavaHome = 'C:\Users\Stardust\.jdks\jbr-17.0.14',
-    [string]$AndroidSdk = 'C:\Users\Stardust\AppData\Local\Android\Sdk',
+    [string]$JavaHome = $env:JAVA_HOME,
+    [string]$AndroidSdk = $(if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } elseif ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }),
     [string]$GradleBat = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $JavaHome) { throw 'Set JAVA_HOME to JDK 17 or pass -JavaHome before building.' }
 $mobileRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $apk = Join-Path $mobileRoot 'app\build\outputs\apk\debug\app-debug.apk'
 $buildTools = Join-Path $AndroidSdk 'build-tools\35.0.1'
@@ -16,7 +17,9 @@ if (-not $GradleBat) {
     $GradleBat = if (Test-Path -LiteralPath $projectWrapper -PathType Leaf) {
         $projectWrapper
     } else {
-        'C:\Users\Stardust\.gradle\wrapper\dists\gradle-8.13-bin\5xuhj0ry160q40clulazy9h7d\gradle-8.13\bin\gradle.bat'
+        $command = Get-Command gradle.bat -ErrorAction SilentlyContinue
+        if (-not $command) { throw 'Gradle wrapper is missing; pass -GradleBat or install Gradle on PATH.' }
+        $command.Source
     }
 }
 $required = @(

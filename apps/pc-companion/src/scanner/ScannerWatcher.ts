@@ -4,20 +4,24 @@ import path from 'node:path'
 export interface WatcherEvent { type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'; path: string }
 
 export class ScannerWatcher {
-  private watcher: FSWatcher | undefined
+  private watchers: FSWatcher[] = []
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private callback: ((event: WatcherEvent) => void) | undefined
   constructor(private readonly debounceMs = 250) {}
 
-  start(roots: string[], callback: (event: WatcherEvent) => void): void {
+  start(roots: string[], callback: (event: WatcherEvent) => void, shallowRoots:string[]=[]): void {
     this.stop(); this.callback = callback
-    for (const root of roots) {
+    for (const {root,recursive} of [...roots.map(root=>({root,recursive:true})),...shallowRoots.filter(root=>!roots.includes(root)).map(root=>({root,recursive:false}))]) {
       try {
-        this.watcher = watch(root, { recursive: true }, (_event, fileName) => {
+        const watcher=watch(root, { recursive }, (_event, fileName) => {
           if (!fileName) return
           const target = path.join(root, fileName.toString())
           this.push({ type: 'change', path: target })
         })
+        // Removing/unplugging a watched directory can emit an async error;
+        // an unavailable media folder must not terminate the sync service.
+        watcher.on('error',()=>watcher.close())
+        this.watchers.push(watcher)
       } catch { /* a later full scan can still recover from unavailable watchers */ }
     }
   }
@@ -32,7 +36,8 @@ export class ScannerWatcher {
   }
 
   stop(): void {
-    this.watcher?.close(); this.watcher = undefined
+    for (const watcher of this.watchers) watcher.close()
+    this.watchers = []
     for (const timer of this.timers.values()) clearTimeout(timer)
     this.timers.clear(); this.callback = undefined
   }

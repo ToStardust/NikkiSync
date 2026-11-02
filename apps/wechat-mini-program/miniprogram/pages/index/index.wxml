@@ -1,0 +1,33 @@
+
+<view class="ambient"></view>
+<view class="intro">
+  <view class="eyebrow">NIKKISYNC · 无限暖暖</view>
+  <view class="title"><view>把奇迹大陆，</view><view>装进口袋。</view></view>
+  <view class="subtitle">大喵相机助手 · 非官方摄影助手</view>
+  <view class="welcome-card glass-surface">
+    <view class="album-art" aria-hidden="{{true}}">
+      <view class="art-frame art-back"></view>
+      <view class="art-frame art-front"><view class="camera-mark"><view class="camera-lens"></view></view></view>
+    </view>
+    <view class="card-title">你的暖暖相册</view>
+    <view class="card-copy"><view>电脑拍下的风景与穿搭，</view><view>在手机上慢慢欣赏。</view></view>
+    <navigator class="primary-action" url="/pages/local-gallery/index">打开相册 <text>›</text></navigator>
+    <view class="local-note"><view class="status-dot"></view>同一 Wi-Fi · 照片不上传云端图库</view>
+  </view>
+  <view class="preview-note">开发预览 · 普通照片保存到相册 · Live 播放与文件导出</view>
+  <button class="tools-toggle" bindtap="toggleTools" aria-expanded="{{toolsOpen}}">开发工具 <text>{{toolsOpen ? '−' : '+'}}</text></button>
+  <view wx:if="{{toolsOpen}}" class="tools glass-surface">
+    <view class="tools-caption">仅用于排查连接，不是日常浏览入口</view>
+    <button class="secondary-action" bindtap="scanQr" loading="{{scanning}}" disabled="{{scanning}}">识别旧版连接码（不建立连接）</button>
+    <navigator url="/pages/diagnostics/index">局域网 HTTPS 诊断 <text>›</text></navigator>
+    <navigator url="/pages/tcp-diagnostics/index">局域网 TCP · 合成文本 <text>›</text></navigator>
+    <navigator url="/pages/encrypted-diagnostics/index">加密通道 · 合成文本 <text>›</text></navigator>
+    <navigator url="/pages/image-diagnostics/index">加密通道 · 合成图片 <text>›</text></navigator>
+    <navigator url="/pages/live-diagnostics/index">iPhone Live 保存 · 合成素材实验 <text>›</text></navigator>
+    <view class="status">
+      <view>{{message}}</view>
+      <view wx:if="{{endpoint}}">电脑地址：{{endpoint}}</view>
+      <view wx:if="{{expiresAt}}">有效期至：{{expiresAt}}</view>
+    </view>
+  </view>
+</view>

@@ -53,9 +53,10 @@ public final class ShareCardPayloadBuilder {
             String id = stringValue(clothing.opt("id"));
             String name = clothing.optString("name", "").trim();
             if (name.isEmpty() && id.isEmpty()) continue;
-            if (name.isEmpty()) name = "服装 " + id;
+            if (name.matches("^(名称待解析|未解析|未命名|未知名称|服装名称待解析)$")
+                    || name.matches("^\\d+$") || name.matches("^服装[\\s#：:_-]*\\d{6,}$")) name = "";
             String category = SavedMetadataText.categoryLabel(clothing.optString("category", "").trim());
-            output.add(new ShareCardPayload.Item(category, name));
+            output.add(new ShareCardPayload.Item(category, name, id));
         }
     }
 
@@ -63,15 +64,16 @@ public final class ShareCardPayloadBuilder {
         if (camera == null) return;
         add(output, camera, "focalLength", "焦距");
         add(output, camera, "rotation", "镜头旋转");
-        add(output, camera, "aperture", "光圈");
+        addFirst(output, camera, "光圈", "apertureSection", "aperture");
         add(output, camera, "depthOfField", "景深");
-        add(output, camera, "softLightStrength", "柔光强度");
-        add(output, camera, "softLightRange", "柔光范围");
+        addFirst(output, camera, "晕影", "vignetteIntensity", "vignette");
+        addFirst(output, camera, "柔光强度", "bloomIntensity", "softLightStrength");
+        addFirst(output, camera, "柔光范围", "bloomThreshold", "softLightRange");
         add(output, camera, "brightness", "亮度");
         add(output, camera, "exposure", "曝光");
         add(output, camera, "contrast", "对比度");
         add(output, camera, "saturation", "饱和度");
-        add(output, camera, "vibrance", "鲜艳度");
+        add(output, camera, "vibrance", "自然饱和");
         add(output, camera, "highlights", "高光");
         add(output, camera, "shadows", "阴影");
     }
@@ -100,6 +102,13 @@ public final class ShareCardPayloadBuilder {
         if (!object.has(key) || object.isNull(key)) return;
         String value = stringValue(object.opt(key));
         if (!value.isEmpty()) output.add(new ShareCardPayload.Item(label, value));
+    }
+    private static void addFirst(List<ShareCardPayload.Item> output, JSONObject object, String label, String... keys) {
+        for (String key : keys) {
+            if (!object.has(key) || object.isNull(key)) continue;
+            String value = stringValue(object.opt(key));
+            if (!value.isEmpty()) { output.add(new ShareCardPayload.Item(label, value)); return; }
+        }
     }
 
     private static String stringValue(Object value) {

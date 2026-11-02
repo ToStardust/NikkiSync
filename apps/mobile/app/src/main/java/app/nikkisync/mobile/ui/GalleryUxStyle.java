@@ -22,7 +22,17 @@ public final class GalleryUxStyle {
     }
 
     public static Drawable selectedOverlay(Context context) {
-        return context.getDrawable(R.drawable.bg_selected_glass);
+        GradientDrawable overlay=(GradientDrawable)context.getDrawable(R.drawable.bg_selected_glass);
+        overlay.setCornerRadius(context.getResources().getDimension(R.dimen.gallery_cell_radius));
+        return overlay;
+    }
+    public static Drawable glassButton(Context context) {
+        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0x80FFFFFF, 0x45FFFFFF});
+        float density = context.getResources().getDisplayMetrics().density;
+        drawable.setCornerRadius(16*density);
+        drawable.setStroke(Math.max(1,Math.round(density)), 0x99FFFFFF);
+        return drawable;
     }
 
     public static GradientDrawable fallbackRound(int color, float radius) {

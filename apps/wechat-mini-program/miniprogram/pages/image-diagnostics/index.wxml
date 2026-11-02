@@ -1,0 +1,12 @@
+<view class="intro">
+  <text class="title">加密合成图片测试</text>
+  <text>不连接真实图库，不使用云端。测试图是 96×96 四色方块；不是照片清晰度演示。</text>
+  <text>请勿分享电脑测试码，它包含一次性临时密钥。本通道仍是安全评估版。</text>
+  <button bindtap="scanTest" loading="{{busy}}" disabled="{{busy || saving}}">扫描图片测试码</button>
+  <image wx:if="{{imagePath}}" class="preview" src="{{imagePath}}" mode="aspectFit" bindload="imageLoaded" binderror="imageFailed" />
+  <view wx:if="{{imagePath}}">
+    <button bindtap="saveImage" loading="{{saving}}" disabled="{{saving || busy || !previewReady}}">确认保存测试图到相册</button>
+    <button bindtap="discardImage" disabled="{{saving || busy}}">取消并清除预览</button>
+  </view>
+  <text class="status">{{message}}</text>
+</view>

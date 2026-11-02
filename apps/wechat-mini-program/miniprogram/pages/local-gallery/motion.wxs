@@ -1,0 +1,134 @@
+// Render-layer gestures only. Never control movable-view's scale-value or send every move to JS.
+var photo = null;
+var sheet = null;
+var scaleFrame = 0;
+var nativeScale = 1;
+var outCurve = 'cubic-bezier(0.23,1,0.32,1)';
+var drawerCurve = 'cubic-bezier(0.32,0.72,0,1)';
+function same(a, b) { return '' + a === '' + b; }
+function find(owner, selector, frame, key) {
+  var node = owner.selectComponent(selector);
+  if (!node) return null;
+  var data = node.getDataset();
+  if (!same(data.frame, frame) || (key !== undefined && !same(data.infoFrame, key))) return null;
+  return node;
+}
+function style(owner, selector, frame, value, key) {
+  var node = find(owner, selector, frame, key);
+  if (node) node.setStyle(value);
+}
+function transition(ms, curve, reduced) {
+  return (reduced ? '' : 'transform ' + ms + 'ms ' + curve + ',') + 'opacity ' + (reduced ? 120 : ms) + 'ms ' + curve;
+}
+function neutralPhoto(owner, frame, ms, reduced) {
+  style(owner, '.photo-stage', frame, {transition: transition(ms, outCurve, reduced), transform: 'translate3d(0,0,0) scale(1)', opacity: 1});
+  style(owner, '.viewer-backdrop', frame, {transition: transition(ms, outCurve, true), opacity: 1});
+  style(owner, '.viewer-chrome', frame, {transition: transition(ms, outCurve, true), opacity: 1});
+}
+function photoState(value, previous, owner, instance) {
+  if (!value || !instance || !same(instance.getDataset().frame, value.frame)) return;
+  if (previous && same(value.frame, previous.frame) && value.phase === previous.phase && value.settle === previous.settle && value.reduced === previous.reduced) return;
+  if (!same(scaleFrame, value.frame)) { scaleFrame = value.frame; nativeScale = 1; photo = null; }
+  var phase = value.phase;
+  if (phase === 'exit') {
+    instance.setStyle({transition: transition(180, outCurve, value.reduced), transform: value.reduced ? 'translate3d(0,0,0) scale(1)' : 'translate3d(0,100vh,0) scale(0.9)', opacity: 0});
+    style(owner, '.viewer-backdrop', value.frame, {transition: transition(180, outCurve, true), opacity: 0});
+    style(owner, '.viewer-chrome', value.frame, {transition: transition(125, outCurve, true), opacity: 0});
+  } else if (phase === 'enter') {
+    instance.setStyle({transition: 'none', transform: value.reduced ? 'translate3d(0,0,0) scale(1)' : 'translate3d(0,0,0) scale(0.97)', opacity: 0});
+    style(owner, '.viewer-backdrop', value.frame, {transition: 'none', opacity: 0});
+  } else {
+    var ms = previous && previous.phase === 'enter' ? 200 : 180;
+    neutralPhoto(owner, value.frame, previous ? ms : 0, value.reduced);
+  }
+}
+function photoScale(event, owner) {
+  var frame = event.currentTarget.dataset.frame;
+  if (!find(owner, '.photo-stage', frame)) return;
+  var value = event.detail.scale;
+  if (value >= 1 && value <= 6) { scaleFrame = frame; nativeScale = value; }
+  owner.callMethod('viewerScaled', event);
+  if (photo && value > 1.05) { photo.multi = true; neutralPhoto(owner, frame, 180, photo.reduced); }
+}
+function photoStart(event, owner) {
+  var data = event.currentTarget.dataset;
+  var node = find(owner, '.photo-stage', data.frame);
+  if (!node) return;
+  var first = event.touches[0];
+  photo = first ? {frame: data.frame, x: first.clientX, y: first.clientY, dx: 0, dy: 0, start: event.timeStamp,
+    moved: false, multi: event.touches.length !== 1, eligible: !node.getDataset().blocked && nativeScale <= 1.05,
+    reduced: !!data.reduced, dragging: false} : null;
+  owner.callMethod('viewerTouchStart', event);
+}
+function photoMove(event, owner) {
+  var node = photo && find(owner, '.photo-stage', photo.frame);
+  if (!node || !same(event.currentTarget.dataset.frame, photo.frame)) return;
+  var first = event.touches[0];
+  if (event.touches.length > 1) photo.multi = true;
+  if (!first) return;
+  photo.dx = first.clientX - photo.x; photo.dy = first.clientY - photo.y;
+  if (Math.abs(photo.dx) + Math.abs(photo.dy) > 8) photo.moved = true;
+  if (photo.multi || !photo.eligible || nativeScale > 1.05 || node.getDataset().blocked) {
+    if (photo.dragging) { neutralPhoto(owner, photo.frame, 180, photo.reduced); photo.dragging = false; }
+    return;
+  }
+  if (!photo.dragging && !(photo.dy > 8 && photo.dy > Math.abs(photo.dx) * 1.6)) return;
+  photo.dragging = true;
+  var dy = Math.max(0, photo.dy);
+  var y = dy / (1 + dy / 800);
+  var scale = Math.max(0.82, 1 - y / 1100);
+  node.setStyle({transition: 'none', transform: photo.reduced ? 'translate3d(0,0,0) scale(1)' : 'translate3d(' + (photo.dx * 0.16) + 'px,' + y + 'px,0) scale(' + scale + ')'});
+  style(owner, '.viewer-backdrop', photo.frame, {transition: 'none', opacity: Math.max(0.15, 1 - y / 300)});
+  style(owner, '.viewer-chrome', photo.frame, {transition: 'none', opacity: Math.max(0, 1 - y / 100)});
+}
+function endEvent(event, state) {
+  return {type: event.type, timeStamp: event.timeStamp, currentTarget: event.currentTarget, touches: event.touches, changedTouches: event.changedTouches,
+    motion: {moved: state.moved, multi: state.multi, dragging: state.dragging, dx: state.dx, dy: state.dy}};
+}
+function photoEnd(event, owner) {
+  if (!photo || !same(event.currentTarget.dataset.frame, photo.frame) || !find(owner, '.photo-stage', photo.frame)) return;
+  var state = photo; photo = null;
+  owner.callMethod('viewerTouchEnd', endEvent(event, state));
+  // JS validates the final gesture and publishes exit or settle once. No competing render-layer reset here.
+}
+function sheetState(value, previous, owner, instance) {
+  if (!value || !instance || !same(instance.getDataset().frame, value.frame)) return;
+  if (previous && same(value.frame, previous.frame) && same(value.key, previous.key) && value.phase === previous.phase && value.expanded === previous.expanded && value.settle === previous.settle && value.reduced === previous.reduced) return;
+  var hidden = value.phase === 'enter' || value.phase === 'exit';
+  instance.setStyle({transition: value.phase === 'enter' ? 'none' : transition(value.phase === 'exit' ? 160 : 220, drawerCurve, value.reduced),
+    transform: hidden ? 'translate3d(0,100%,0)' : 'translate3d(0,' + (value.expanded ? '0vh' : '37vh') + ',0)', opacity: hidden ? 0 : 1});
+  style(owner, '.info-backdrop', value.frame, {transition: value.phase === 'enter' ? 'none' : transition(160, outCurve, true), opacity: hidden ? 0 : 1});
+}
+function sheetStart(event, owner) {
+  var data = event.currentTarget.dataset;
+  var node = find(owner, '.photo-info', data.frame, data.infoFrame);
+  if (!node || node.getDataset().open === false) return;
+  var first = event.touches[0];
+  sheet = first ? {frame: data.frame, key: data.infoFrame, x: first.clientX, y: first.clientY, dx: 0, dy: 0, moved: false,
+    multi: event.touches.length !== 1, reduced: !!data.reduced, expanded: !!data.expanded, dragging: false, height: data.height || 800} : null;
+  owner.callMethod('infoTouchStart', event);
+}
+function sheetMove(event, owner) {
+  var node = sheet && find(owner, '.photo-info', sheet.frame, sheet.key);
+  if (!node || node.getDataset().open === false || !same(event.currentTarget.dataset.frame, sheet.frame) || !same(event.currentTarget.dataset.infoFrame, sheet.key)) return;
+  var first = event.touches[0];
+  if (event.touches.length > 1) sheet.multi = true;
+  if (!first) return;
+  sheet.dx = first.clientX - sheet.x; sheet.dy = first.clientY - sheet.y;
+  if (Math.abs(sheet.dx) + Math.abs(sheet.dy) > 8) sheet.moved = true;
+  if (sheet.multi || sheet.reduced) return;
+  if (!sheet.dragging && !(Math.abs(sheet.dy) > 8 && Math.abs(sheet.dy) > Math.abs(sheet.dx) * 1.6)) return;
+  sheet.dragging = true;
+  var offset = sheet.dy;
+  if (sheet.expanded && offset < 0) offset = offset / (1 + Math.abs(offset) / 40);
+  if (!sheet.expanded && offset < -sheet.height * 0.37) offset = -sheet.height * 0.37;
+  if (offset > 0) offset = offset / (1 + offset / 600);
+  node.setStyle({transition: 'none', transform: 'translate3d(0,calc(' + (sheet.expanded ? '0vh' : '37vh') + ' + ' + offset + 'px),0)'});
+}
+function sheetEnd(event, owner) {
+  if (!sheet || !same(event.currentTarget.dataset.frame, sheet.frame) || !same(event.currentTarget.dataset.infoFrame, sheet.key) || !find(owner, '.photo-info', sheet.frame, sheet.key)) return;
+  var state = sheet; sheet = null;
+  owner.callMethod('infoTouchEnd', endEvent(event, state));
+}
+module.exports = {photoState: photoState, photoScale: photoScale, photoStart: photoStart, photoMove: photoMove, photoEnd: photoEnd,
+  sheetState: sheetState, sheetStart: sheetStart, sheetMove: sheetMove, sheetEnd: sheetEnd};

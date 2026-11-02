@@ -1,6 +1,56 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mapAssetSummary } from '../src/server/row-mappers.js'
+import { mapAssetRow, mapAssetSummary } from '../src/server/row-mappers.js'
+
+test('photo detail can report that the current index has no recognized native parameter marker',()=>{
+  const row={asset_id:'sample',asset_type:'photo',asset_state:'ready',discovered_at:'2026-01-01T00:00:00Z',revision:1,metadata_json:null}
+  const still={resource_id:'still',role:'source_high_quality',file_name:'photo.jpeg',mime_type:'image/jpeg',file_ext:'.jpeg',size_bytes:100,sha256:'a'.repeat(64)}
+  const raw=mapAssetRow(row,[still]).metadata?.raw
+  assert.equal(raw?.sourceParametersChecked,true)
+  assert.equal(raw?.sourceParametersPresent,false)
+  assert.equal(raw?.sourceParametersComplete,false)
+  assert.equal(mapAssetRow(row,[]).metadata,undefined,'an absent still is not evidence of a scan result')
+})
+
+test('metadata availability exposes only safe completeness flags to phone clients',()=>{
+  const row={asset_id:'sample',asset_type:'photo',asset_state:'ready',discovered_at:'2026-01-01T00:00:00Z',revision:1,
+    metadata_json:JSON.stringify({schemaVersion:1,identity:{},capture:{},camera:{},raw:{nativeParamToken:'token',nativeParamPayload:'private-payload',nativeParamNuan5Md5:'private-md5',previousSourceMetadata:{private:'old-data'}}})}
+  const raw=mapAssetRow(row,[]).metadata!.raw!
+  assert.equal(raw.sourceParametersPresent,true);assert.equal(raw.sourceParametersComplete,true)
+  assert.equal(raw.nativeParamPayload,undefined);assert.equal(raw.nativeParamNuan5Md5,undefined)
+  assert.equal(raw.previousSourceMetadata,undefined)
+  row.metadata_json=JSON.stringify({schemaVersion:1,identity:{},capture:{},camera:{},raw:{nativeParamToken:'token'}})
+  assert.equal(mapAssetRow(row,[]).metadata!.raw!.sourceParametersComplete,false)
+  row.metadata_json=JSON.stringify({schemaVersion:1,identity:{},capture:{},camera:{},raw:{nativeParamPayload:'partial-private-payload'}})
+  const partial=mapAssetRow(row,[]).metadata!.raw!
+  assert.equal(partial.sourceParametersPresent,true,'a partial payload is still evidence of a parameter marker')
+  assert.equal(partial.sourceParametersComplete,false)
+  assert.equal(partial.nativeParamPayload,undefined)
+})
+
+test('standalone video resources are not reported as LIVE or an image preview',()=>{
+  const summary=mapAssetSummary({asset_id:'video',asset_type:'video',asset_state:'ready',revision:1},[{resource_id:'v',role:'source_motion',file_name:'capture.mp4',mime_type:'video/mp4',file_ext:'.mp4',size_bytes:100,sha256:'a'.repeat(64)}])
+  assert.equal(summary.type,'video');assert.equal(summary.hasMotion,false);assert.equal(summary.previewResourceId,undefined)
+})
+
+test('image cache identities follow resource bytes, not metadata or asset revisions', () => {
+  const asset = { asset_id: 'photo', asset_type: 'photo', asset_state: 'ready', revision: 1 }
+  const resource = (id: string, role: string, hash: string) => ({ resource_id: id, role,
+    file_name: 'photo.jpg', mime_type: 'image/jpeg', file_ext: '.jpg', size_bytes: 100,
+    sha256: hash, stable_state: 'stable', is_derived: 0 })
+  const rows = [resource('low', 'source_low_quality', 'a'.repeat(64)), resource('high', 'source_high_quality', 'b'.repeat(64))]
+  const first = mapAssetSummary(asset, rows) as unknown as Record<string, unknown>
+  const updated = mapAssetSummary({ ...asset, revision: 200, metadata_json: '{}' }, rows) as unknown as Record<string, unknown>
+  assert.equal(first.previewSha256, 'a'.repeat(64))
+  assert.equal(first.fullPreviewResourceId, 'high')
+  assert.equal(first.fullPreviewSha256, 'b'.repeat(64))
+  assert.equal(updated.previewSha256, first.previewSha256)
+  assert.equal(updated.fullPreviewSha256, first.fullPreviewSha256)
+  const replaced = mapAssetSummary(asset, [rows[0]!, resource('high', 'source_high_quality', 'c'.repeat(64))]) as unknown as Record<string, unknown>
+  assert.notEqual(replaced.fullPreviewSha256, first.fullPreviewSha256)
+  const derived = mapAssetSummary(asset, [...rows, resource('derived', 'derived_preview', 'd'.repeat(64))]) as unknown as Record<string, unknown>
+  assert.equal(derived.fullPreviewResourceId, 'high', 'the viewer must prefer the actual high-quality still over a derived grid preview')
+})
 
 test('asset summary exposes explicit Infinity Nikki game version without requiring detail fetch', () => {
   const summary = mapAssetSummary({

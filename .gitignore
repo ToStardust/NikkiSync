@@ -11,6 +11,7 @@ data/
 **/bin/
 **/obj/
 **/.gradle/
+**/.cxx/
 *.log
 *.tmp
 *.bak
@@ -25,6 +26,7 @@ data/
 *.user
 *.suo
 *.pem
+!apps/windows-shell/Assets/update-public-key.pem
 *.key
 *.p12
 *.pfx
@@ -33,7 +35,10 @@ data/
 *.env
 *.env.*
 local.properties
+project.private.config.json
 apps/mobile/.gradle/
 apps/mobile/app/build/
 apps/mobile/build/
 apps/mobile/local.properties
+apps/pc-companion/src/wechat/GalleryRuntime.cjs
+apps/pc-companion/src/wechat/GalleryRuntime.mjs

@@ -1,7 +1,10 @@
 package app.nikkisync.mobile.media.live;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -21,6 +24,44 @@ public final class JpegSegments {
     public static byte[] read(File file)throws IOException{
         if(file.length()>MAX_IMAGE_BYTES)throw new IOException("静态资源过大，拒绝静默降分辨率");
         return Files.readAllBytes(file.toPath());
+    }
+    public record Inspection(long endOffset,byte[] xmp,long mpfPrimarySize) {}
+    /** Reads JPEG markers/entropy to EOI without buffering image pixels or the embedded video. */
+    public static Inspection inspect(File file)throws IOException{
+        try(var input=new DataInputStream(new BufferedInputStream(new FileInputStream(file),64*1024))){
+            require(input.readUnsignedShort()==0xffd8,"不是 JPEG");
+            long position=2;boolean entropy=false,sawScan=false;byte[] xmp=null;long mpf=-1;
+            while(position<MAX_IMAGE_BYTES){
+                if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Live 校验已取消");
+                int marker=input.readUnsignedByte();position++;
+                if(entropy){
+                    while(marker!=255){
+                        require(position<MAX_IMAGE_BYTES,"JPEG 静态资源超出安全范围");
+                        if((position&65535)==0&&Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Live 校验已取消");
+                        marker=input.readUnsignedByte();position++;
+                    }
+                }
+                require(marker==255,"JPEG marker 损坏");
+                do{marker=input.readUnsignedByte();position++;}while(marker==255&&position<MAX_IMAGE_BYTES);
+                if(entropy&&(marker==0||marker>=208&&marker<=215))continue;
+                if(marker==217){require(sawScan&&position<=MAX_IMAGE_BYTES,"JPEG 缺少 SOS / 静态资源过大");return new Inspection(position,xmp,mpf);}
+                require(marker!=0&&marker!=216,"JPEG marker 顺序无效");
+                if(marker==1||marker>=208&&marker<=215)continue;
+                int length=input.readUnsignedShort();position+=2;
+                require(length>=2&&position+length-2<=MAX_IMAGE_BYTES,"JPEG 段长度无效");
+                if(marker==225||marker==226){
+                    byte[] segment=new byte[length+2];segment[0]=(byte)255;segment[1]=(byte)marker;
+                    segment[2]=(byte)(length>>>8);segment[3]=(byte)length;input.readFully(segment,4,length-2);
+                    var s=new Segment(marker,0,segment.length,4);
+                    if(marker==225&&starts(segment,4,segment.length,XMP)){
+                        require(xmp==null,"重复的主 XMP，需先修复输入");xmp=Arrays.copyOfRange(segment,4+XMP.length,segment.length);
+                    }
+                    if(isMpf(segment,s)){require(mpf<0,"重复的 MPF");mpf=mpfPrimarySize(segment,s);}
+                }else app.nikkisync.mobile.util.ByteStreams.skipNBytes(input,length-2);
+                position+=length-2;entropy=marker==218;if(entropy)sawScan=true;
+            }
+            throw new IOException("JPEG 缺少 EOI / 静态资源过大");
+        }
     }
     private static List<Segment> header(byte[] b)throws IOException{
         require(b.length>=4 && u(b[0])==255&&u(b[1])==216,"不是 JPEG");
@@ -72,10 +113,13 @@ public final class JpegSegments {
         return out.toByteArray();
     }
     public static long mpfPrimarySize(byte[] jpeg)throws IOException{
-        for(Segment s:header(jpeg))if(isMpf(jpeg,s)){
+        for(Segment s:header(jpeg))if(isMpf(jpeg,s))return mpfPrimarySize(jpeg,s);
+        throw new IOException("MPF primary entry 缺失");
+    }
+    private static long mpfPrimarySize(byte[] jpeg,Segment s)throws IOException{
             int base=s.payload+4;ByteBuffer b=tiff(jpeg,s);long ifd=uint(b,base+4);require(ifd<=s.end-base-2,"MPF IFD 越界");int count=ushort(b,base+(int)ifd);
             for(int i=0;i<count;i++){long at=base+ifd+2+12L*i;require(at+12<=s.end,"MPF IFD 截断");int p=(int)at;if(ushort(b,p)==0xb002){long offset=uint(b,p+8);require(offset<=s.end-base-16,"MPF entry 越界");return uint(b,base+(int)offset+4);}}
-        }throw new IOException("MPF primary entry 缺失");
+        throw new IOException("MPF primary entry 缺失");
     }
     private static long mpfInt(byte[] jpeg,Segment s,int tag)throws IOException{
         int base=s.payload+4;ByteBuffer b=tiff(jpeg,s);long offset=uint(b,base+4);require(offset<=s.end-base-2,"MPF IFD 越界");int count=ushort(b,base+(int)offset);

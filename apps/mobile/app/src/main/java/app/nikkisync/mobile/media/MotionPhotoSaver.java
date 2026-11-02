@@ -197,7 +197,7 @@ public final class MotionPhotoSaver {
                 if (marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) continue;
                 int hi = input.read(), lo = input.read(); if (hi < 0 || lo < 0) throw new IllegalStateException("JPEG segment 截断");
                 int length = (hi << 8) | lo; if (length < 2) throw new IllegalStateException("JPEG segment 长度无效");
-                byte[] payload = input.readNBytes(length - 2); if (payload.length != length - 2) throw new IllegalStateException("JPEG segment 截断");
+                byte[] payload = app.nikkisync.mobile.util.ByteStreams.readNBytes(input,length - 2); if (payload.length != length - 2) throw new IllegalStateException("JPEG segment 截断");
                 if (marker == 0xE1 && startsWith(payload, XMP_HEADER)) continue; // Replace any old main XMP packet.
                 output.write(hi); output.write(lo); output.write(payload);
             }

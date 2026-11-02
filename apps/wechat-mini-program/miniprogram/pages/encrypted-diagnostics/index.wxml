@@ -1,0 +1,7 @@
+<view class="intro">
+  <text class="title">加密 TCP 合成测试</text>
+  <text>同一 Wi-Fi；临时扫码密钥只用于本次合成文本。二维码只在电脑本地显示，勿截图分享。</text>
+  <text>评估版 Noise 握手，不是正式安全验收，不下载照片、不保存相册、不更改现有配对。失败时不降级为明文。</text>
+  <button bindtap="scanTest" disabled="{{busy}}" loading="{{busy}}">扫描加密诊断码</button>
+  <text class="result">{{message}}</text>
+</view>

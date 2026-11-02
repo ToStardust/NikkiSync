@@ -16,6 +16,8 @@ export interface MetadataProviderDescriptor {
 }
 
 export interface PhotoMetadataResolveRequest {
+  /** Local cancellation, never serialized in the third-party request body. */
+  signal?: AbortSignal
   assetId: string
   uid: string
   nativeParamToken: string
@@ -47,8 +49,10 @@ export interface PhotoMetadataResolver {
 }
 
 export interface MetadataResolverServiceConfig {
+  canResolve?(): boolean
   enabled?: boolean
   intervalMs?: number
   batchSize?: number
   retryAfterMs?: number
+  onWorkSettled?(): void
 }

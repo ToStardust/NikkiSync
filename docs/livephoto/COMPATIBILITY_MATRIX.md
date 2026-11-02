@@ -1,5 +1,7 @@
 # NikkiSync Live 图兼容矩阵与代码产物
 
+2026-10-21 更新：用户反馈华为 NAM-AL00 / 4.2.0.135 / Android API31 / App1.0.11 手动选择华为格式后可用，并明确要求自动默认。华为现在默认 huawei_legacy_tail；荣耀新增独立 honor_moving_compat 自动兼容配置，共用已有 60B 尾标布局，官方 SDK 尚未接入、荣耀真机尚未验收。显式手动覆盖保留。此项替代下文旧的默认标准/必须手动策略，不能转化为全品牌通过结论。
+
 更新：2026-09-26。工作分支：`feature/m3-livephoto-compat-rotation`。只涉及 Live/Motion Photo；不包含参数解析、PC UI 或分享卡片改造。
 
 ## 先区分三种状态
@@ -35,8 +37,8 @@
 | vivo / iQOO 旧格式 | `vivo_legacy_pair`，当前品牌初选但标实验 | 同源 JPG+MP4、共享 28 位 ID、vivo footer / MP4 uuid；两个 URI 均记录；缺视频能识别 | 要求系统相册将二者识别为同一 Live；重启、只删视频、权限撤销分别测试；不能按同名文件猜配对 |
 | vivo / iQOO 新单文件 | `vivo_single_xmp`，手动选择、实验 | Google/VCamera XMP + 单文件追加 MP4；最小 UserComment 候选 | 公开参考提及 X300 Ultra 样本，不应据此划一条“X300以上全支持”的型号分界。当前未复制完整私有相机状态字符串，相册识别可能仍失败；需实机样本差分确认必需字段 |
 | Samsung Galaxy / One UI 旧 SEF | `samsung_sef_legacy`，实验候选 | `MotionPhoto_Data`、0x0A30、SEFH106/SEFT；尾索引必须在 EOF；独立验证偏移 | 按 One UI 与 Gallery 版本取得原生样本；重点确认完整播放/封面/音轨。新版 mpvd/sefd 等变体尚未实现，不伪称同一 writer 覆盖 |
-| 华为 Android 兼容环境 | 默认标准候选；`huawei_legacy_tail` 必须手动选择 | 窄范围 60B `v6_f` / `LIVE_` 尾标候选；字段超长拒绝截断 | 原生样本确认版本和字段单位后才能启用；当前封面帧号 >=100 会明确拒绝该尾标候选。公开实现的历史字段解释并不统一，不能当官方通用规范 |
-| 荣耀 MagicOS | 默认标准候选，**不走华为私有尾标** | Android 通用输出 + 明确 SDK 未接入提示 | 优先完成官方 MediaData Kit 的授权、依赖、能力判断与合成调用；这里没有虚构 SDK 实现。按官方支持终端/地区和实际 MagicOS 版本验收 |
+| 华为 Android 兼容环境 | 自动 `huawei_legacy_tail`，手动覆盖仍优先 | 60B `v6_f` / `LIVE_` 尾标；字段超长拒绝截断 | NAM-AL00 / 4.2 用户反馈手动选择后可用；完整声音、重开/重启与旋转未逐项验收。当前封面帧号 >=100 仍明确拒绝，不截断或假造封面位置；其他设备继续分别验收 |
+| 荣耀 MagicOS | 自动 `honor_moving_compat`，独立于华为配置 | 共用既有 60B 尾标布局，独立 profile ID/提示/保存记录；官方 SDK 未接入 | 公开兼容实现把该布局用于 Huawei/Honor，但当前没有本项目荣耀实机结果。按型号、MagicOS、图库及地区分别验收；后续官方 SDK 接入需核验真实依赖/能力接口，不能把兼容封装标成官方方案 |
 | 原生 HarmonyOS | 不属于当前 Android APK 的完成范围 | 本次只有接口/实施交接说明，无 ArkTS 应用代码 | 使用目标 HarmonyOS SDK 的动态照片资产 API，提交 IMAGE_RESOURCE 与 VIDEO_RESOURCE。原生端接入、权限、发布、播放是独立任务，不是增加 Android Saver 即完成 |
 
 ## 旋转适配（所有当前文件封装配置共用）

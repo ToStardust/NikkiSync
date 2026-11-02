@@ -108,4 +108,39 @@ public final class InspirationStoreTest {
         assertEquals("pending", imageOnly.code().parsedState());
         assertEquals("截图待整理", imageOnly.title());
     }
+
+    @Test public void titlelessCodeAndSelfMadeStatusSurviveReopen() {
+        var entry=store.create(new InspirationStore.Draft("","CODE","outfit","",null,"",List.of(),List.of("日常"),"self"),1);
+        store.close();store=new InspirationStore(context);
+        assertEquals("",store.get(entry.id()).title());assertEquals("self",store.get(entry.id()).status());
+    }
+
+    @Test public void removingOneReferenceOnlyUnlinksThatEntryImage() {
+        var first=store.create(new InspirationStore.Draft("","a","dye","",null,"",List.of(),List.of(),"self"),1);
+        var second=store.create(new InspirationStore.Draft("","b","dye","",null,"",List.of(),List.of(),"want"),1);
+        store.attachImage(first.id(),"11111111-1111-1111-1111-111111111111.jpg","image/jpeg",12,2);
+        store.attachImage(second.id(),"22222222-2222-2222-2222-222222222222.jpg","image/jpeg",12,2);
+        var image=store.get(first.id()).images().get(0);
+        assertFalse(store.detachImage(second.id(),image.id(),3));
+        assertTrue(store.detachImage(first.id(),image.id(),4));
+        assertTrue(store.get(first.id()).images().isEmpty());assertEquals(1,store.get(second.id()).images().size());
+        assertTrue(store.get(first.id()).updatedAt()>first.updatedAt());
+    }
+
+    @Test public void imageAndFieldEditsRollbackTogetherIfAnAttachmentFails() {
+        var entry=store.create(new InspirationStore.Draft("标题","old","dye","原文",null,"备注",List.of(),List.of("旧"),"want"),1);
+        store.attachImage(entry.id(),"11111111-1111-1111-1111-111111111111.jpg","image/jpeg",12,2);
+        var current=store.get(entry.id());var image=current.images().get(0);
+        var draft=new InspirationStore.Draft("标题","new","dye","原文",null,"备注",List.of(),List.of("新"),"self");
+        assertThrows(IllegalArgumentException.class,()->store.saveWithImages(current,draft,List.of(new InspirationImageStore.Saved("invalid.jpg","image/jpeg",12)),List.of(image.id()),3));
+        var after=store.get(entry.id());assertEquals("old",after.code().rawCode());assertEquals(List.of("旧"),after.categories());
+        assertEquals("want",after.status());assertEquals(1,after.images().size());
+    }
+
+    @Test public void classificationChoicesReuseLiveRecordsWithoutDuplicateOrDeletedCategories() {
+        var first=store.create(new InspirationStore.Draft("","a","outfit","",null,"",List.of(),List.of("日常","舞会"),"want"),1);
+        var second=store.create(new InspirationStore.Draft("","b","dye","",null,"",List.of(),List.of("日常","已删分类"),"self"),2);
+        assertEquals(3,store.categoryNames().size());store.delete(second.id(),3);
+        assertEquals(List.of("日常","舞会"),store.categoryNames());
+    }
 }

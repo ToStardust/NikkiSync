@@ -4,13 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 
-import java.security.KeyFactory;
 import java.security.InvalidKeyException;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.PrivateKey;
-import java.security.Signature;
-import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 import java.util.UUID;
 
@@ -22,10 +16,10 @@ public final class DeviceIdentity {
     private static final String PRIVATE_KEY = "ed25519.private.pkcs8";
     private final String deviceId;
     private final byte[] publicKeyDer;
-    private final PrivateKey privateKey;
+    private final Ed25519IdentityKey privateKey;
     private final boolean recovered;
 
-    private DeviceIdentity(String deviceId, byte[] publicKeyDer, PrivateKey privateKey, boolean recovered) {
+    private DeviceIdentity(String deviceId, byte[] publicKeyDer, Ed25519IdentityKey privateKey, boolean recovered) {
         this.deviceId = deviceId;
         this.publicKeyDer = publicKeyDer;
         this.privateKey = privateKey;
@@ -51,16 +45,16 @@ public final class DeviceIdentity {
             recovered = true;
         }
         if (deviceId != null && publicKey != null && privateKey != null) {
-            KeyFactory factory = KeyFactory.getInstance("Ed25519");
             return new DeviceIdentity(deviceId, Base64.getUrlDecoder().decode(publicKey),
-                    factory.generatePrivate(new PKCS8EncodedKeySpec(privateKey)), recovered);
+                    Ed25519IdentityKey.fromPkcs8(privateKey), recovered);
         }
-        KeyPair pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+        Ed25519IdentityKey pair = Ed25519IdentityKey.generate();
         if (deviceId == null) deviceId = "android_" + UUID.randomUUID().toString().replace("-", "");
-        publicKey = Base64.getUrlEncoder().withoutPadding().encodeToString(pair.getPublic().getEncoded());
-        secure.put(PRIVATE_KEY, pair.getPrivate().getEncoded());
+        byte[] publicKeyDer = pair.publicKeyDer();
+        publicKey = Base64.getUrlEncoder().withoutPadding().encodeToString(publicKeyDer);
+        secure.put(PRIVATE_KEY, pair.pkcs8());
         prefs.edit().putString("deviceId", deviceId).putString("publicKey", publicKey).commit();
-        return new DeviceIdentity(deviceId, pair.getPublic().getEncoded(), pair.getPrivate(), recovered);
+        return new DeviceIdentity(deviceId, publicKeyDer, pair, recovered);
     }
 
     private static boolean isRecoverableKeystoreFailure(Throwable error) {
@@ -81,9 +75,6 @@ public final class DeviceIdentity {
     }
 
     public String signBase64Url(byte[] message) throws Exception {
-        Signature signature = Signature.getInstance("Ed25519");
-        signature.initSign(privateKey);
-        signature.update(message);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(signature.sign());
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(privateKey.sign(message));
     }
 }

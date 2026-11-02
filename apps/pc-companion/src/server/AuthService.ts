@@ -53,7 +53,9 @@ export class AuthService {
         Buffer.from(signature, 'base64url')
       )
       if (!ok) return undefined
-      this.nonces.set(nonceKey, now + this.clockSkewMs)
+      // A request signed up to one skew window in the future remains valid
+      // until its own timestamp plus that window, not merely now + window.
+      this.nonces.set(nonceKey, Math.max(now, ts) + this.clockSkewMs + 1)
       this.pairing.touchDevice(deviceId)
       return deviceId
     } catch {

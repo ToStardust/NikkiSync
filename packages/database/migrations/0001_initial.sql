@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assets_captured_at ON assets(captured_at DESC, asset_id);
+CREATE INDEX IF NOT EXISTS idx_assets_gallery_order ON assets(COALESCE(captured_at, discovered_at) DESC, asset_id ASC);
 CREATE INDEX IF NOT EXISTS idx_assets_uid_captured_at ON assets(uid, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_type_captured_at ON assets(asset_type, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_revision ON assets(revision);

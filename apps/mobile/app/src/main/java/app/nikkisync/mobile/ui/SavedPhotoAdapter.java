@@ -36,6 +36,8 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
     public interface Listener {
         void onOriginalClick(SavedPhotoStore.Record record);
         void onEditedClick(EditedVariantStore.Variant variant);
+        default void onRemoveOriginal(SavedPhotoStore.Record record) {}
+        default void onRemoveEdited(EditedVariantStore.Variant variant) {}
     }
 
     private static final int TYPE_HEADER = 0;
@@ -48,14 +50,14 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
     private final Handler main = new Handler(Looper.getMainLooper());
     private Map<String, SavedPhotoHealthStore.Entry> health = Map.of();
 
-    public SavedPhotoAdapter(Activity activity, Listener listener) {
-        this.activity = activity;
-        this.listener = listener;
-    }
-
     public void setHealth(Map<String, SavedPhotoHealthStore.Entry> entries) {
         health = Map.copyOf(entries);
         notifyDataSetChanged();
+    }
+
+    public SavedPhotoAdapter(Activity activity, Listener listener) {
+        this.activity = activity;
+        this.listener = listener;
     }
 
     public void setGroups(List<SavedPhotoGroups.Group> groups) {
@@ -69,6 +71,9 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
 
     public boolean isHeader(int position) {
         return position >= 0 && position < rows.size() && rows.get(position).member == null;
+    }
+    public List<SavedPhotoGroups.Member> visiblePhotos(){
+        List<SavedPhotoGroups.Member> result=new ArrayList<>();for(Row row:rows)if(row.member!=null)result.add(row.member);return result;
     }
 
     public void shutdown() {
@@ -97,10 +102,17 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         media.cell.bind(row.member);
         media.cell.setOnClickListener(v -> {
             if (row.member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
-                listener.onOriginalClick(row.member.original());
+                if (media.cell.unavailable) listener.onRemoveOriginal(row.member.original());
+                else listener.onOriginalClick(row.member.original());
             } else {
-                listener.onEditedClick(row.member.edited());
+                if (media.cell.unavailable) listener.onRemoveEdited(row.member.edited());
+                else listener.onEditedClick(row.member.edited());
             }
+        });
+        media.cell.setOnLongClickListener(v -> {
+            if (row.member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) listener.onRemoveOriginal(row.member.original());
+            else listener.onRemoveEdited(row.member.edited());
+            return true;
         });
     }
 
@@ -134,27 +146,30 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         HeaderView(Activity context) {
             super(context);
             setGravity(Gravity.CENTER_VERTICAL);
-            setPadding(dp(10), dp(10), dp(10), dp(8));
+            setPadding(dp(10), dp(6), dp(10), dp(4));
+            setMinimumHeight(dp(38));
 
             title = new TextView(context);
-            title.setTextSize(15);
+            title.setTextSize(16);
+            title.setIncludeFontPadding(false);
             title.setTextColor(context.getColor(R.color.text_primary));
             title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setSingleLine(true);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
             addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
             count = new TextView(context);
             count.setTextSize(11);
+            count.setIncludeFontPadding(false);
             count.setTextColor(context.getColor(R.color.text_secondary));
+            count.setSingleLine(true);
             addView(count);
         }
 
         void bind(SavedPhotoGroups.Group group) {
-            String label = groupDate(group);
-            if (group.gameVersion() != null && !group.gameVersion().isBlank()) {
-                label += " · " + group.gameVersion() + "版本";
-            }
-            title.setText(label);
-            count.setText(group.members().size() + "张");
+            title.setText(groupDate(group));
+            String version=group.gameVersion();
+            count.setText((version==null||version.isBlank()?"":version+" 版本 · ")+group.members().size()+" 张");
         }
     }
 
@@ -162,6 +177,7 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         final ImageView image;
         final TextView state;
         final TextView date;
+        boolean unavailable;
 
         Cell(Activity context) {
             super(context);
@@ -196,13 +212,15 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         }
 
         void bind(SavedPhotoGroups.Member member) {
+            SavedPhotoHealthStore.Entry checked=health.get(member.uri());
+            unavailable=checked!=null&&checked.isMissing();
             if (member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
                 SavedPhotoStore.Record record = member.original();
                 String badge = record.hasMotion()
                         ? "LIVE"
                         : record.rotationDegrees() == 0 ? "原图" : "旋转 " + record.rotationDegrees() + "°";
                 SavedPhotoHealthStore.Entry entry = health.get(record.uri());
-                if (entry != null && entry.isMissing()) badge = "文件缺失";
+                if (entry != null && entry.isMissing()) badge = "文件不可访问 · 点击处理";
                 else if (record.hasMotion()) {
                     if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_MISSING) badge = "LIVE 不完整";
                     else if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_UNVERIFIED) badge = "LIVE 待核验";
@@ -210,7 +228,8 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
                 state.setText(badge);
                 date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(record.savedAt())));
             } else {
-                state.setText("修图");
+                SavedPhotoHealthStore.Entry entry = health.get(member.uri());
+                state.setText(entry != null && entry.isMissing() ? "文件不可访问 · 点击处理" : "修图");
                 date.setText(DateFormat.getDateInstance(DateFormat.SHORT).format(new Date(member.edited().linkedAt())));
             }
 
@@ -222,18 +241,33 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
             thumbnails.execute(() -> {
                 try {
                     Bitmap bitmap = activity.getContentResolver().loadThumbnail(uri, new Size(420, 420), null);
+                    if(bitmap==null)throw new java.io.IOException("Thumbnail unavailable");
                     main.post(() -> {
                         if (expected.equals(image.getTag())) image.setImageBitmap(bitmap);
                     });
                 } catch (Exception ignored) {
+                    boolean inaccessible;
+                    try(android.os.ParcelFileDescriptor file=activity.getContentResolver().openFileDescriptor(uri,"r")){inaccessible=file==null;}
+                    catch(Exception error){inaccessible=true;}
+                    boolean missing=inaccessible;
                     main.post(() -> {
                         if (expected.equals(image.getTag())) {
                             image.setImageDrawable(null);
                             image.setBackgroundResource(R.drawable.bg_gallery_photo);
+                            if(missing){unavailable=true;state.setText("文件不可访问 · 点击处理");}
                         }
                     });
                 }
             });
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            int width = MeasureSpec.getSize(widthSpec);
+            if (width > 0) {
+                image.getLayoutParams().height = Math.max(1, width - getPaddingLeft() - getPaddingRight());
+                heightSpec = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
+            }
+            super.onMeasure(widthSpec, heightSpec);
         }
 
         private TextView chip(String value) {

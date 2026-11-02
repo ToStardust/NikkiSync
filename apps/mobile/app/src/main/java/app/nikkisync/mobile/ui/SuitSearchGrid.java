@@ -31,6 +31,11 @@ public final class SuitSearchGrid {
         void onPhotoClick(AssetSummary asset);
     }
 
+    @FunctionalInterface
+    public interface ContextListener {
+        void onPhotoClick(AssetSummary asset, List<AssetSummary> displayedPhotos);
+    }
+
     private static final int MAX_PHOTOS = 60;
     private static final String[] CATEGORY_ORDER = {
             "hair", "dresses", "outerwear", "tops", "bottoms", "socks", "shoes",
@@ -48,6 +53,17 @@ public final class SuitSearchGrid {
             ImageLoader images,
             SuitSearchResult item,
             Listener listener
+    ) {
+        return createWithContext(activity, client, images, item,
+                (asset, displayedPhotos) -> listener.onPhotoClick(asset));
+    }
+
+    public static View createWithContext(
+            Activity activity,
+            NikkiSyncClient client,
+            ImageLoader images,
+            SuitSearchResult item,
+            ContextListener listener
     ) {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -120,7 +136,7 @@ public final class SuitSearchGrid {
             List<SuitSearchPhoto> allPhotos,
             String category,
             LinearLayout grid,
-            Listener listener
+            ContextListener listener
     ) {
         grid.removeAllViews();
 
@@ -130,6 +146,9 @@ public final class SuitSearchGrid {
         }
 
         int limit = Math.min(filtered.size(), MAX_PHOTOS);
+        List<AssetSummary> displayed = new ArrayList<>(limit);
+        for (int i = 0; i < limit; i++) displayed.add(filtered.get(i).asset());
+        List<AssetSummary> displayedPhotos = List.copyOf(displayed);
         int index = 0;
         while (index < limit) {
             LinearLayout row = new LinearLayout(activity);
@@ -154,7 +173,7 @@ public final class SuitSearchGrid {
                         1
                 );
                 if (column > 0) cellLp.leftMargin = dp(activity, 7);
-                row.addView(photoCell(activity, client, images, photo, listener), cellLp);
+                row.addView(photoCell(activity, client, images, photo, displayedPhotos, listener), cellLp);
             }
             grid.addView(row, rowLp);
         }
@@ -188,7 +207,8 @@ public final class SuitSearchGrid {
             NikkiSyncClient client,
             ImageLoader images,
             SuitSearchPhoto photo,
-            Listener listener
+            List<AssetSummary> displayedPhotos,
+            ContextListener listener
     ) {
         int width = activity.getResources().getDisplayMetrics().widthPixels;
         int cellSize = Math.max(dp(activity, 92), (width - dp(activity, 88)) / 3);
@@ -245,7 +265,7 @@ public final class SuitSearchGrid {
             cell.addView(live, liveLp);
         }
 
-        cell.setOnClickListener(v -> listener.onPhotoClick(photo.asset()));
+        cell.setOnClickListener(v -> listener.onPhotoClick(photo.asset(), displayedPhotos));
         return cell;
     }
 

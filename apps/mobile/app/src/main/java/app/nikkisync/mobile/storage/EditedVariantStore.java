@@ -27,7 +27,7 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
     public record LinkResult(LinkStatus status, Variant variant, String conflictingAssetId) {}
 
     public EditedVariantStore(Context context) {
-        super(context.getApplicationContext(), "nikkisync-edited-variants.db", null, 1);
+        super(context.getApplicationContext(), "nikkisync-edited-variants.db", null, 2);
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
@@ -39,14 +39,16 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
                   linked_at INTEGER NOT NULL,
                   display_name TEXT,
                   mime_type TEXT,
-                  source_saved_uri TEXT
+                  source_saved_uri TEXT,
+                  selected_uri TEXT
                 )
                 """);
         db.execSQL("CREATE INDEX edited_variants_asset_time ON edited_variants(asset_id, linked_at DESC)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new IllegalStateException("Unsupported edited variants schema upgrade: " + oldVersion + " -> " + newVersion);
+        if(oldVersion<2){db.execSQL("ALTER TABLE edited_variants ADD COLUMN selected_uri TEXT");
+            db.execSQL("UPDATE edited_variants SET selected_uri = uri");}
     }
 
     public synchronized LinkResult link(
@@ -57,12 +59,17 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
             String displayName,
             String mimeType
     ) {
+        return linkSelected(assetId,sourceSavedUri,uri,uri,linkedAt,displayName,mimeType);
+    }
+
+    public synchronized LinkResult linkSelected(String assetId,String sourceSavedUri,String uri,String selectedUri,long linkedAt,String displayName,String mimeType) {
         String normalizedAsset = requireValue(assetId, "assetId");
         String normalizedUri = requireValue(uri, "uri");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             Variant existing = findByUri(db, normalizedUri);
+            if(existing==null)existing=findByUri(db,requireValue(selectedUri,"selectedUri"));
             if (existing != null) {
                 LinkResult result = existing.assetId().equals(normalizedAsset)
                         ? new LinkResult(LinkStatus.DUPLICATE, existing, null)
@@ -81,6 +88,7 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
                     clean(sourceSavedUri)
             );
             ContentValues values = values(variant);
+            values.put("selected_uri",requireValue(selectedUri,"selectedUri"));
             long inserted = db.insertOrThrow("edited_variants", null, values);
             if (inserted < 0) throw new IllegalStateException("Unable to persist edited variant");
             db.setTransactionSuccessful();
@@ -113,6 +121,12 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
         ) > 0;
     }
 
+    /** Re-linking an old selection upgrades its EXIF copy while preserving its source/variant identity. */
+    public synchronized boolean replaceMedia(String variantId,String uri) {
+        ContentValues values=new ContentValues();values.put("uri",requireValue(uri,"uri"));
+        return getWritableDatabase().update("edited_variants",values,"variant_id = ?",new String[]{variantId})==1;
+    }
+
     private List<Variant> query(String selection, String[] args, String orderBy) {
         List<Variant> result = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(
@@ -133,8 +147,8 @@ public final class EditedVariantStore extends SQLiteOpenHelper {
         try (Cursor cursor = db.query(
                 "edited_variants",
                 columns(),
-                "uri = ?",
-                new String[]{uri},
+                "uri = ? OR selected_uri = ?",
+                new String[]{uri,uri},
                 null,
                 null,
                 null,

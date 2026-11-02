@@ -23,6 +23,12 @@ export interface AssetReconcileInput extends CreateAssetInput {
 export interface AssetReconcileResult {
   kind: 'created' | 'updated' | 'unchanged'
   revision?: number
+  supersededChanges?: Array<{ assetId: string; revision: number }>
+}
+
+export interface AssetReconcileScanContext {
+  activeAssetIds: ReadonlySet<string>
+  completedRoots: readonly string[]
 }
 
 export interface CreateResourceInput {

@@ -110,6 +110,8 @@ export function enrichPhotoMetadataWithDictionary(
   const filterEntry = metadata.filter?.id ? index.get(`filter:${metadata.filter.id}`) : undefined
   const previousFilterEntry = metadata.filter?.id ? previousEntry(previousManifest, 'filter', metadata.filter.id) : undefined
   const lightingEntry = metadata.lighting?.id ? index.get(`lighting:${metadata.lighting.id}`) : undefined
+  const poseEntry = metadata.pose?.id ? index.get(`pose:${metadata.pose.id}`) : undefined
+  const previousPoseEntry = metadata.pose?.id ? previousEntry(previousManifest, 'pose', metadata.pose.id) : undefined
   const previousLightingEntry = metadata.lighting?.id ? previousEntry(previousManifest, 'lighting', metadata.lighting.id) : undefined
   const clothes = metadata.dressing?.clothes?.map((item) => enrichEntity(item, 'clothing', index, previousManifest) ?? item)
   const interactions = metadata.interactions?.map((item) => enrichEntity(item, 'pose', index, previousManifest) ?? item)
@@ -120,6 +122,8 @@ export function enrichPhotoMetadataWithDictionary(
   if (filter) applyDictionaryField(filter, 'name', filterEntry, previousFilterEntry)
   const lighting = metadata.lighting ? { ...metadata.lighting } : undefined
   if (lighting) applyDictionaryField(lighting, 'name', lightingEntry, previousLightingEntry)
+  const pose = metadata.pose ? { ...metadata.pose } : undefined
+  if (pose) applyDictionaryField(pose, 'name', poseEntry, previousPoseEntry)
   const location = metadata.location ? { ...metadata.location } : undefined
   if (location) applyDictionaryField(location, 'name', locationEntry, previousLocationEntry)
 
@@ -127,6 +131,7 @@ export function enrichPhotoMetadataWithDictionary(
     ...metadata,
     ...(filter ? { filter } : {}),
     ...(lighting ? { lighting } : {}),
+    ...(pose ? { pose } : {}),
     ...(metadata.dressing ? {
       dressing: {
         ...metadata.dressing,

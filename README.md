@@ -1,8 +1,24 @@
-# NikkiSync
+# 大喵相机助手 · NikkiSync
+
+《无限暖暖》的非官方摄影同步工具，包含 Windows 桥接与托盘程序、Android 相册，以及开发中的微信小程序。支持浏览游戏照片、读取穿搭和拍摄参数、生成分享图、下载原图/视频；Android 提供旋转、预览手势、持久缓存及能力范围内的 LIVE 保存。
+
+**给对接开发者：先阅读 [开发与接口入口](docs/INTEGRATION.md)。** 原创源码使用 [MIT](LICENSE)；游戏美术和第三方资源不在本项目 MIT 授权范围内，参见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
+当前 Windows 优先自动查找安装位置，无需先开游戏；也可在同步设置添加搬迁相册、旋转吧大喵等软件的照片输出目录。Android 保留液态玻璃 UI、旋转与预测性返回、穿搭/参数分享图。微信小程序尚未完成，本轮暂时隐藏电脑端入口。
+
+照片同步在本机/局域网完成。在线参数解析默认开启，可在同步设置关闭，此前手动关闭的选择会保留；开启时会向第三方发送游戏UID、编码参数及校验值。公共字典与游戏版本检查也可能访问公开服务，可按 [离线配置](docs/INTEGRATION.md#在线元数据及离线模式) 配置。源码不含个人照片、数据库、配对密钥、私有签名密钥和编译包。
+
+**下载 [1.0.27 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.27-public-beta.1)**：提供 Windows EXE、独立 Android APK 和统一 ZIP；EXE 内置同一份 APK。**电脑端和手机端请一起更新。** 合入启动与缓存修复，缩略图默认上限 2GB，首页显示已同步和已缓存张数；支持按 UID 及旋转吧大喵来源选择同步范围，图库与已保存可按 UID、文件夹筛选。筛选保留底部抽屉，长目录换行显示。[本版更新日志](docs/releases/v1.0.27-public-beta.1.md)
+
+已开启 Windows 自启动时，更新或移动 EXE 后首次打开新版会自动同步启动路径，不需要重新切换开关；原本关闭的选择保留。
+
+更新前先从右下角托盘退出旧电脑助手，再运行新版；关闭窗口只会隐藏到托盘。窗口底部可核对实际版本和构建号。1.0.27 APK 沿用近期公测版的匿名签名，可覆盖相同签名的版本，保留配对、设置、缓存和整理记录。两端一起更新才能使用完整的账号和来源同步范围；更早使用旧签名的安装版本无法直接覆盖，请保留旧 App 和数据，不要为解决签名冲突卸载或清除数据；需要迁移时请通过项目仓库反馈。连接超时时可到“同步设置 → 本地网络权限”授权或检查冲突；服务不可用时可用窗口底部按钮导出诊断、重启服务。删除电脑照片仍需电脑确认，手机完成本批核对后可关闭 App；只移入 Windows 回收站，可从回收站恢复。离线整理需要先完成对应照片的缓存，可在设置查看进度和提高缓存容量。动态播放与系统相册 LIVE 识别仍需按机型测试。历史 [0.2.14](https://github.com/ToStardust/NikkiSync/releases/tag/v0.2.14) 发布保留。
+
+下面保留早期里程碑记录；当前功能与构建入口以 [INTEGRATION.md](docs/INTEGRATION.md) 和 `docs/remote-bridge` 最新验收记录为准。
 
 面向《无限暖暖》的本地摄影同步 App monorepo。PC Companion 是远程图库的 source of truth；移动端按需缓存预览、按用户操作保存原图。媒体字节使用 HTTP(S)，WebSocket 只承载事件，断线恢复以 revision journal 为准。
 
-## 当前里程碑
+## 早期里程碑（历史记录）
 
 - M0.16 Sample Analyzer：可运行的 Node CLI，支持文件树、图片/JPEG tail、视频探测和合成样本测试。
 - M0.17 SQLite Schema v1：Asset/Resource 双层模型、revision journal、配对与 resolver candidate 表及仓储层。
@@ -10,9 +26,9 @@
 - M0.19 AssetResolver v1：已用 418 个真实文件验证；确定识别 111 组 High/Low 与 3 组 Live cover/MP4，且没有额外 motion 误配。
 - M1.0 PC Scanner Foundation：自动发现游戏目录，稳定性守卫、资源分类、Resolver v1 聚合、幂等 SQLite reconciliation、软删除与 fs.watch 去抖已接入。
 - M1.1 Local Sync Server：HTTPS REST、Range 流式资源、revision changes、WebSocket、mDNS、一次性配对、Ed25519 请求签名与本地 TLS pinning 已接入。
-- M2.0 Mobile Gallery MVP：Android 13+ 原生客户端已接入 mDNS 自动重发现、一次配对、PC 图库分页、实时 revision 唤醒、LIVE 标识、多选与 SHA-256 校验后的系统相册原图保存。
+- M2.0 Mobile Gallery MVP：Android 11+ 原生客户端已接入 mDNS 自动重发现、一次配对、PC 图库分页、实时 revision 唤醒、LIVE 标识、多选与 SHA-256 校验后的系统相册原图保存。
 
-PC Companion 会自动从内部缓存、便携安装目录祖先或运行中的 `InfinityNikki.exe` 发现游戏位置。存在隐藏的 `X6Game/Saved/GamePlayPhotos` 时只扫描其中的原件；`ScreenShot/Video` 仅作为旧版或缺失原图库时的回退，不要求用户配置目录。
+PC Companion 从内部缓存、便携安装位置、Windows 安装记录、快捷方式和常见游戏目录发现游戏位置；运行中的游戏仅为补充线索。存在隐藏的 `X6Game/Saved/GamePlayPhotos` 时优先扫描原件，`ScreenShot/Video` 作为旧版或缺失原图库时的回退。
 
 ## 工程结构
 
@@ -66,11 +82,11 @@ PC ↔ Android 的 M2 开发联调可运行：
 npm run pc:serve
 ```
 
-日常使用不需要运行上述命令：使用 `release/NikkiSync-PC.exe` 双击启动即可。EXE 会自动发现游戏目录、把数据库与 TLS 身份保存到 `%LOCALAPPDATA%/NikkiSync`、启动局域网同步和 mDNS，并打开本机配对页。请保留 EXE 同级的 `migrations/0001_initial.sql` 文件。
+日常使用可双击构建好的单文件 `NikkiSync-PC.exe`。它自动发现游戏目录，把私有数据库和 TLS 身份保存到 `%LOCALAPPDATA%/NikkiSync`，启动局域网同步并显示电脑控制页。单文件包内含运行组件，无需另放 migration 或安装 .NET；首次展开后复用本机缓存。可执行包不提交到源码仓库。
 
-PC 会扫描当前原图库、启动本地 HTTPS 服务并打印一个 5 分钟有效且仅可使用一次的 `nikki-sync://pair?...` 配对链接。Android App 可直接粘贴该链接；正式托盘 UI 后续会把同一链接渲染为二维码。默认监听全部本地接口；若要经 USB 做不暴露局域网的真机验收，可设 `NIKKISYNC_BIND=127.0.0.1`、固定 `NIKKISYNC_PORT`，再执行 `adb reverse tcp:<port> tcp:<port>`。
+PC 扫描原图库，启动本地 HTTPS 服务并提供短时一次性配对链接；桌面界面将其显示为二维码。默认监听本地接口。USB 开发验收可设 `NIKKISYNC_BIND=127.0.0.1`、固定 `NIKKISYNC_PORT`，再执行 `adb reverse tcp:<port> tcp:<port>`。
 
-Android 工程位于 `apps/mobile`，目标为 Android 13+ / compileSdk 35。项目已接入本机现有 JBR 17、Android SDK 35 和 Gradle 8.13，使用 `npm run mobile:build` 即可构建并验证 APK；完整边界见 `docs/M2_0_MOBILE_GALLERY_MVP.md`。
+Android 工程位于 `apps/mobile`，支持 Android 11+ / minSdk 30 / targetSdk 35 / compileSdk 35。配置 JDK 17、Android SDK 35、Build Tools 35.0.1 及相应环境变量，使用项目 Gradle Wrapper 或 `npm run mobile:build` 构建；完整入口见 [对接文档](docs/INTEGRATION.md)。
 
 分析真实游戏样本：
 

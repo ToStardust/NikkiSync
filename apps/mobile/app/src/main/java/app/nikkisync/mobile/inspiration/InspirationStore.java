@@ -10,8 +10,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.io.FileInputStream;
+import java.security.MessageDigest;
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 /** Offline, user-owned inspiration notes. Resolver snapshots never replace the original share text. */
 public final class InspirationStore extends SQLiteOpenHelper {
@@ -25,7 +28,7 @@ public final class InspirationStore extends SQLiteOpenHelper {
                         String status, long createdAt, long updatedAt, long deletedAt, Code code, List<Image> images) {}
 
     private static final String DATABASE = "nikkisync-inspiration.db";
-    public InspirationStore(Context context) { super(context.getApplicationContext(), DATABASE, null, 1); }
+    public InspirationStore(Context context) { super(context.getApplicationContext(), DATABASE, null, 2); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE inspiration_entries (id TEXT PRIMARY KEY, title TEXT NOT NULL, notes TEXT NOT NULL, "
@@ -42,20 +45,26 @@ public final class InspirationStore extends SQLiteOpenHelper {
                 + "local_name TEXT NOT NULL UNIQUE, mime_type TEXT NOT NULL, bytes INTEGER NOT NULL, added_at INTEGER NOT NULL, "
                 + "FOREIGN KEY(entry_id) REFERENCES inspiration_entries(id))");
         db.execSQL("CREATE INDEX inspiration_images_entry ON inspiration_images(entry_id, added_at)");
+        createSyncTables(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new IllegalStateException("Unsupported inspiration schema upgrade: " + oldVersion + " -> " + newVersion);
+        if(oldVersion<2)createSyncTables(db);
     }
+    private static void createSyncTables(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS inspiration_sync_state (server_id TEXT NOT NULL, entry_id TEXT NOT NULL, revision INTEGER NOT NULL, local_hash TEXT NOT NULL, PRIMARY KEY(server_id,entry_id))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS inspiration_image_hash (local_name TEXT PRIMARY KEY, bytes INTEGER NOT NULL, modified INTEGER NOT NULL, sha256 TEXT NOT NULL)");
+    }
+    @Override public void onOpen(SQLiteDatabase db){super.onOpen(db);createSyncTables(db);}
 
     public synchronized Entry create(Draft draft, long now) {
         if (draft == null) throw new IllegalArgumentException("Missing inspiration draft");
-        String title = required(draft.title(), "title", 200);
+        String title = limited(draft.title(), 200).trim();
         String code = limited(draft.rawCode(), 20000);
         String source = limited(draft.sourceText(), 20000);
         // A reference screenshot may be collected before anyone knows its share code.
         String type = oneOf(draft.codeType(), "unknown", "outfit", "dye");
-        String status = oneOf(draft.status(), "want", "tried", "reproduced", "archived");
+        String status = oneOf(draft.status(), "self", "want", "tried", "reproduced", "archived");
         String id = UUID.randomUUID().toString(), codeId = UUID.randomUUID().toString();
         long time = Math.max(1L, now);
         SQLiteDatabase db = getWritableDatabase();
@@ -86,9 +95,9 @@ public final class InspirationStore extends SQLiteOpenHelper {
         Entry before = get(id);
         if (before == null) throw new IllegalArgumentException("Inspiration entry not found");
         ContentValues values = new ContentValues();
-        values.put("title", required(title, "title", 200)); values.put("notes", limited(notes, 20000));
+        values.put("title", limited(title, 200).trim()); values.put("notes", limited(notes, 20000));
         values.put("tags_json", jsonNames(tags)); values.put("categories_json", jsonNames(categories));
-        values.put("status", oneOf(status, "want", "tried", "reproduced", "archived"));
+        values.put("status", oneOf(status, "self", "want", "tried", "reproduced", "archived"));
         values.put("updated_at", Math.max(now, before.updatedAt() + 1));
         if (getWritableDatabase().update("inspiration_entries", values, "id = ? AND deleted_at = 0", new String[] {id}) != 1)
             throw new IllegalStateException("Inspiration update failed");
@@ -154,6 +163,38 @@ public final class InspirationStore extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /** Removes only this entry's reference link. The caller may then remove its private copy. */
+    public synchronized boolean detachImage(String entryId, String imageId, long now) {
+        if (get(entryId) == null) return false;
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            boolean removed=db.delete("inspiration_images","entry_id = ? AND id = ?",new String[]{entryId,imageId})==1;
+            if(removed)touch(db,entryId,Math.max(1L,now));
+            db.setTransactionSuccessful();return removed;
+        } finally {db.endTransaction();}
+    }
+
+    /** Commit the user's text and reference links together; private files are staged by the caller. */
+    public synchronized Entry saveWithImages(Entry existing, Draft draft, List<InspirationImageStore.Saved> images,
+                                             List<String> removedIds, long now) {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Entry current;
+            if(existing==null)current=create(draft,now);
+            else {
+                current=get(existing.id());
+                if(current==null)throw new IllegalArgumentException("Inspiration entry not found");
+                if(current.updatedAt()!=existing.updatedAt())throw new IllegalStateException("灵感已在另一处更新，请重新打开后再编辑");
+                updateUserFields(current.id(),draft.title(),draft.notes(),draft.tags(),draft.categories(),draft.status(),now);
+                if(!draft.rawCode().equals(current.code().rawCode())||!draft.codeType().equals(current.code().type()))
+                    updateCode(current.id(),draft.rawCode(),draft.codeType(),now+1);
+            }
+            for(InspirationImageStore.Saved image:images)attachImage(current.id(),image.localName(),image.mimeType(),image.bytes(),now);
+            for(String id:removedIds)detachImage(current.id(),id,now);
+            db.setTransactionSuccessful();return get(current.id());
+        } finally {db.endTransaction();}
+    }
+
     public synchronized void delete(String id, long now) {
         Entry before = get(id);
         if (before == null) return;
@@ -171,6 +212,92 @@ public final class InspirationStore extends SQLiteOpenHelper {
         }
         return result;
     }
+
+    public synchronized InspirationSyncEngine.Base syncBase(String server,String id){
+        try(Cursor c=getReadableDatabase().query("inspiration_sync_state",new String[]{"revision","local_hash"},"server_id=? AND entry_id=?",new String[]{server,id},null,null,null)){
+            return c.moveToFirst()?new InspirationSyncEngine.Base(c.getLong(0),c.getString(1)):null;
+        }
+    }
+    public synchronized void markSyncBase(String server,String id,long revision,String hash){
+        ContentValues row=new ContentValues();row.put("server_id",server);row.put("entry_id",id);row.put("revision",revision);row.put("local_hash",hash);
+        getWritableDatabase().insertWithOnConflict("inspiration_sync_state",null,row,SQLiteDatabase.CONFLICT_REPLACE);
+    }
+    public synchronized Entry getIncludingDeleted(String id){return readEntry(getReadableDatabase(),id,true);}
+    public synchronized JSONObject syncEntry(Entry entry,InspirationImageStore images)throws Exception{
+        JSONObject code=new JSONObject().put("id",entry.code().id()).put("rawCode",entry.code().rawCode()).put("type",entry.code().type())
+                .put("sourceText",entry.code().sourceText()).put("sourceUrl",entry.code().sourceUrl()==null?JSONObject.NULL:entry.code().sourceUrl())
+                .put("parsedState",entry.code().parsedState()).put("snapshotJson",entry.code().snapshotJson()==null?JSONObject.NULL:entry.code().snapshotJson())
+                .put("resolverVersion",entry.code().resolverVersion()==null?JSONObject.NULL:entry.code().resolverVersion())
+                .put("dictionaryVersion",entry.code().dictionaryVersion()==null?JSONObject.NULL:entry.code().dictionaryVersion()).put("resolvedAt",entry.code().resolvedAt());
+        JSONArray attached=new JSONArray();
+        if(entry.deletedAt()==0)for(Image image:entry.images()){
+            var file=images.resolve(image.localName());if(!file.isFile()||file.length()!=image.bytes()||file.length()>InspirationImageStore.MAX_BYTES)throw new java.io.IOException("参考图不可访问，请重新添加后同步");
+            long modified=file.lastModified();String hash=null;
+            try(Cursor cached=getReadableDatabase().query("inspiration_image_hash",new String[]{"sha256"},"local_name=? AND bytes=? AND modified=?",new String[]{image.localName(),Long.toString(image.bytes()),Long.toString(modified)},null,null,null)){if(cached.moveToFirst())hash=cached.getString(0);}
+            if(hash==null){MessageDigest digest=MessageDigest.getInstance("SHA-256");try(var in=new FileInputStream(file)){byte[] b=new byte[65536];for(int n;(n=in.read(b))!=-1;)digest.update(b,0,n);}
+                if(!file.isFile()||file.length()!=image.bytes()||file.lastModified()!=modified)throw new java.io.IOException("参考图已变化，请重新同步");
+                hash=app.nikkisync.mobile.util.Hex.lower(digest.digest());ContentValues cached=new ContentValues();cached.put("local_name",image.localName());cached.put("bytes",image.bytes());cached.put("modified",modified);cached.put("sha256",hash);getWritableDatabase().insertWithOnConflict("inspiration_image_hash",null,cached,SQLiteDatabase.CONFLICT_REPLACE);
+            }
+            attached.put(new JSONObject().put("id",image.id()).put("sha256",hash).put("mimeType",image.mimeType()).put("bytes",image.bytes()).put("addedAt",image.addedAt()));
+        }
+        return new JSONObject().put("id",entry.id()).put("title",entry.title()).put("notes",entry.notes()).put("tags",new JSONArray(entry.tags()))
+                .put("categories",new JSONArray(entry.categories())).put("status",entry.status()).put("createdAt",entry.createdAt()).put("deletedAt",entry.deletedAt()).put("code",code).put("images",attached);
+    }
+
+    /** Download and verify image copies before atomically replacing a still-unchanged local record. */
+    public synchronized boolean applySyncEntry(JSONObject value,String expected,InspirationImageStore imageStore,InspirationSyncEngine.Remote remote)throws Exception{
+        return applySyncEntry(value,expected,imageStore,remote,()->true);
+    }
+    public synchronized boolean applySyncEntry(JSONObject value,String expected,InspirationImageStore imageStore,InspirationSyncEngine.Remote remote,java.util.function.BooleanSupplier active)throws Exception{
+        String id=syncUuid(value.getString("id"));JSONObject code=value.getJSONObject("code");String codeId=syncUuid(code.getString("id"));
+        String title=limited(value.getString("title"),200),notes=limited(value.getString("notes"),20000);
+        List<String> tags=names(value.getJSONArray("tags").toString()),categories=names(value.getJSONArray("categories").toString());
+        String tagsJson=jsonNames(tags),categoryJson=jsonNames(categories),status=oneOf(value.getString("status"),"self","want","tried","reproduced","archived");
+        long created=syncTime(value,"createdAt"),deleted=syncTime(value,"deletedAt");
+        String raw=limited(code.getString("rawCode"),20000),type=oneOf(code.getString("type"),"unknown","outfit","dye"),source=limited(code.getString("sourceText"),20000);
+        String url=cleanUrl(code.isNull("sourceUrl")?null:code.getString("sourceUrl"));
+        String parsed=oneOf(code.getString("parsedState"),"pending","success","failed","unsupported");
+        String snapshot=code.isNull("snapshotJson")?null:limited(code.getString("snapshotJson"),262144);
+        String resolver=code.isNull("resolverVersion")?null:limited(code.getString("resolverVersion"),200);
+        String dictionary=code.isNull("dictionaryVersion")?null:limited(code.getString("dictionaryVersion"),200);long resolvedAt=syncTime(code,"resolvedAt");
+        JSONArray incoming=value.getJSONArray("images");if(incoming.length()>64||deleted>0&&incoming.length()>0)throw new IllegalArgumentException("Invalid reference images");
+        List<InspirationImageStore.Saved> staged=new ArrayList<>();List<String> ids=new ArrayList<>();List<Long> times=new ArrayList<>();List<Image> oldImages=new ArrayList<>();boolean committed=false;
+        try{
+            for(int i=0;i<incoming.length();i++){
+                JSONObject item=incoming.getJSONObject(i);String imageId=syncUuid(item.getString("id")),hash=item.getString("sha256"),mime=item.getString("mimeType");
+                long size=syncTime(item,"bytes"),added=syncTime(item,"addedAt");if(ids.contains(imageId)||!hash.matches("[a-f0-9]{64}")||size<1||size>InspirationImageStore.MAX_BYTES)throw new IllegalArgumentException("Invalid reference image");
+                byte[] data=remote.image(hash);if(data.length!=size||!app.nikkisync.mobile.util.Hex.lower(MessageDigest.getInstance("SHA-256").digest(data)).equals(hash))throw new java.io.IOException("参考图校验失败");
+                staged.add(imageStore.copy(new java.io.ByteArrayInputStream(data),mime));ids.add(imageId);times.add(added);
+            }
+            SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+            try{
+                if(!active.getAsBoolean()||Thread.currentThread().isInterrupted())throw new java.io.IOException("同步已中断");
+                Entry before=readEntry(db,id,true);String current=before==null?null:InspirationSyncEngine.digest(syncEntry(before,imageStore));
+                if(!java.util.Objects.equals(current,expected))return false;
+                if(before!=null&&!before.code().id().equals(codeId))throw new IllegalArgumentException("Code identity changed");
+                if(before!=null)oldImages.addAll(before.images());
+                long updated=before==null?Math.max(1,System.currentTimeMillis()):Math.max(System.currentTimeMillis(),before.updatedAt()+1);
+                ContentValues row=new ContentValues();row.put("title",title);row.put("notes",notes);row.put("tags_json",tagsJson);row.put("categories_json",categoryJson);row.put("status",status);row.put("created_at",created);row.put("updated_at",updated);row.put("deleted_at",deleted);
+                if(before==null){row.put("id",id);db.insertOrThrow("inspiration_entries",null,row);}else db.update("inspiration_entries",row,"id=?",new String[]{id});
+                ContentValues c=new ContentValues();c.put("type",type);c.put("raw_code",raw);c.put("source_text",source);c.put("source_url",url);c.put("parsed_state",parsed);
+                if(snapshot==null)c.putNull("snapshot_id");else{
+                    String snapshotId=UUID.randomUUID().toString();ContentValues s=new ContentValues();s.put("id",snapshotId);s.put("code_id",codeId);s.put("payload_json",snapshot);s.put("resolver_version",resolver==null?"":resolver);s.put("dictionary_version",dictionary==null?"":dictionary);s.put("resolved_at",resolvedAt);
+                    // A new code row must exist before the snapshot's foreign key is inserted.
+                    if(before==null){ContentValues initial=new ContentValues(c);initial.put("id",codeId);initial.put("entry_id",id);initial.putNull("snapshot_id");db.insertOrThrow("inspiration_codes",null,initial);}
+                    db.insertOrThrow("inspiration_snapshots",null,s);c.put("snapshot_id",snapshotId);
+                }
+                if(before==null&&snapshot==null){c.put("id",codeId);c.put("entry_id",id);db.insertOrThrow("inspiration_codes",null,c);}
+                else db.update("inspiration_codes",c,"entry_id=?",new String[]{id});
+                db.delete("inspiration_images","entry_id=?",new String[]{id});
+                for(int i=0;i<staged.size();i++){var image=staged.get(i);ContentValues r=new ContentValues();r.put("id",ids.get(i));r.put("entry_id",id);r.put("local_name",image.localName());r.put("mime_type",image.mimeType());r.put("bytes",image.bytes());r.put("added_at",times.get(i));db.insertOrThrow("inspiration_images",null,r);}
+                db.setTransactionSuccessful();committed=true;
+            }finally{db.endTransaction();}
+            for(Image image:oldImages)try{imageStore.deleteLocal(image.localName());}catch(Exception ignored){}
+            return true;
+        }finally{if(!committed)for(var image:staged)try{imageStore.deleteLocal(image.localName());}catch(Exception ignored){}}
+    }
+    private static String syncUuid(String value){if(value==null||!value.matches("(?i)[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"))throw new IllegalArgumentException("Invalid identity");return value;}
+    private static long syncTime(JSONObject value,String key)throws JSONException{long result=value.getLong(key);if(result<0)throw new IllegalArgumentException("Invalid time");return result;}
 
     public synchronized List<Entry> search(String query, String status, String category) {
         String term = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
@@ -193,6 +320,14 @@ public final class InspirationStore extends SQLiteOpenHelper {
             }
         }
         return result;
+    }
+
+    public synchronized List<String> categoryNames() {
+        LinkedHashSet<String> result=new LinkedHashSet<>();
+        try(Cursor cursor=getReadableDatabase().query("inspiration_entries",new String[]{"categories_json"},"deleted_at = 0",null,null,null,"updated_at DESC")) {
+            while(cursor.moveToNext())result.addAll(names(cursor.getString(0)));
+        }
+        return List.copyOf(result);
     }
 
     private Entry readEntry(SQLiteDatabase db, String id, boolean includeDeleted) {

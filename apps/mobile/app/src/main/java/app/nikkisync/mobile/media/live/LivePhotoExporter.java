@@ -14,6 +14,7 @@ import app.nikkisync.mobile.model.Models.AssetDetail;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import app.nikkisync.mobile.model.Models.MediaResource;
 import app.nikkisync.mobile.net.NikkiSyncClient;
+import app.nikkisync.mobile.media.GallerySavePolicy;
 import app.nikkisync.mobile.util.Hex;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -49,6 +50,10 @@ public final class LivePhotoExporter {
     public static Result save(Context context,NikkiSyncClient client,AssetSummary asset,int clockwise,
                               LivePhotoProfile profile,Progress progress)throws Exception{
         if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("Live 导出必须在后台执行器调用");
+        return LiveExportGuard.run(()->saveExclusive(context,client,asset,clockwise,profile,progress));
+    }
+    private static Result saveExclusive(Context context,NikkiSyncClient client,AssetSummary asset,int clockwise,
+                                        LivePhotoProfile profile,Progress progress)throws Exception{
         int degrees=QuarterTurn.normalize(clockwise);AtomicBoolean cleanupSafe=new AtomicBoolean(true);
         File job=Files.createTempDirectory(context.getCacheDir().toPath(),"nikkisync_live_").toFile();
         try{
@@ -70,7 +75,9 @@ public final class LivePhotoExporter {
                 preferred=preferred-sourceFacts.sampleTimesUs().get(0)+rotated.videoFacts().sampleTimesUs().get(0);
             }
             CoverFrameMatcher.Match cover=CoverFrameMatcher.find(rotated.image(),rotated.video(),rotated.videoFacts(),preferred);
-            File vendorImage=vendorImage(profile,rotated.image(),job);
+            long savedAt=System.currentTimeMillis();
+            File galleryImage=GallerySavePolicy.prepareLiveImage(rotated.image(),job,savedAt);
+            File vendorImage=vendorImage(profile,galleryImage,job);
             String pairId=String.format(Locale.ROOT,"%013d%07x00000000",System.currentTimeMillis(),RANDOM.nextInt(1<<28));
             MotionContainer.Options options=new MotionContainer.Options(cover.presentationUs(),cover.sampleIndex(),
                 rotated.videoFacts().sampleTimesUs().size(),rotated.videoFacts().durationUs(),pairId,Build.MODEL);
@@ -79,7 +86,7 @@ public final class LivePhotoExporter {
             MotionContainerVerifier.verify(profile,product,rotated.video(),options);
             if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Live 导出已取消");
             progress.onProgress("写入系统相册",0);
-            List<Uri> resources=publish(context.getContentResolver(),profile,asset.assetId(),product);
+            List<Uri> resources=publish(context.getContentResolver(),profile,asset.assetId(),product,savedAt);
             return new Result(resources.get(0),resources.subList(1,resources.size()),profile.id,profile.label,degrees,
                 cover.presentationUs(),cover.source(),cover.error());
         }finally{
@@ -116,10 +123,13 @@ public final class LivePhotoExporter {
         exif.saveAttributes();return copy;
     }
     static List<Uri> publish(ContentResolver resolver,LivePhotoProfile profile,String assetId,MotionContainer.Product product)throws IOException{
+        return publish(resolver,profile,assetId,product,System.currentTimeMillis());
+    }
+    private static List<Uri> publish(ContentResolver resolver,LivePhotoProfile profile,String assetId,MotionContainer.Product product,long savedAt)throws IOException{
         List<File> files=new ArrayList<>();files.add(product.primary());files.addAll(product.companions());List<Uri> created=new ArrayList<>();
         String safe=assetId==null?"photo":assetId.replaceAll("[^A-Za-z0-9_-]","_");if(safe.length()>48)safe=safe.substring(0,48);
         String stem=(profile.paired?"IMG_":"NikkiSync_")+safe+"_"+UUID.randomUUID().toString().substring(0,8);
-        String path=profile==LivePhotoProfile.STANDARD||profile==LivePhotoProfile.XIAOMI?"Pictures/NikkiSync":"DCIM/Camera";
+        String path=GallerySavePolicy.livePath(profile);
         try{
             for(int i=0;i<files.size();i++){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Live 发布已取消");
@@ -127,6 +137,7 @@ public final class LivePhotoExporter {
                 values.put(MediaStore.MediaColumns.DISPLAY_NAME,stem+(profile.paired?"": "_MP")+(video?".mp4":".jpg"));
                 values.put(MediaStore.MediaColumns.MIME_TYPE,video?"video/mp4":"image/jpeg");
                 values.put(MediaStore.MediaColumns.RELATIVE_PATH,path);values.put(MediaStore.MediaColumns.IS_PENDING,1);
+                GallerySavePolicy.addDate(values,savedAt);
                 Uri uri=resolver.insert(video?MediaStore.Video.Media.EXTERNAL_CONTENT_URI:MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
                 if(uri==null)throw new IOException("系统相册创建 Live 资源失败");created.add(uri); // Includes the first insert if the second one fails.
                 try(OutputStream out=resolver.openOutputStream(uri,"w")){if(out==null)throw new IOException("系统相册无法写入 Live");MotionContainer.copy(files.get(i),out);}
@@ -134,11 +145,14 @@ public final class LivePhotoExporter {
             }
             // Companion first, primary last; still not a cross-collection transaction.
             for(int i=created.size()-1;i>=0;i--){ContentValues ready=new ContentValues();ready.put(MediaStore.MediaColumns.IS_PENDING,0);
+                GallerySavePolicy.addDate(ready,savedAt);
                 if(resolver.update(created.get(i),ready,null,null)!=1)throw new IOException("系统相册未完成 Live 发布");}
             return List.copyOf(created);
-        }catch(Exception error){
+        }catch(Exception|OutOfMemoryError failure){
+            IOException error=failure instanceof OutOfMemoryError memory?LiveExportGuard.memoryFailure(memory):
+                failure instanceof IOException io?io:new IOException("Live 发布失败，已尝试撤销本次创建的媒体",failure);
             for(Uri uri:created)try{resolver.delete(uri,null,null);}catch(Exception cleanup){error.addSuppressed(cleanup);}
-            if(error instanceof IOException e)throw e;throw new IOException("Live 发布失败，已尝试撤销本次创建的媒体",error);
+            throw error;
         }
     }
 }

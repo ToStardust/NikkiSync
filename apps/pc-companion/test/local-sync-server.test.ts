@@ -1,18 +1,117 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile,readFile,realpath } from 'node:fs/promises'
 import net from 'node:net'
+import tls from 'node:tls'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import './account-sync.test.js'
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
 import { PairingService } from '../src/server/PairingService.js'
+import { AuthService } from '../src/server/AuthService.js'
 import { searchClothingLibrary } from '../src/server/ClothingSearchIndex.js'
 import { LocalSyncServer } from '../src/server/LocalSyncServer.js'
 import { searchSuitLibrary } from '../src/server/SuitSearchIndex.js'
 import { LocalTlsIdentityService } from '../src/server/LocalTlsIdentityService.js'
+import {ScannerService} from '../src/scanner/ScannerService.js'
+import {idFor} from '../src/scanner/ExtraScanDirectories.js'
 
 function sha256(data: Buffer): string { return createHash('sha256').update(data).digest('hex') }
+
+test('a future-dated signed nonce remains rejected for its entire valid time window',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize(await readFile(path.resolve('packages/database/migrations/0001_initial.sql'),'utf8'))
+  const pair=new PairingService(db),keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+  const qr=pair.createQrPayload({host:'127.0.0.1',port:1,tlsFingerprintSha256:'00'.repeat(32)})
+  pair.pair({pairingToken:qr.pairingToken,device:{deviceId:'clock_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC')
+  const auth=new AuthService(db),realNow=Date.now,now=realNow(),timestamp=String(now+299_000),nonce='same_nonce'
+  const canonical=['GET','/v1/assets',timestamp,nonce,sha256(Buffer.alloc(0))].join('\n')
+  const request={method:'GET',url:'/v1/assets',headers:{'x-nikkisync-device-id':'clock_phone','x-nikkisync-timestamp':timestamp,'x-nikkisync-nonce':nonce,
+    'x-nikkisync-signature':sign(null,Buffer.from(canonical),keys.privateKey).toString('base64url')}} as unknown as import('node:http').IncomingMessage
+  try{
+    Date.now=()=>now;assert.equal(auth.verifyRequest(request),'clock_phone')
+    Date.now=()=>now+301_000;assert.equal(auth.verifyRequest(request),undefined)
+  }finally{Date.now=realNow;db.close()}
+})
+
+test('server connection candidates refresh without changing identity or consuming a pairing token',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize();let hosts=['192.168.1.5','10.1.2.3'];
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,connectionHosts:()=>hosts});
+  try{
+    const address=await server.start(),base=`http://127.0.0.1:${address.port}`;
+    const response=await fetch(`${base}/v1/server`)
+    assert.ok(Number.isFinite(Date.parse(response.headers.get('date')??'')),'the pinned server response must provide an HTTP Date for phone clock correction')
+    const first=await response.json() as {serverId:string;connectionHosts:string[]};
+    assert.deepEqual(first.connectionHosts,hosts);hosts=['192.168.43.12'];
+    const second=await (await fetch(`${base}/v1/server`)).json() as typeof first;
+    assert.equal(second.serverId,first.serverId);assert.deepEqual(second.connectionHosts,hosts);
+    const pairing=new PairingService(db);const qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'00'.repeat(32)});
+    await fetch(`${base}/v1/server`);
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+    assert.equal(pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'multi_endpoint',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC').serverId,first.serverId);
+  }finally{await server.stop();db.close();}
+})
+
+test('paired realtime handshake and hello work over the production TLS transport',async()=>{
+  const db=new DatabaseManager(':memory:');db.initialize(await readFile(path.resolve('packages/database/migrations/0001_initial.sql'),'utf8'));
+  const identity=new LocalTlsIdentityService(db).getOrCreate();
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,tls:{key:identity.keyPem,cert:identity.certPem}});
+  let socket:tls.TLSSocket|undefined;
+  try{
+    const address=await server.start();
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+    const pairing=new PairingService(db),qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:identity.fingerprintSha256});
+    pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'tls_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC');
+    socket=tls.connect({host:'127.0.0.1',port:address.port,rejectUnauthorized:false});
+    await new Promise<void>((resolve,reject)=>{socket!.once('secureConnect',resolve);socket!.once('error',reject)});
+    let wire=Buffer.alloc(0);socket.on('data',chunk=>{wire=Buffer.concat([wire,chunk])});
+    const hello=readWsText(socket,1500).catch(error=>{throw new Error(`${error.message}; subscribers=${server['sockets'].size}; bytes=${wire.length}; status=${wire.subarray(0,32).toString()}`)});
+    socket.write(['GET /ws/v1 HTTP/1.1',`Host: 127.0.0.1:${address.port}`,'Upgrade: websocket','Connection: Upgrade',
+      `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,'Sec-WebSocket-Version: 13',
+      ...Object.entries(signedHeaders(keys.privateKey,'tls_phone','GET','/ws/v1')).map(([k,v])=>`${k}: ${v}`),'',''].join('\r\n'));
+    assert.equal((JSON.parse(await hello) as {event:string}).event,'server.hello');
+  }finally{socket?.destroy();await server.stop();db.close()}
+})
+
+test('idle server does not query the change journal when no phone subscribes', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const server = new LocalSyncServer(db, { host: '127.0.0.1', port: 0, mdns: false, journalPollMs: 5 })
+  let queries = 0
+  const reads = server['reads'], original = reads.listChangesAfter.bind(reads)
+  reads.listChangesAfter = (...args) => { queries++; return original(...args) }
+  try {
+    await server.start()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.equal(queries, 0, 'without subscribers there is no journal broadcast work')
+  } finally { await server.stop(); db.close() }
+})
+
+test('ordinary JPEG export is authenticated, source-verified, non-destructive and rejects malformed options or changed bytes',async()=>{
+  const temp=await mkdtemp(path.join(os.tmpdir(),'nikki-exif-route-')),mediaPath=path.join(temp,'photo.jpg');
+  const media=Buffer.from('ffd8ffe200084943435f5f5fffc0000b080040003001011100ffda0008010100003f000908ff0007ffd9','hex');await writeFile(mediaPath,media);
+  const db=new DatabaseManager(':memory:');db.initialize();const assets=new AssetRepository(db);
+  assets.reconcile({assetId:'exif_asset',assetType:'photo',assetState:'ready',discoveredAt:'2026-09-05T00:00:00.000Z',capturedAt:'2026-09-05T00:00:00.000Z',metadataSchemaVersion:1,
+    metadata:{schemaVersion:1,identity:{uid:'PRIVATE'},capture:{},camera:{focalLength:35,apertureSection:1.2},raw:{secret:'PRIVATE'}},
+    resources:[{resourceId:'exif_resource',assetId:'exif_asset',role:'source_primary',fileName:'photo.jpg',sourcePath:mediaPath,pathKey:mediaPath.toLowerCase(),mimeType:'image/jpeg',fileExt:'.jpg',sizeBytes:media.length,sha256:sha256(media),stableState:'stable',isDerived:false}]});
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false}),address=await server.start(),base=`http://127.0.0.1:${address.port}`;
+  const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+  const pair=new PairingService(db),qr=pair.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'0'.repeat(64)});
+  pair.pair({pairingToken:qr.pairingToken,device:{deviceId:'exif_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC');
+  const route='/v1/assets/exif_asset/resources/exif_resource/export?exif=true&rotation=90';
+  const get=(p:string)=>fetch(base+p,{headers:signedHeaders(keys.privateKey,'exif_phone','GET',p)});
+  try{
+    assert.equal((await fetch(base+route)).status,401);
+    const result=await get(route);assert.equal(result.status,200);const output=Buffer.from(await result.arrayBuffer());
+    assert.equal(result.headers.get('X-NikkiSync-SHA256'),sha256(output));assert.notEqual(sha256(output),sha256(media));assert.equal(result.headers.get('X-NikkiSync-Rotation'),'90');assert.equal(result.headers.get('X-NikkiSync-Exif'),'1');
+    assert.ok(output.includes(Buffer.from('MomoCamera')));assert.ok(output.includes(Buffer.from('Bloom Beneath Bright Skies')));assert.equal(output.includes(Buffer.from('PRIVATE')),false);assert.deepEqual(await readFile(mediaPath),media);
+    const personalized=await get(route+'&cameraName='+encodeURIComponent('晚星的大喵相机'));
+    assert.equal(personalized.status,200);assert.ok(!Buffer.from(await personalized.arrayBuffer()).includes(Buffer.from('晚星的大喵相机','utf8')));
+    for(const suffix of ['&cameraName=','&cameraName=x&cameraName=y','&cameraName=x%00y','&cameraName='+encodeURIComponent('暖'.repeat(100))])assert.equal((await get(route+suffix)).status,400);
+    assert.equal((await get(route.replace('exif=true','exif=false')+'&cameraName=x')).status,400);
+    for(const p of [route.replace('90','91'),route+'&path=PRIVATE',route+'&exif=false'])assert.equal((await get(p)).status,400);
+    await writeFile(mediaPath,Buffer.alloc(media.length));assert.equal((await get(route)).status,409);
+  }finally{await server.stop();db.close();await rm(temp,{recursive:true,force:true});}
+})
 
 function signedHeaders(privateKey: string, deviceId: string, method: string, requestPath: string, body = Buffer.alloc(0)): Record<string, string> {
   const timestamp = String(Date.now())
@@ -25,6 +124,36 @@ function signedHeaders(privateKey: string, deviceId: string, method: string, req
     'X-NikkiSync-Signature': sign(null, Buffer.from(canonical), privateKey).toString('base64url')
   }
 }
+
+test('scanned standalone video obeys source selection and serves authenticated ranges',async()=>{
+  const temp=await realpath(await mkdtemp(path.join(os.tmpdir(),'momo-video-api-'))),game=path.join(temp,'Game'),folder=path.join(temp,'SpinningMomo')
+  await mkdir(path.join(game,'X6Game'),{recursive:true});await writeFile(path.join(game,'InfinityNikki.exe'),'');await mkdir(folder)
+  const file=path.join(folder,'recording.mp4'),bytes=Buffer.from('0123456789abcdef');await writeFile(file,bytes)
+  const db=new DatabaseManager(':memory:');db.initialize()
+  const root={id:idFor(folder),path:folder,mode:'images' as const,source:'spinning_momo' as const}
+  const scanner=new ScannerService(db,{startingPaths:[game],runningExecutablePaths:[],extraDirectories:[root],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  const server=new LocalSyncServer(db,{host:'127.0.0.1',port:0,mdns:false,accountSourceDirectories:()=>[root]})
+  try{
+    const scan=await scanner.start();assert.deepEqual(scan.errors,[])
+    const address=await server.start(),base=`http://127.0.0.1:${address.port}`
+    const keys=generateKeyPairSync('ed25519',{publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}})
+    const pairing=new PairingService(db),qr=pairing.createQrPayload({host:'127.0.0.1',port:address.port,tlsFingerprintSha256:'0'.repeat(64)})
+    pairing.pair({pairingToken:qr.pairingToken,device:{deviceId:'video_phone',deviceName:'Test',platform:'android',publicKey:keys.publicKey,appVersion:'test'}},'PC')
+    const get=(route:string,range?:string)=>fetch(base+route,{headers:{...signedHeaders(keys.privateKey,'video_phone','GET',route),...(range?{Range:range}:{})}})
+    server.accounts.setSelection(['source:spinning_momo'])
+    const list=await(await get('/v1/assets?limit=10')).json() as {items:Array<{assetId:string;type:string;hasMotion:boolean}>}
+    assert.equal(list.items.length,1);assert.equal(list.items[0]!.type,'video');assert.equal(list.items[0]!.hasMotion,false)
+    const detail=await(await get('/v1/assets/'+list.items[0]!.assetId)).json() as {asset:{resources:Array<{resourceId:string}>;motion?:unknown}}
+    assert.equal(detail.asset.motion,undefined)
+    const route='/v1/assets/'+list.items[0]!.assetId+'/resources/'+detail.asset.resources[0]!.resourceId
+    assert.equal((await fetch(base+route,{headers:{Range:'bytes=2-5'}})).status,401)
+    const part=await get(route,'bytes=2-5');assert.equal(part.status,206);assert.equal(part.headers.get('content-range'),'bytes 2-5/16');assert.deepEqual(Buffer.from(await part.arrayBuffer()),bytes.subarray(2,6))
+    await writeFile(file,Buffer.from('replacement with a different size'))
+    assert.equal((await get(route,'bytes=2-5')).status,409,'changed video cannot stream under a stale digest')
+    await scanner.fullScan();assert.equal((await get(route,'bytes=2-5')).status,206)
+    server.accounts.setSelection([]);assert.equal((await get(route,'bytes=2-5')).status,404)
+  }finally{await server.stop();await scanner.stop();db.close();await rm(temp,{recursive:true,force:true})}
+})
 
 async function readWsText(socket: net.Socket, timeoutMs = 3000): Promise<string> {
   return await new Promise<string>((resolve, reject) => {

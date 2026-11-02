@@ -1,0 +1,22 @@
+{
+  "name": "Nikki Pink · Peach & Cream",
+  "version": 1,
+  "colors": {
+    "background": "#FFF8F0",
+    "surface": "#FFFCF7",
+    "text": "#59475E",
+    "secondary": "#664F5E",
+    "brand": "#D780AA",
+    "primary": "#F6BCC0",
+    "primaryForeground": "#62425A",
+    "primaryHover": "#F0ABB6",
+    "tint": "#FBE6ED",
+    "accentInk": "#7B5068",
+    "border": "#EED5DD",
+    "backgroundTop": "#F5DCE5",
+    "backgroundMiddle": "#FAE6DF",
+    "peach": "#F8D4BF",
+    "cream": "#FFF1CF",
+    "violet": "#8B719D"
+  }
+}

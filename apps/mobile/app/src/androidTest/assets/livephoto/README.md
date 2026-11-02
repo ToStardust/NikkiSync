@@ -20,3 +20,5 @@ After generation, run from `apps/mobile`:
 ```
 
 The second command runs on connected Android hardware/emulator and must be explicitly authorized for the selected device. Do not silently skip tests when the assets or codec are missing. The test never inserts fixtures into the user's gallery.
+
+The same generated assets are used by `app.nikkisync.mobile.ui.chrome.LivePhotoPlaybackInstrumentedTest` (added 2026-10-18). It exercises actual TextureView rendering, muted autoplay/loop, pause and lifecycle decoder release using a private synthetic Saved-format file. It requires initial consent to have been accepted manually on a dedicated test install. It never inserts a gallery item or changes Saved history. Do not uninstall an existing official-signed installation to replace it with a differently signed debug build. This test was compiled but not run when no Android device was connected.

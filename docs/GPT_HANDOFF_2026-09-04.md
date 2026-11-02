@@ -27,7 +27,7 @@ D:\GAME\InfinityNikki Launcher\InfinityNikki\X6Game
 2026-09-04 已通过桌面启动器自检：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Stardust\Desktop\start-nikkisync-gpt-mcp.ps1" -CheckOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\Desktop\start-nikkisync-gpt-mcp.ps1" -CheckOnly
 ```
 
 自检结果：`CHECK PASSED`。

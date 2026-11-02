@@ -22,16 +22,18 @@ public final class SignedHttpClient {
     private final PairedServer server;
     private final DeviceIdentity identity;
     private final PinnedTls tls;
+    private final VerifiedServerClock clock;
     private final SecureRandom random = new SecureRandom();
 
     public SignedHttpClient(PairedServer server, DeviceIdentity identity) throws Exception {
         this.server = server;
         this.identity = identity;
         this.tls = new PinnedTls(server.tlsFingerprintSha256());
+        this.clock = new VerifiedServerClock(this::readServerClock,System::currentTimeMillis,android.os.SystemClock::elapsedRealtime);
     }
 
     public Map<String, String> authHeaders(String method, String pathAndQuery, byte[] body) throws Exception {
-        String timestamp = Long.toString(System.currentTimeMillis());
+        String timestamp = Long.toString(clock.timestamp());
         byte[] nonceBytes = new byte[16]; random.nextBytes(nonceBytes);
         String nonce = Base64.getUrlEncoder().withoutPadding().encodeToString(nonceBytes);
         String bodyHash = Hex.lower(MessageDigest.getInstance("SHA-256").digest(body));
@@ -54,6 +56,10 @@ public final class SignedHttpClient {
     }
 
     public HttpsURLConnection open(String method, String pathAndQuery, byte[] body, boolean signed) throws Exception {
+        return open(method,pathAndQuery,body,signed,"application/json; charset=utf-8");
+    }
+
+    public HttpsURLConnection open(String method,String pathAndQuery,byte[] body,boolean signed,String contentType) throws Exception {
         HttpsURLConnection connection = (HttpsURLConnection) new URL(baseUrl() + pathAndQuery).openConnection();
         connection.setSSLSocketFactory(tls.socketFactory());
         connection.setHostnameVerifier(tls.hostnameVerifier());
@@ -66,7 +72,7 @@ public final class SignedHttpClient {
         }
         if (body.length > 0) {
             connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setRequestProperty("Content-Type", contentType);
             connection.setFixedLengthStreamingMode(body.length);
             connection.getOutputStream().write(body);
         }
@@ -74,6 +80,21 @@ public final class SignedHttpClient {
     }
 
     public PinnedTls tls() { return tls; }
+
+    private VerifiedServerClock.Sample readServerClock() throws Exception {
+        // This GET carries no credentials and uses the same pinned certificate as
+        // every signed request. An old or unavailable server retains old behavior.
+        HttpsURLConnection connection=open("GET","/v1/server",new byte[0],false);
+        connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(1200);connection.setReadTimeout(1500);
+        try{
+            if(connection.getResponseCode()!=200)throw new java.io.IOException("电脑连接检查失败");
+            byte[] bytes;
+            try(InputStream input=connection.getInputStream()){bytes=app.nikkisync.mobile.util.ByteStreams.readNBytes(input,8193);}
+            if(bytes.length>8192)throw new java.io.IOException("电脑连接信息过大");
+            var info=new org.json.JSONObject(new String(bytes,StandardCharsets.UTF_8));
+            return VerifiedServerClock.fromVerifiedInfo(server,info,connection.getHeaderFieldDate("Date",0),android.os.SystemClock.elapsedRealtime());
+        }finally{connection.disconnect();}
+    }
 
     private String baseUrl() {
         String host = server.host().contains(":") ? "[" + server.host() + "]" : server.host();

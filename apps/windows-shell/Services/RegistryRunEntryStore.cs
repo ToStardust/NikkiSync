@@ -9,7 +9,11 @@ public sealed class RegistryRunEntryStore : IRunEntryStore
 
     public string? Value
     {
-        get => Registry.CurrentUser.OpenSubKey(RunKey, writable: false)?.GetValue(ValueName) as string;
+        get
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: false);
+            return key?.GetValue(ValueName) as string;
+        }
         set
         {
             using var key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);

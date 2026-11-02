@@ -1,0 +1,2 @@
+@import "../diagnostics/index.wxss";
+.preview { width: 100%; height: 480rpx; margin: 24rpx 0; }

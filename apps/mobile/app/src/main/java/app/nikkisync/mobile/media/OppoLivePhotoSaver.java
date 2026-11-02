@@ -108,7 +108,7 @@ public final class OppoLivePhotoSaver {
                 int marker; do { marker = input.read(); } while (marker == 0xFF); if (marker < 0) break; output.write(0xFF); output.write(marker);
                 if (marker == 0xDA) { copy(input, output); break; }
                 if (marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) continue;
-                int hi = input.read(), lo = input.read(); int length = (hi << 8) | lo; byte[] p = input.readNBytes(length - 2);
+                int hi = input.read(), lo = input.read(); int length = (hi << 8) | lo; byte[] p = app.nikkisync.mobile.util.ByteStreams.readNBytes(input,length - 2);
                 if (marker == 0xE1 && startsWith(p, XMP_HEADER)) continue;
                 if (marker == 0xE2 && p.length >= 4 && p[0] == 'M' && p[1] == 'P' && p[2] == 'F' && p[3] == 0) continue;
                 output.write(hi); output.write(lo); output.write(p);

@@ -77,7 +77,7 @@ public final class InspirationImageStore {
         return new File(directory, localName);
     }
 
-    /** Only for rolling back a newly copied file after its database insert failed. */
+    /** Deletes only an app-private copy after rollback or explicit removal of its reference. */
     public void deleteLocal(String localName) throws IOException { Files.deleteIfExists(resolve(localName).toPath()); }
 
     private static String extension(String mime) throws IOException {

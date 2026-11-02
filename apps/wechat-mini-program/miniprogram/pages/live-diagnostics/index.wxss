@@ -1,0 +1,14 @@
+page { background: var(--nikki-background); color: var(--nikki-text); }
+.page { padding: 36rpx; padding-bottom: calc(44rpx + env(safe-area-inset-bottom)); }
+.eyebrow { color: var(--nikki-accent); font-size: 24rpx; letter-spacing: 2rpx; }
+.title { font-size: 42rpx; font-weight: 600; margin: 16rpx 0; }
+.copy, .warning, .checklist { font-size: 25rpx; line-height: 1.8; margin: 20rpx 0; color: var(--nikki-secondary); }
+.device { font-size: 22rpx; color: var(--nikki-secondary); margin: 22rpx 0; }
+.primary { background: var(--nikki-primary); color: var(--nikki-primary-foreground); border-radius: 30rpx; margin: 22rpx 0; font-size: 28rpx; }
+.card { background: var(--nikki-surface); border: 1rpx solid var(--nikki-border); border-radius: 34rpx; padding: 24rpx; }
+.cover, .clip { display: block; width: 100%; height: 310rpx; background: #25202c; border-radius: 18rpx; margin: 14rpx 0; }
+.selector { display: flex; justify-content: space-between; padding: 26rpx 20rpx; border-radius: 22rpx; background: var(--nikki-tint); font-size: 26rpx; }
+.warning { color: #96704c; }
+.status { margin: 28rpx 0; font-size: 29rpx; line-height: 1.8; }
+.result { font-size: 25rpx; color: var(--nikki-accent); }
+.checklist { color: var(--nikki-text); }

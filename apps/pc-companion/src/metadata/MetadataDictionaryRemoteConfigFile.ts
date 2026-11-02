@@ -26,6 +26,7 @@ export type MetadataDictionaryRemoteProviderConfig = RemoteJsonProviderConfig | 
 export interface MetadataDictionaryRemoteConfigFile {
   enabled?: boolean
   provider?: MetadataDictionaryRemoteProviderConfig
+  gallery?: { enabled?: boolean, intervalMs?: number }
 }
 
 function isPositiveFiniteNumber(value: unknown): value is number {
@@ -48,6 +49,14 @@ export function loadMetadataDictionaryRemoteConfigFile(filePath: string): Metada
     if (!parsed || typeof parsed !== 'object' || !provider || typeof provider !== 'object' || Array.isArray(provider)) return undefined
     const record = provider as Record<string, unknown>
     if (parsed.enabled !== undefined && typeof parsed.enabled !== 'boolean') return undefined
+    const gallery = parsed.gallery as Record<string, unknown> | undefined
+    if (gallery !== undefined && (!gallery || typeof gallery !== 'object' || Array.isArray(gallery)
+      || (gallery.enabled !== undefined && typeof gallery.enabled !== 'boolean')
+      || (gallery.intervalMs !== undefined && !isPositiveFiniteNumber(gallery.intervalMs)))) return undefined
+    const galleryConfig = gallery ? { gallery: {
+      ...(gallery.enabled === undefined ? {} : { enabled: gallery.enabled as boolean }),
+      ...(gallery.intervalMs === undefined ? {} : { intervalMs: gallery.intervalMs as number })
+    } } : {}
     for (const key of ['intervalMs', 'timeoutMs'] as const) {
       if (record[key] !== undefined && !isPositiveFiniteNumber(record[key])) return undefined
     }
@@ -58,6 +67,7 @@ export function loadMetadataDictionaryRemoteConfigFile(filePath: string): Metada
       if (typeof record.id !== 'string' || !record.id) return undefined
       if (typeof record.endpoint !== 'string' || !/^https:\/\//i.test(record.endpoint)) return undefined
       return {
+        ...galleryConfig,
         ...(parsed.enabled === undefined ? {} : { enabled: parsed.enabled }),
         provider: {
           type: 'remote-json',
@@ -76,6 +86,7 @@ export function loadMetadataDictionaryRemoteConfigFile(filePath: string): Metada
       if (record.manifestEndpoint !== undefined
         && (typeof record.manifestEndpoint !== 'string' || !/^https:\/\//i.test(record.manifestEndpoint))) return undefined
       return {
+        ...galleryConfig,
         ...(parsed.enabled === undefined ? {} : { enabled: parsed.enabled }),
         provider: {
           type: 'nikki-albums-public',

@@ -56,6 +56,7 @@ export interface InfinityPhotoMetadata {
   identity: {
     uid?: string
     gameVersion?: string
+    gameVersionEnglishName?: string
     sourceAssetId?: string
   }
   capture: {
@@ -75,7 +76,13 @@ export interface InfinityPhotoMetadata {
     bloomIntensity?: number
     bloomThreshold?: number
     portraitMode?: boolean
+    rotation?: number
+    zoom?: number
+    cameraYaw?: number
+    cameraPitch?: number
+    cameraLoc?: Record<string, unknown>
   }
+  pose?: { id?: string; name?: string; strength?: number }
   filter?: {
     id?: string
     name?: string

@@ -1,0 +1,7 @@
+<view class="intro">
+  <text class="title">局域网 HTTPS 测试</text>
+  <text>先保持电脑与手机连接同一 Wi-Fi，再扫描专用诊断码。普通照片二维码不能用于此测试。</text>
+  <text>只读取合成 JSON 和小型 PNG，无 UID、配对凭据或真实照片；不关闭 TLS 校验，不改用 HTTP。</text>
+  <button bindtap="scanTest" disabled="{{busy}}" loading="{{busy}}">扫描 HTTPS 诊断码</button>
+  <text class="result">{{message}}</text>
+</view>

@@ -53,4 +53,27 @@ public final class ShareCardPayloadBuilderTest {
         assertTrue(payload.cameraItems().isEmpty());
         assertTrue(payload.effectItems().isEmpty());
     }
+
+    @Test public void unknownNamesStayBlankButKeepPartIdentityForIcons() {
+        ShareCardPayload payload = ShareCardPayloadBuilder.build("photo", "", "", """
+                {"dressing":{"clothes":[
+                {"id":"10200000001","category":"hair"},
+                {"id":"10200000002","name":"名称待解析"},
+                {"id":"10200000003","name":"10200000003"},
+                {"id":"10200000004","name":"浮金星点"}]}}
+                """);
+        assertEquals(4, payload.outfitItems().size());
+        assertEquals("10200000001", payload.outfitItems().get(0).clothingId());
+        assertEquals("", payload.outfitItems().get(0).value());
+        assertEquals(3, payload.outfitItems().stream().filter(item -> item.value().isEmpty()).count());
+    }
+    @Test public void readsCanonicalCameraKeysIncludingZeros() {
+        var payload=ShareCardPayloadBuilder.build("a","","","""
+                {"camera":{"apertureSection":16,"vignetteIntensity":0,"bloomIntensity":8,"bloomThreshold":1.0}}
+                """);
+        assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("光圈") && item.value().equals("16")));
+        assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("晕影") && item.value().equals("0")));
+        assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("柔光强度") && item.value().equals("8")));
+        assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("柔光范围")));
+    }
 }

@@ -34,6 +34,7 @@ export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
   }
 
   async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+    request.signal?.throwIfAborted()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 12_000)
     try {
@@ -54,7 +55,7 @@ export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
             ? {}
             : { payloadDecodedBytes: request.nativeParamPayloadDecodedBytes })
         }),
-        signal: controller.signal
+        signal: request.signal?AbortSignal.any([controller.signal,request.signal]):controller.signal
       })
       const text = await response.text()
       if (!response.ok) throw new Error(`metadata resolver HTTP ${response.status}: ${text.slice(0, 240)}`)

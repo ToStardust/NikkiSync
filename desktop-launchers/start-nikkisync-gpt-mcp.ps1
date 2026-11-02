@@ -1,13 +1,17 @@
 param(
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [string]$WorkspacePath = (Split-Path -Parent $PSScriptRoot),
+    [string]$PythonPath = '',
+    [string]$SitePackagesPath = $env:NIKKISYNC_MCP_SITE_PACKAGES,
+    [string]$CloudflaredPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
-$workspace = 'D:\GAME\InfinityNikki Launcher\InfinityNikki\X6Game\CameraPartner\NikkiSync'
-$python = 'C:\Users\Stardust\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-$sitePackages = 'C:\Users\Stardust\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Roaming\Python\Python312\site-packages'
-$cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+$workspace = $WorkspacePath
+$python = if ($PythonPath) { $PythonPath } else { (Get-Command python -ErrorAction SilentlyContinue).Source }
+$sitePackages = $SitePackagesPath
+$cloudflared = if ($CloudflaredPath) { $CloudflaredPath } else { (Get-Command cloudflared -ErrorAction SilentlyContinue).Source }
 $port = 8767
 
 function Stop-Launcher([string]$message) {
@@ -23,11 +27,11 @@ Write-Host "Local port: $port (PhotoLayout=8765, Neon Road=8766)"
 Write-Host ''
 
 if (-not (Test-Path -LiteralPath $workspace -PathType Container)) { Stop-Launcher "Workspace not found: $workspace" }
-if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { Stop-Launcher "Python not found: $python" }
-if (-not (Test-Path -LiteralPath $sitePackages -PathType Container)) { Stop-Launcher "coding-tools-mcp package directory not found: $sitePackages" }
-if (-not (Test-Path -LiteralPath $cloudflared -PathType Leaf)) { Stop-Launcher "cloudflared not found: $cloudflared" }
+if (-not $python -or -not (Test-Path -LiteralPath $python -PathType Leaf)) { Stop-Launcher 'Python not found. Install it on PATH or pass -PythonPath.' }
+if ($sitePackages -and -not (Test-Path -LiteralPath $sitePackages -PathType Container)) { Stop-Launcher "coding-tools-mcp package directory not found: $sitePackages" }
+if (-not $cloudflared -or -not (Test-Path -LiteralPath $cloudflared -PathType Leaf)) { Stop-Launcher 'cloudflared not found. Install it on PATH or pass -CloudflaredPath.' }
 
-$env:PYTHONPATH = $sitePackages + ';' + $env:PYTHONPATH
+if ($sitePackages) { $env:PYTHONPATH = $sitePackages + ';' + $env:PYTHONPATH }
 & $python -c 'import coding_tools_mcp' 2>$null
 if ($LASTEXITCODE -ne 0) { Stop-Launcher 'coding-tools-mcp could not be imported by the configured Python.' }
 

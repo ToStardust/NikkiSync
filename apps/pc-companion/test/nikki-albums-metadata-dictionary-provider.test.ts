@@ -4,11 +4,21 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+
+test('primary dictionary includes exact filter and lighting names from its existing language package', () => {
+  const manifest = buildDictionaryManifest({ provider: 'fixture', providerVersion: '1',
+    language: { infinity_nikki: { cloth: { '10': '已有服装' },
+      filter: { '1090020014': '红蓝交响' }, light: { '1090030013': '轻白边光' } } },
+    database: { clothTypes: new Map([[10, 30]]), clothOutfits: new Map() } })
+  assert.equal(manifest.entries.find(entry => entry.kind === 'clothing' && entry.id === '10')?.name, '已有服装')
+  assert.equal(manifest.entries.find(entry => entry.kind === 'filter' && entry.id === '1090020014')?.name, '红蓝交响')
+  assert.equal(manifest.entries.find(entry => entry.kind === 'lighting' && entry.id === '1090030013')?.name, '轻白边光')
+})
 import {
   createMetadataDictionaryProviderFromConfig,
   loadMetadataDictionaryRemoteConfigFile
 } from '../src/metadata/MetadataDictionaryRemoteConfigFile.js'
-import { NikkiAlbumsMetadataDictionaryProvider } from '../src/metadata/NikkiAlbumsMetadataDictionaryProvider.js'
+import { NikkiAlbumsMetadataDictionaryProvider, buildDictionaryManifest } from '../src/metadata/NikkiAlbumsMetadataDictionaryProvider.js'
 import { composeMetadataDictionaryProvider } from '../src/metadata/MetadataStartupComposition.js'
 
 const PACKAGE_KEY = Buffer.from('9C46C6BF431F5AFFF97A2002AEDFA8B7', 'ascii')
@@ -136,7 +146,7 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
     if (result.status !== 'updated') return
     assert.equal(result.etag, '"fixture-v1"')
     assert.equal(result.manifest.provider, 'nikki-albums-public')
-    assert.equal(result.manifest.providerVersion, 'lang-v1:db-v1')
+    assert.equal(result.manifest.providerVersion, 'lang-v1:db-v1:photography-names-v1')
     assert.deepEqual(result.manifest.entries, [{
       kind: 'clothing',
       id: String(clothingId),

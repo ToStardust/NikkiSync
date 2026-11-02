@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
+import path from 'node:path'
+import os from 'node:os'
 
-const dbPath = process.argv[2] ?? 'C:\\Users\\Stardust\\NikkiSync\\nikkisync.sqlite'
+const dbPath = process.argv[2] ?? path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'NikkiSync', 'nikkisync.sqlite')
 const db = new DatabaseSync(dbPath, { readOnly: true })
 const rows = db.prepare(`
   SELECT asset_id, uid, metadata_json

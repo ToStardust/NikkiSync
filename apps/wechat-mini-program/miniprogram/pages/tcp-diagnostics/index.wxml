@@ -1,0 +1,7 @@
+<view class="intro">
+  <text class="title">局域网 TCP 连通性测试</text>
+  <text>电脑和手机保持同一 Wi-Fi，扫描专用 TCP 诊断码。</text>
+  <text>此测试只交换公开的合成文本，没有加密或身份保证。严禁用于照片、UID、密码或配对凭据，不是 HTTPS 失败后的自动降级。</text>
+  <button bindtap="scanTest" disabled="{{busy}}" loading="{{busy}}">扫描 TCP 诊断码</button>
+  <text class="result">{{message}}</text>
+</view>

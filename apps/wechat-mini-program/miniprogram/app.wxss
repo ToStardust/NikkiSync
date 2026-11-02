@@ -1,0 +1,22 @@
+page {
+  --nikki-background: #FFF8F0; --nikki-surface: #FFFCF7;
+  --nikki-text: #59475E; --nikki-secondary: #664F5E;
+  --nikki-brand: #D780AA; --nikki-primary: #F6BCC0;
+  --nikki-primary-foreground: #62425A; --nikki-tint: #FBE6ED;
+  --nikki-accent: #7B5068; --nikki-border: #EED5DD;
+  --nikki-background-top: #F5DCE5; --nikki-background-middle: #FAE6DF;
+  background: var(--nikki-background); color: var(--nikki-text);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+button { font-size: 28rpx; line-height: 1.5; }
+button::after { border: none; }
+button[disabled] { opacity: .48; }
+.ambient { position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; background: linear-gradient(165deg,var(--nikki-background-top),var(--nikki-background-middle) 52%,var(--nikki-background)); }
+.glass-surface { background: var(--nikki-surface); border: 1rpx solid rgba(255,248,240,.82); box-shadow: 0 10rpx 36rpx rgba(141,81,109,.045); }
+.primary-action { display: block; padding: 25rpx 32rpx; border-radius: 32rpx; text-align: center; background: var(--nikki-primary); color: var(--nikki-primary-foreground); font-size: 29rpx; font-weight: 600; }
+.primary-action:active { background: #F0ABB6; }
+.secondary-action { padding: 22rpx 28rpx; border-radius: 32rpx; background: var(--nikki-tint); color: var(--nikki-accent); }
+button:focus-visible { outline: 4rpx solid var(--nikki-brand); outline-offset: 4rpx; }
+@supports (backdrop-filter: blur(1px)) {
+  .glass-surface { background: rgba(255,252,247,.92); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+}

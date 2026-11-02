@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile, readdir,utimes } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -67,3 +67,27 @@ test('metadata thumbnail cache rejects unsafe URL, local targets, content type a
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('shared icon disk cache bounds owned files and evicts old entries while retaining unrelated user files',async()=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),'nikki-cache-budget-'));let requests=0;
+ try{
+  await writeFile(path.join(directory,'user-note.txt'),'keep');
+  const cache=new MetadataThumbnailCache({cacheDir:directory,maxBytes:8,maxCacheBytes:16,maxEntries:2,graceMs:0,fetchImpl:(async()=>{requests++;return new Response(Buffer.alloc(8,1),{headers:{'content-type':'image/png'}});}) as typeof fetch});
+  const a=await cache.get('https://images.example.test/a');await utimes(a.path,new Date(1000),new Date(1000));const b=await cache.get('https://images.example.test/b');await cache.get('https://images.example.test/c');
+  const files=await readdir(directory);assert.equal(files.filter(x=>x.endsWith('.img')).length,2);assert.ok(files.includes('user-note.txt'));await assert.rejects(()=>stat(a.path));assert.ok((await stat(b.path)).size);assert.equal(requests,3);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
+
+test('cached thumbnail content hash is verified and corrupt entries are fetched again',async()=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),'nikki-cache-digest-'));let requests=0;
+ try{const cache=new MetadataThumbnailCache({cacheDir:directory,fetchImpl:(async()=>{requests++;return new Response(Buffer.from([1,2,3,4]),{headers:{'content-type':'image/png'}});}) as typeof fetch});const a=await cache.get('https://images.example.test/a');await writeFile(a.path,Buffer.from([4,3,2,1]));await cache.get('https://images.example.test/a');assert.equal(requests,2);}finally{await rm(directory,{recursive:true,force:true});}
+});
+
+test('shared icon download deadline includes a stalled response body after successful headers',async()=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),'nikki-cache-body-timeout-'));let controller:ReadableStreamDefaultController<Uint8Array>|undefined;
+ try{const cache=new MetadataThumbnailCache({cacheDir:directory,timeoutMs:20,fetchImpl:(async(_input:unknown,init?:RequestInit)=>{
+  const stream=new ReadableStream<Uint8Array>({start(value){controller=value;value.enqueue(Uint8Array.from([1,2,3,4]));}});
+  init?.signal?.addEventListener('abort',()=>controller?.error(new Error('Aborted body')),{once:true});return new Response(stream,{headers:{'content-type':'image/png'}});
+ }) as typeof fetch});const result=await Promise.race([cache.get('https://images.example.test/stalled').then(()=>false,()=>true),new Promise(resolve=>setTimeout(()=>resolve('slow'),100))]);assert.equal(result,true);assert.equal((await readdir(directory)).length,0);
+ }finally{controller?.error(new Error('Test cleanup'));await rm(directory,{recursive:true,force:true});}
+});

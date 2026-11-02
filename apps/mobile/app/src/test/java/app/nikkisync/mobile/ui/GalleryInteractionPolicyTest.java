@@ -19,9 +19,9 @@ public final class GalleryInteractionPolicyTest {
         );
     }
 
-    @Test public void selectionModeClickOnlyTogglesSelection() {
+    @Test public void selectionModePhotoClickStillOpensPreview() {
         assertEquals(
-                GalleryInteractionPolicy.Action.TOGGLE_SELECTION,
+                GalleryInteractionPolicy.Action.OPEN_VIEWER,
                 GalleryInteractionPolicy.onClick(true)
         );
     }
