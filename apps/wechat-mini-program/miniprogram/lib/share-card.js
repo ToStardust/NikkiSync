@@ -10,7 +10,7 @@ function buildPayload(input){
  const pick=labels=>rows.filter(row=>labels.indexOf(row.label)>=0&&clean(row.value)).map(row=>({label:row.label,value:clean(row.value)}));
  const version=rows.find(row=>row.label==='游戏版本');
  const name=value=>{const text=clean(value);return /^(名称待解析|未解析|未命名|未知名称|服装名称待解析)$/.test(text)||/^服装[\s#：:_-]*\d{6,}$/.test(text)||/^\d+$/.test(text)?'':text;};
- return {date:clean(input.date),version:clean(version?.value),outfit:(input.outfits||[]).map(item=>({label:'',value:name(item.name),iconPath:clean(item.iconPath),iconSource:item.iconSource==='category'?'category':'item'})),camera:pick(CAMERA),effects:pick(EFFECTS)};
+ return {date:clean(input.date),version:clean(version?.value),branding:{title:clean(input.branding?.title).slice(0,96)||'大喵相机',footer:clean(input.branding?.footer).slice(0,128)||'MomoCamera'},outfit:(input.outfits||[]).map(item=>({label:'',value:name(item.name),iconPath:clean(item.iconPath),iconSource:item.iconSource==='category'?'category':'item'})),camera:pick(CAMERA),effects:pick(EFFECTS)};
 }
 function wrap(ctx,text,width){
  const lines=[];let line='';
@@ -50,15 +50,15 @@ function parameterPresentation(label,value){
  return {label,value:raw,displayValue,ratio,missing:!raw,height:86};
 }
 function rounded(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();ctx.fill();}
-function render(ctx,image,page,payload,index,total,rotation,soft,icons){
+function render(ctx,image,page,payload,index,total,rotation,icons){
  const height=page.height;ctx.fillStyle='#FFF8F0';ctx.fillRect(0,0,WIDTH,height);
  // Keep the photo visible through fine translucent panels, as in the game parameter overlay.
- const source=soft||image,w=source.width||1,h=source.height||1;
+ const source=image,w=source.width||1,h=source.height||1;
  ctx.save();ctx.translate(WIDTH/2,height/2);ctx.rotate(rotation*Math.PI/180);
  const swap=rotation===90||rotation===270,areaW=swap?height:WIDTH,areaH=swap?WIDTH:height,scale=Math.max(areaW/w,areaH/h);
  ctx.drawImage(source,-w*scale/2,-h*scale/2,w*scale,h*scale);ctx.restore();
  ctx.fillStyle='rgba(34,28,38,0.48)';ctx.fillRect(0,0,WIDTH,height);
- ctx.fillStyle='#FFF8F0';ctx.font='48px sans-serif';ctx.fillText('NikkiSync',60,98);
+ ctx.fillStyle='#FFF8F0';ctx.font='48px sans-serif';const title=payload.branding.title,titleWidth=ctx.measureText(title).width;if(titleWidth>1320)ctx.font=(48*1320/titleWidth)+'px sans-serif';ctx.fillText(title,60,98);
  ctx.font='25px sans-serif';ctx.fillStyle='rgba(255,248,240,.8)';ctx.fillText([payload.date||'无限暖暖摄影',payload.version].filter(Boolean).join(' · '),60,146);
  ctx.fillStyle='#F6BCC0';rounded(ctx,60,170,96,4,2);
  const panel=(x,w)=>{ctx.fillStyle='rgba(244,224,232,.16)';rounded(ctx,x,218,w,height-284,22);ctx.strokeStyle='rgba(255,248,240,.52)';ctx.lineWidth=2;ctx.stroke();};
@@ -95,7 +95,7 @@ function render(ctx,image,page,payload,index,total,rotation,soft,icons){
  }
  // Delicate corner stars replace large opaque boxes and keep the photograph unobstructed.
  for(const [x,y] of [[1364,208],[1390,height-78]]){ctx.strokeStyle='rgba(255,248,240,.65)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y-18);ctx.lineTo(x+6,y-5);ctx.lineTo(x+18,y);ctx.lineTo(x+6,y+5);ctx.lineTo(x,y+18);ctx.lineTo(x-6,y+5);ctx.lineTo(x-18,y);ctx.lineTo(x-6,y-5);ctx.closePath();ctx.stroke();}
- ctx.fillStyle='rgba(255,248,240,.7)';ctx.font='20px sans-serif';ctx.fillText('NikkiSync · 穿搭与摄影记录'+(total>1?' · '+(index+1)+' / '+total:''),60,height-26);
+ ctx.fillStyle='rgba(255,248,240,.7)';ctx.font='20px sans-serif';const footer=payload.branding.footer+(total>1?' · '+(index+1)+' / '+total:''),footerWidth=ctx.measureText(footer).width;if(footerWidth>1320)ctx.font=(20*1320/footerWidth)+'px sans-serif';ctx.fillText(footer,60,height-26);
 }
 function loadImage(canvas,path){return new Promise((resolve,reject)=>{const image=canvas.createImage();image.onload=()=>resolve(image);image.onerror=()=>reject(new Error('照片无法绘制，请重试'));image.src=path;});}
 function createShareCardJob(wxApi,options){
@@ -136,7 +136,7 @@ function createShareCardJob(wxApi,options){
     try{fs.writeFile({filePath:file,data:buffer,success:()=>finish(true),fail:()=>finish(false)});}catch(_){finish(false);}
    });check();if(written){item.iconPath=file;item.iconSource=value.source;}else missingIcons++;
   }
-  const payload=buildPayload({date:options.date,rows:metadata.rows,outfits});
+  const payload=buildPayload({date:options.date,rows:metadata.rows,outfits,branding:options.branding});
   let path=options.originalPath;
   if(!path){options.progress?.('正在读取高清照片…');const value=await request('original',[]);if(cancelled||disposed)value.image?.fill(0);check();
    if(value.original!==true||!(value.image instanceof Uint8Array)||value.image.length<4||value.image.length>16777216||!['image/jpeg','image/png'].includes(value.mime)||! /^[a-f0-9]{64}$/.test(value.sha256||'')){value.image?.fill(0);throw new Error('高清照片校验失败');}
@@ -147,22 +147,18 @@ function createShareCardJob(wxApi,options){
    });
   }
   check();const canvas=options.canvas,ctx=canvas.getContext('2d'),image=await loadImage(canvas,path);check();
-  let soft;
-  if(typeof wxApi.createOffscreenCanvas==='function'){
-   try{const scale=Math.min(360/image.width,900/image.height);soft=wxApi.createOffscreenCanvas({type:'2d',width:Math.max(1,Math.round(image.width*scale)),height:Math.max(1,Math.round(image.height*scale))});soft.getContext('2d').drawImage(image,0,0,soft.width,soft.height);}catch(_){soft=null;}
-  }
   const pages=layoutCards(ctx,payload);
   for(let index=0;index<pages.length;index++){
    check();options.progress?.('正在生成分享图 '+(index+1)+' / '+pages.length+'…');
    const icons=new Map();
    for(const item of pages[index].outfit){if(!item.iconPath||icons.has(item.iconPath))continue;try{icons.set(item.iconPath,await loadImage(canvas,item.iconPath));}catch(_){missingIcons++;}check();}
-   canvas.width=WIDTH;canvas.height=pages[index].height;render(ctx,image,pages[index],payload,index,pages.length,options.rotation||0,soft,icons);icons.clear();
+   canvas.width=WIDTH;canvas.height=pages[index].height;render(ctx,image,pages[index],payload,index,pages.length,options.rotation||0,icons);icons.clear();
    const output=await new Promise((resolve,reject)=>{try{wxApi.canvasToTempFilePath({canvas,x:0,y:0,width:WIDTH,height:canvas.height,destWidth:WIDTH,destHeight:canvas.height,fileType:'png',
     success:value=>{owned.add(value.tempFilePath);if(cancelled||disposed){remove(value.tempFilePath);reject(new Error('已取消生成'));}else resolve(value.tempFilePath);},fail:()=>reject(new Error('分享图导出失败，请重试'))});}catch(_){reject(new Error('当前微信无法生成分享图，请更新后重试'));}});
    paths.push(output);
   }
-  // Release source/soft canvas memory immediately; only output pages live until preview closes.
-  if(soft){soft.width=1;soft.height=1;}canvas.width=1;canvas.height=1;
+  // Release canvas memory immediately; only output pages live until preview closes.
+  canvas.width=1;canvas.height=1;
   if(!options.originalPath)remove(path);
   for(const file of Array.from(owned))if(paths.indexOf(file)<0)remove(file);
   return {paths:paths.slice(),payload,missingIcons};

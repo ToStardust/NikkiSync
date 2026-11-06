@@ -7,8 +7,11 @@ import {extraScanDirectoriesHtml} from './ExtraScanDirectoriesPanel.js'
 import {accountSyncHtml,accountSyncCss} from './AccountSyncPanel.js'
 import {organizerHtml, temporaryNetworkHtml, organizerCss} from './OrganizerPanel.js'
 import {inspirationHtml,inspirationCss} from './InspirationPanel.js'
+import {wechatPanelHtml,wechatDialogHtml,wechatPanelScript} from './WeChatGalleryPanel.js'
 
 const css = `
+.wechat-entry-code{margin-top:20px;border:1px solid var(--border);border-radius:16px;padding:14px;background:var(--tint)}.wechat-entry-code summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--accent-dark)}.wechat-entry-code img{display:block;width:220px;max-width:100%;height:auto;margin:14px auto 0;border-radius:14px}.wechat-entry-code .channel-note{text-align:left}
+.connection-card.first-use-guide{display:block;margin-top:18px;padding:18px 22px}.first-use-guide summary{cursor:pointer;font-size:14px;font-weight:600}.first-use-guide summary span{font-size:11px;font-weight:400;color:var(--secondary);margin-left:12px}.first-use-guide[open] summary{margin-bottom:12px}.connection-grid.app-only-grid{grid-template-columns:minmax(0,1fr)}
 ${organizerCss}
 ${inspirationCss}
 .about-summary{text-align:center}.about-mark{display:flex;justify-content:center;margin:2px 0 16px}.about-mark .brand-avatar{width:76px;height:76px;border-radius:24px}.about-summary h2{font-size:24px}.about-version{color:var(--secondary);font-size:12px;margin-top:8px}.about-author{margin-top:20px;font-size:13px}.about-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px}.repository-link{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 0;border-top:1px solid var(--line);color:var(--accent-dark);text-decoration:none}.repository-link:first-of-type{margin-top:14px}.repository-link strong{font-weight:600}.repository-link small{display:block;color:var(--secondary);font-size:11px;overflow-wrap:anywhere;margin-top:4px}.repository-link:hover strong{text-decoration:underline}.update-dot{margin-left:auto;background:var(--brand)}
@@ -36,38 +39,37 @@ function escapeHtml(value: string): string {
 export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: string; remoteToken?: string; desktopToken?: string; metadataPrivacy?: boolean; wechat?: boolean; branded?: boolean } = {}): string {
   const { qrSvg, remoteToken, desktopToken, metadataPrivacy, wechat, branded } = options
   const token=remoteToken??desktopToken
-  // Keep experimental services available without advertising an unfinished Mini Program.
   const showRemote=!!remoteToken&&!wechat
   const avatar = branded ? '<img class="brand-avatar" src="/brand.png" alt="大喵相机助手" width="42" height="42">' : `<span class="brand-avatar brand-fallback">${icon('camera')}</span>`
   const android = `<section class="connection-card glass" aria-labelledby="android-title">
     <div class="channel-top"><span class="channel-icon">${icon('android')}</span><span class="channel-tag">Momo Camera</span></div>
-    <h2 id="android-title">Android App</h2><p class="channel-description">使用手机 App，浏览照片、查看穿搭与参数。</p>
+    <h2 id="android-title">Android App</h2><p class="channel-description">缓存照片，离线整理，查看穿搭与拍摄参数。</p>
     ${qrSvg ? `<div id="android-first-pairing" class="first-pairing"><div class="qr">${qrSvg}</div><p>首次配对 · 用 大喵相机助手 App 扫码</p></div>` : ''}
     <div id="android-paired" class="paired-note" ${status.pairedDevices === 0 ? 'hidden' : ''}>${icon('check')}<div><strong>设备已配对</strong><span>在同一 Wi-Fi 下打开 App 即可浏览</span></div></div>
     <button id="restart-sync-service" class="primary channel-action" hidden>重启同步服务</button><p id="sync-service-note" class="channel-note" hidden role="status">本机同步服务暂不可用。已配对记录仍保留，请重启服务后再扫描照片。</p>
     <button id="renew" class="secondary channel-action" aria-haspopup="dialog">生成新二维码 ${icon('arrow')}</button><p class="channel-note">添加新设备 · 配对码 5 分钟内有效</p><button id="open-organizer" class="secondary channel-action organizer-indicator" disabled>暂无待删除照片</button>
     <button id="export-connection-diagnostics" class="secondary channel-action" disabled>连接失败？导出诊断包 ${icon('arrow')}</button><p class="channel-note" data-diagnostics-status role="status">自动整理连接检查和排障日志，保存后发给开发者。</p>
   </section>`
-  const firstUse=`<section class="connection-card glass" aria-labelledby="first-use-title">
-    <h2 id="first-use-title">首次使用引导</h2><p class="channel-description">安装、连接和补充相册，按需完成这三步。</p>
+  const firstUse=`<details class="connection-card glass first-use-guide"><summary id="first-use-title">首次使用引导 <span>安装 App · 连接排障 · 补充相册</span></summary>
     <div class="first-use-actions"><button id="android-installer" class="primary" hidden>导出安卓安装包 ${icon('arrow')}</button><button id="open-network-settings" class="secondary">打开同步设置 · 连接排障 ${icon('arrow')}</button><button id="open-scan-settings" class="secondary">添加扫描目录 · 查看目录说明 ${icon('arrow')}</button></div>
     <ol class="first-use-steps">
       <li><h3><span class="step-number">1</span>安装手机 App</h3><p>导出 APK，发送到安卓手机安装，再用 App 扫描电脑端配对码。</p><p id="android-installer-note" hidden>电脑端已内置安装包，可直接导出。</p><p id="android-installer-unavailable">请在内置安装包的 Windows 助手中导出，或从“关于”下载 APK。</p></li>
       <li><h3><span class="step-number">2</span>连接与排障</h3><p id="network-home-note">电脑和手机连接同一 Wi-Fi，或让电脑连接这台手机的热点。扫码后连接超时，可到同步设置点击“允许手机连接”，在 Windows 弹窗中选择“是”；已能连接时无需操作。</p><p>校园网、公共 Wi-Fi 可能隔离设备；授权后仍失败，可改用手机热点再试。</p></li>
       <li><h3><span class="step-number">3</span>补充照片目录</h3><p>默认自动扫描游戏相册。照片没出现、相册搬过位置，或使用旋转吧大喵截图时，可添加实际保存照片的文件夹；先看目录说明，核对预览后再确认。</p></li>
     </ol>
-  </section>`
+  </details>`
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>大喵相机助手 · Momo Camera</title>
-    ${token ? `<meta name="nikkisync-desktop-token" content="${token}">` : ''}<style>${css}${remoteToken ? remotePanelCss : ''}</style></head><body>
+    ${token ? `<meta name="nikkisync-desktop-token" content="${token}">` : ''}<style>${css}${remoteToken ? remotePanelCss : ''}</style></head><body data-wechat-enabled="${Boolean(wechat)}">
     <div class="ambient" aria-hidden="true"></div><div class="app-shell">
     <aside class="sidebar"><div class="brand">${avatar}<div><div class="brand-name">大喵相机助手</div><div class="brand-english">Momo Camera</div></div></div>
       <nav class="navigation" aria-label="主导航"><button class="nav-item" data-view="connect" aria-current="page">${icon('phone')}手机连接</button><button class="nav-item" data-view="settings">${icon('settings')}同步设置</button><button class="nav-item" data-view="organizer">${icon('album')}最近删除<span id="organizer-nav-count" class="organizer-badge" hidden></span></button><button class="nav-item" data-view="inspiration">${icon('album')}灵感库</button><button class="nav-item" data-view="about">${icon('info')}关于<span id="about-update-dot" class="status-dot update-dot" aria-label="有新版本" hidden></span></button></nav>
-      <div class="sidebar-footer"><span>Windows 客户端</span><span>无限暖暖 · 非官方摄影助手</span></div>
+      <div class="sidebar-footer"><span>Windows 客户端 · ${wechat ? '兼容小程序和 APP' : '仅需 APP'}</span><span>无限暖暖 · 非官方摄影助手</span></div>
     </aside>
     <main class="workspace"><header class="page-header"><div><h1 id="desktop-title">暖暖相册</h1><p id="desktop-subtitle" class="page-subtitle">电脑里的风景与穿搭，在手机上慢慢欣赏。</p></div><span id="desktop-status" class="chip" data-state="ready" role="status"><span class="status-dot"></span><span id="desktop-status-text">同步服务运行中</span></span></header>
     <div data-page="connect"><section class="library-overview glass" aria-label="电脑相册状态"><span class="library-icon">${icon('album')}</span><div><p class="library-label">电脑相册</p><div class="library-number"><b id="desktop-assets">${status.assets}</b><span>份素材</span></div><p class="library-caption">新拍摄的照片会自动收录</p></div><div class="device-summary">${icon('phone')}<b id="desktop-devices">${status.pairedDevices}</b>台已配对设备</div></section>
       <div class="section-heading"><h2>连接到手机</h2><span class="network-hint">${icon('wifi')}电脑和手机需连接同一 Wi-Fi</span></div>
-      <div class="connection-grid">${firstUse}${android}${showRemote ? remotePanelHtml : ''}</div>
+      <div class="connection-grid${wechat || showRemote ? '' : ' app-only-grid'}">${android}${wechat ? wechatPanelHtml : ''}${showRemote ? remotePanelHtml : ''}</div>
+      ${firstUse}
       <p class="privacy-note">${icon('shield')}照片通过局域网传输。在线参数解析可在同步设置单独选择。</p>
     </div>
     <div data-page="settings" hidden><section class="settings-card glass" id="sync-connection-section"><h2>同步与连接</h2><div class="setting-row"><p>电脑局域网地址</p><span id="desktop-address" class="setting-value">${escapeHtml(status.host)}:${status.port}</span></div><div class="setting-row"><p>相册更新</p><span class="setting-value">自动收录新照片</span></div><div class="setting-row"><p>关闭窗口后</p><span class="setting-value">在托盘继续运行</span></div>${accountSyncHtml}</section><style>${accountSyncCss}</style>
@@ -85,6 +87,7 @@ export function renderDesktopPage(status: DesktopStatus, options: { qrSvg?: stri
       <section class="settings-card glass"><h2>项目仓库</h2><a class="repository-link" data-project="momo" href="https://github.com/ToStardust/NikkiSync" target="_blank" rel="noopener noreferrer"><span><strong>大喵相机助手 · NikkiSync</strong><small>https://github.com/ToStardust/NikkiSync</small></span>${icon('arrow')}</a><a class="repository-link" data-project="nikkiGallery" href="https://github.com/QianQianLuLu1/NikkiGallery" target="_blank" rel="noopener noreferrer"><span><strong>NikkiGallery · 暖暖照相馆</strong><small>https://github.com/QianQianLuLu1/NikkiGallery</small></span>${icon('arrow')}</a></section>
     </div></main></div>
     ${showRemote ? remoteDialogHtml : ''}
+    ${wechat ? wechatDialogHtml : ''}
     <div id="modal" class="modal" hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="pairing-title" aria-describedby="pairing-description"><div class="dialog-header"><h2 id="pairing-title">连接 Android App</h2><button id="close" class="icon-button" aria-label="关闭配对二维码">${icon('close')}</button></div><p id="pairing-description" class="dialog-description">打开 大喵相机助手 App，扫描下方配对二维码。</p><div id="modal-qr" class="qr"></div><p id="pairing-message" class="dialog-status" role="status"></p><button id="pairing-retry" class="secondary pairing-retry" hidden>重新生成二维码</button><button id="pairing-export-diagnostics" class="secondary pairing-retry" disabled>连接失败？导出诊断包</button><p class="dialog-note" data-diagnostics-status role="status">自动整理连接检查和排障日志，保存后发给开发者。</p><p class="dialog-note">请让电脑和手机连接同一 Wi-Fi。<br>新设备配对不会影响已经配对的手机。</p></section></div>
-    ${metadataPrivacy?metadataPrivacyDialog:''}<script>${desktopPageScript}</script>${metadataPrivacy?`<script>${metadataPrivacyScript}</script>`:''}${showRemote ? `<script>${remotePanelScript}</script>` : ''}</body></html>`
+    ${metadataPrivacy?metadataPrivacyDialog:''}<script>${desktopPageScript}</script>${metadataPrivacy?`<script>${metadataPrivacyScript}</script>`:''}${wechat ? `<script>${wechatPanelScript}</script>` : ''}${showRemote ? `<script>${remotePanelScript}</script>` : ''}</body></html>`
 }

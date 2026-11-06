@@ -12,6 +12,15 @@ import java.time.Duration;
 import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 public class ChromeNavigationHostTest {
+    @Test public void scrollableDetailButtonsOwnTheirBackground(){
+        var c=RuntimeEnvironment.getApplication();var host=new ChromeNavigationHost(c);host.setRoot(new View(c));
+        var title=new android.widget.TextView(c);var form=new android.widget.LinearLayout(c);
+        var button=new android.widget.Button(c);form.addView(button);
+        var scroll=new android.widget.ScrollView(c);scroll.addView(form);
+        var sheet=new ChromeSheetLayout(c,title,scroll,new View(c));host.showPhotoDetails(sheet);
+        assertNotNull("button background must scroll and clip together with text",button.getBackground());
+        assertEquals("scroll controls use their own glass drawable",c.getDrawable(app.nikkisync.mobile.R.drawable.bg_glass_chip).getClass(),button.getBackground().getClass());
+    }
     @Test public void ordinarySheetIsOffscreenBeforeItsFirstMeasuredEntryFrame(){
         var context=RuntimeEnvironment.getApplication();var host=new ChromeNavigationHost(context);
         host.setRoot(new View(context));

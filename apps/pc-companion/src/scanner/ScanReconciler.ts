@@ -10,7 +10,10 @@ function resourceIdFor(assetId: string, role: string, pathKey: string): string {
   return `resource_${createHash('sha256').update(`${assetId}|${role}|${pathKey}`).digest('hex').slice(0, 32)}`
 }
 
-function capturedAtFor(group: DiscoveredResource[]): string | undefined {
+function capturedAtFor(group: DiscoveredResource[]): string | null | undefined {
+  // Cloud copies can acquire download-time filenames and filesystem dates.
+  // Clear historical inferred dates; decoded metadata remains authoritative.
+  if(group.some(item=>/[/\\]CloudPhotos(?:_LowQuality)?[/\\]/i.test(item.absolutePath)))return null
   const preferredKinds: DiscoveredResource['kind'][] = ['high_quality', 'motion_cover', 'low_quality', 'motion_video']
   for (const kind of preferredKinds) {
     const source = group.find((item) => item.kind === kind)
@@ -160,7 +163,7 @@ export class ScanReconciler {
       }
     } : undefined
     const capturedAt = capturedAtFor(group)
-    return { assetId, assetType, ...(uid ? { uid } : {}), ...(capturedAt ? { capturedAt } : {}), discoveredAt: now,
+    return { assetId, assetType, ...(uid ? { uid } : {}), ...(capturedAt !== undefined ? { capturedAt } : {}), discoveredAt: now,
       ...(metadata ? { metadataSchemaVersion: 1, metadata } : {}),
       ...(motion ? { motionResolverMethod: 'filename' as const, motionResolverConfidence: 1 } : {}), resources, ...(candidates ? { candidates } : {}) }
   }

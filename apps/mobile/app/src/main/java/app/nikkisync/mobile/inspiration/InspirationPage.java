@@ -145,14 +145,19 @@ public final class InspirationPage implements AutoCloseable {
         for (InspirationStore.Entry entry : entries) {
             LinearLayout card = column(); card.setPadding(dp(14), dp(12), dp(14), dp(12));
             card.setBackgroundResource(R.drawable.bg_glass_card);
-            card.addView(text(entry.title().isBlank()?typeLabel(entry.code().type()):entry.title(), 17, true));
             if(!entry.images().isEmpty()) {
-                ImageView cover=new ImageView(activity);cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                ImageView cover=new ImageView(activity) {
+                    @Override protected void onMeasure(int widthSpec,int heightSpec) {
+                        int width=android.view.View.MeasureSpec.getSize(widthSpec);
+                        super.onMeasure(widthSpec,android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY));
+                    }
+                };cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 cover.setBackgroundResource(R.drawable.bg_gallery_photo);cover.setClipToOutline(true);
-                LinearLayout.LayoutParams coverLp=new LinearLayout.LayoutParams(-1,dp(160));coverLp.topMargin=dp(8);card.addView(cover,coverLp);
+                LinearLayout.LayoutParams coverLp=new LinearLayout.LayoutParams(-1,-2);coverLp.bottomMargin=dp(8);card.addView(cover,coverLp);
                 cover.setContentDescription("查看穿搭参考图");cover.setOnClickListener(v->showImages(entry));
                 loadPrivateThumbnail(cover,entry.images().get(0).localName(),480);
             }
+            card.addView(text(entry.title().isBlank()?typeLabel(entry.code().type()):entry.title(), 17, true));
             String code = entry.code().rawCode().isBlank() ? "尚未填写分享码" : entry.code().rawCode();
             TextView info = text(statusLabel(entry.status()) + " · " + typeLabel(entry.code().type())
                     + "\n" + code + (entry.categories().isEmpty() ? "" : "\n分类：" + String.join("、", entry.categories()))
@@ -162,13 +167,9 @@ public final class InspirationPage implements AutoCloseable {
             LinearLayout actions = new LinearLayout(activity);
             Button copy = button("复制码"); copy.setEnabled(!entry.code().rawCode().isBlank());
             copy.setOnClickListener(v -> copyCode(entry.code().rawCode())); actions.addView(copy, weighted());
-            Button edit = button("查看 / 编辑"); edit.setOnClickListener(v -> showEditor(entry, null));
+            Button edit = button("编辑"); edit.setOnClickListener(v -> showEditor(entry, null));
             actions.addView(edit, weighted()); card.addView(actions);
             Button delete=button("删除");delete.setOnClickListener(v->deleteEntry(entry));actions.addView(delete,weighted());
-            if (!entry.images().isEmpty()) {
-                Button viewImages = button("查看参考图"); viewImages.setOnClickListener(v -> showImages(entry));
-                card.addView(viewImages, rowParams());
-            }
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
             cardParams.topMargin = dp(10); results.addView(card, cardParams);
         }

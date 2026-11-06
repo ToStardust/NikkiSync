@@ -5,7 +5,8 @@ export interface CreateAssetInput {
   assetType: AssetType
   assetState?: AssetState
   uid?: string
-  capturedAt?: string
+  /** undefined preserves a previous capture date; null explicitly clears it. */
+  capturedAt?: string | null
   discoveredAt: string
   metadataSchemaVersion?: number
   metadata?: unknown

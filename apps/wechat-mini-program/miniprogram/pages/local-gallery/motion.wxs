@@ -1,6 +1,7 @@
-// Render-layer gestures only. Never control movable-view's scale-value or send every move to JS.
+// Render-layer gestures only. Native scale samples are not written back to scale-value.
 var photo = null;
 var sheet = null;
+var sheetGeometry = null;
 var scaleFrame = 0;
 var nativeScale = 1;
 var outCurve = 'cubic-bezier(0.23,1,0.32,1)';
@@ -27,8 +28,11 @@ function neutralPhoto(owner, frame, ms, reduced) {
 }
 function photoState(value, previous, owner, instance) {
   if (!value || !instance || !same(instance.getDataset().frame, value.frame)) return;
-  if (previous && same(value.frame, previous.frame) && value.phase === previous.phase && value.settle === previous.settle && value.reduced === previous.reduced) return;
-  if (!same(scaleFrame, value.frame)) { scaleFrame = value.frame; nativeScale = 1; photo = null; }
+  if (previous && same(value.frame, previous.frame) && value.phase === previous.phase && value.settle === previous.settle && value.reduced === previous.reduced) {
+    if (value.initialScale !== previous.initialScale) nativeScale = value.initialScale || 1;
+    return;
+  }
+  if (!same(scaleFrame, value.frame)) { scaleFrame = value.frame; nativeScale = value.initialScale || 1; photo = null; }
   var phase = value.phase;
   if (phase === 'exit') {
     instance.setStyle({transition: transition(180, outCurve, value.reduced), transform: value.reduced ? 'translate3d(0,0,0) scale(1)' : 'translate3d(0,100vh,0) scale(0.9)', opacity: 0});
@@ -93,11 +97,35 @@ function photoEnd(event, owner) {
 }
 function sheetState(value, previous, owner, instance) {
   if (!value || !instance || !same(instance.getDataset().frame, value.frame)) return;
-  if (previous && same(value.frame, previous.frame) && same(value.key, previous.key) && value.phase === previous.phase && value.expanded === previous.expanded && value.settle === previous.settle && value.reduced === previous.reduced) return;
+  if (previous && same(value.frame, previous.frame) && same(value.key, previous.key) && value.phase === previous.phase && value.expanded === previous.expanded && value.settle === previous.settle && value.reduced === previous.reduced && value.height === previous.height && value.width === previous.width && value.imageWidth === previous.imageWidth && value.imageHeight === previous.imageHeight && value.rotation === previous.rotation) return;
+  sheetGeometry = geometry(value);
   var hidden = value.phase === 'enter' || value.phase === 'exit';
+  var offset = value.expanded ? 0 : sheetGeometry.height * 0.26;
+  var ms = value.phase === 'enter' ? 0 : value.phase === 'exit' ? 160 : 220;
   instance.setStyle({transition: value.phase === 'enter' ? 'none' : transition(value.phase === 'exit' ? 160 : 220, drawerCurve, value.reduced),
-    transform: hidden ? 'translate3d(0,100%,0)' : 'translate3d(0,' + (value.expanded ? '0vh' : '37vh') + ',0)', opacity: hidden ? 0 : 1});
+    transform: 'translate3d(0,' + (hidden ? sheetGeometry.height * 2 / 3 : offset) + 'px,0)', opacity: hidden ? 0 : 1});
+  detailsPhoto(owner, value.frame, sheetGeometry, hidden ? sheetGeometry.height : sheetGeometry.height / 3 + offset, ms, value.reduced);
   style(owner, '.info-backdrop', value.frame, {transition: value.phase === 'enter' ? 'none' : transition(160, outCurve, true), opacity: hidden ? 0 : 1});
+}
+function geometry(value) {
+  return {height: value.height > 0 && value.height < 10000 ? value.height : 800,
+    width: value.width > 0 && value.width < 10000 ? value.width : 400,
+    imageWidth: value.imageWidth > 0 ? value.imageWidth : value.width || 400,
+    imageHeight: value.imageHeight > 0 ? value.imageHeight : value.height || 800, rotation: value.rotation || 0};
+}
+function detailsPhoto(owner, frame, box, edge, ms, reduced) {
+  var h = box.height, w = box.width;
+  edge = Math.max(h / 3 - 24, Math.min(h, edge));
+  var fraction = Math.max(0, Math.min(1, (h - edge) / (h * 2 / 3)));
+  var margin = 10 * fraction, top = 60 * fraction;
+  var available = Math.max(1, edge - margin - top);
+  var rotated = box.rotation === 90 || box.rotation === 270;
+  var iw = rotated ? box.imageHeight : box.imageWidth, ih = rotated ? box.imageWidth : box.imageHeight;
+  var base = Math.min(w / iw, h / ih);
+  var fit = Math.min((w - 2 * margin) / iw, available / ih) / base;
+  var y = top + available / 2 - h / 2;
+  style(owner, '.photo-viewport', frame, {transition: ms ? transition(ms, drawerCurve, reduced) : 'none',
+    transform: 'translate3d(0,' + y + 'px,0) scale(' + fit + ')'});
 }
 function sheetStart(event, owner) {
   var data = event.currentTarget.dataset;
@@ -105,7 +133,8 @@ function sheetStart(event, owner) {
   if (!node || node.getDataset().open === false) return;
   var first = event.touches[0];
   sheet = first ? {frame: data.frame, key: data.infoFrame, x: first.clientX, y: first.clientY, dx: 0, dy: 0, moved: false,
-    multi: event.touches.length !== 1, reduced: !!data.reduced, expanded: !!data.expanded, dragging: false, height: data.height || 800} : null;
+    multi: event.touches.length !== 1, reduced: !!data.reduced, expanded: !!data.expanded, dragging: false,
+    box: sheetGeometry || geometry(data)} : null;
   owner.callMethod('infoTouchStart', event);
 }
 function sheetMove(event, owner) {
@@ -119,11 +148,13 @@ function sheetMove(event, owner) {
   if (sheet.multi || sheet.reduced) return;
   if (!sheet.dragging && !(Math.abs(sheet.dy) > 8 && Math.abs(sheet.dy) > Math.abs(sheet.dx) * 1.6)) return;
   sheet.dragging = true;
-  var offset = sheet.dy;
-  if (sheet.expanded && offset < 0) offset = offset / (1 + Math.abs(offset) / 40);
-  if (!sheet.expanded && offset < -sheet.height * 0.37) offset = -sheet.height * 0.37;
-  if (offset > 0) offset = offset / (1 + offset / 600);
-  node.setStyle({transition: 'none', transform: 'translate3d(0,calc(' + (sheet.expanded ? '0vh' : '37vh') + ' + ' + offset + 'px),0)'});
+  var h = sheet.box.height;
+  var offset = (sheet.expanded ? 0 : h * 0.26) + sheet.dy;
+  if (offset < 0) offset = offset / (1 + Math.abs(offset) / 24);
+  // Keep the grip visible even if a long drag reaches the bottom of the display.
+  offset = Math.min(h * 2 / 3 - 72, offset);
+  node.setStyle({transition: 'none', transform: 'translate3d(0,' + offset + 'px,0)', opacity: 1});
+  detailsPhoto(owner, sheet.frame, sheet.box, h / 3 + offset, 0, false);
 }
 function sheetEnd(event, owner) {
   if (!sheet || !same(event.currentTarget.dataset.frame, sheet.frame) || !same(event.currentTarget.dataset.infoFrame, sheet.key) || !find(owner, '.photo-info', sheet.frame, sheet.key)) return;

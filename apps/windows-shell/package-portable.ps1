@@ -1,6 +1,8 @@
-param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidApk = 'release\NikkiSync\NikkiSync-Android.apk', [string]$BunExecutable = 'bun', [string]$DesktopVersion = '1.0.1', [long]$DesktopBuild = 2026101801)
+param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidApk = 'release\NikkiSync\NikkiSync-Android.apk', [string]$BunExecutable = 'bun', [string]$DesktopVersion = '1.0.1', [long]$DesktopBuild = 2026101801, [switch]$IncludeWeChatLiveTools, [switch]$IncludeWeChatMotionTools, [ValidateSet('AppOnly', 'AppAndMiniProgram')][string]$ClientEdition = 'AppAndMiniProgram')
 
 $ErrorActionPreference = 'Stop'
+if ($ClientEdition -eq 'AppOnly' -and ($IncludeWeChatLiveTools -or $IncludeWeChatMotionTools)) { throw 'App-only edition must not contain WeChat media tools.' }
+$appOnlyDefine = if ($ClientEdition -eq 'AppOnly') { 'true' } else { 'false' }
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $pinnedBun = Join-Path $workspace 'out\bun-baseline-1.4.1\bun-windows-x64-baseline\bun.exe'
 if ($BunExecutable -eq 'bun' -and (Test-Path -LiteralPath $pinnedBun)) { $BunExecutable = $pinnedBun }
@@ -30,7 +32,7 @@ try {
   try {
     $compilerRuntime = @()
     if ($BunExecutable -ne 'bun') { $compilerRuntime = @("--compile-executable-path=$BunExecutable") }
-    & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline @compilerRuntime --windows-hide-console --windows-icon (Join-Path $PSScriptRoot 'Assets\service.ico') --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') src/windows-app.ts
+    & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline "--define=NIKKISYNC_APP_ONLY=$appOnlyDefine" @compilerRuntime --windows-hide-console --windows-icon (Join-Path $PSScriptRoot 'Assets\service.ico') --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') src/windows-app.ts
     if ($LASTEXITCODE -ne 0) { throw 'Service compilation failed.' }
   } finally { Pop-Location }
   $sources = [ordered]@{
@@ -57,6 +59,21 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspace $entry.Value) -Destination $destination
   }
   Copy-Item -LiteralPath $apk -Destination (Join-Path $payload 'runtime\NikkiSync-Android.apk')
+  if ($ClientEdition -ne 'AppOnly') { Copy-Item -LiteralPath (Join-Path $workspace 'assets\branding\wechat-mini-entry.png') -Destination (Join-Path $payload 'runtime\branding\wechat-mini-entry.png') }
+  if ($IncludeWeChatLiveTools -or $IncludeWeChatMotionTools) {
+    $liveDirectory = Join-Path $payload 'runtime\wechat\media'
+    New-Item -ItemType Directory -Path $liveDirectory | Out-Null
+    $liveFfmpeg = (Get-Command ffmpeg -CommandType Application -ErrorAction Stop).Source
+    $liveDistribution = Split-Path -Parent (Split-Path -Parent $liveFfmpeg)
+    Copy-Item -LiteralPath $liveFfmpeg -Destination (Join-Path $liveDirectory 'ffmpeg.exe')
+    if ($IncludeWeChatLiveTools) {
+      $liveFfprobe = (Get-Command ffprobe -CommandType Application -ErrorAction Stop).Source
+      Copy-Item -LiteralPath $liveFfprobe -Destination (Join-Path $liveDirectory 'ffprobe.exe')
+    }
+    foreach ($notice in @('LICENSE', 'README.txt')) {
+      Copy-Item -LiteralPath (Join-Path $liveDistribution $notice) -Destination (Join-Path $liveDirectory $notice)
+    }
+  }
   $assets = Get-Content (Join-Path $PSScriptRoot 'obj\project.assets.json') -Raw | ConvertFrom-Json
   $packageRoots = @($assets.packageFolders.PSObject.Properties.Name)
   $downloads = @($assets.project.frameworks.PSObject.Properties.Value.downloadDependencies)

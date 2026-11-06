@@ -89,7 +89,7 @@ export class AssetRepository {
       const metadataSchemaVersion = input.metadataSchemaVersion ??
         (existing?.metadata_schema_version === null || existing?.metadata_schema_version === undefined
           ? undefined : Number(existing.metadata_schema_version))
-      const capturedAt = input.capturedAt ??
+      const capturedAt = input.capturedAt === null ? null : input.capturedAt ??
         (existing?.captured_at === null || existing?.captured_at === undefined ? undefined : String(existing.captured_at))
       const metadataChanged = String(existing?.metadata_json ?? '') !== String(mergedMetadataJson ?? '') ||
         Number(existing?.metadata_schema_version ?? 0) !== Number(metadataSchemaVersion ?? 0)

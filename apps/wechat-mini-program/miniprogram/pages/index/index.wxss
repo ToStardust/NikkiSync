@@ -11,7 +11,7 @@
 .camera-mark { position: relative; width: 78rpx; height: 56rpx; border: 3rpx solid var(--nikki-accent); border-radius: 13rpx; display: flex; justify-content: center; align-items: center; }
 .camera-mark::before { content: ''; position: absolute; width: 28rpx; height: 9rpx; top: -11rpx; left: 12rpx; border: 3rpx solid var(--nikki-accent); border-bottom: none; border-radius: 5rpx 5rpx 0 0; }
 .camera-lens { width: 25rpx; height: 25rpx; border: 3rpx solid var(--nikki-accent); border-radius: 50%; }
-.card-title { font-size: 37rpx; font-weight: 600; }
+.card-title { font-size: 37rpx; font-weight: 600; overflow-wrap:anywhere; }
 .card-copy { margin: 18rpx 0 32rpx; font-size: 27rpx; line-height: 1.7; color: var(--nikki-secondary); }
 .primary-action text { margin-left: 14rpx; }
 .local-note { margin-top: 26rpx; display: flex; align-items: center; justify-content: center; font-size: 21rpx; color: var(--nikki-secondary); }

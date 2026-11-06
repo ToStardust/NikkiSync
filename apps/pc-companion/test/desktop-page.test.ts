@@ -3,6 +3,15 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { desktopPageScript } from '../src/desktop/DesktopPageScript.js'
 import { renderDesktopPage } from '../src/desktop/DesktopPage.js'
+
+test('app-only edition presents Android controls without an unavailable mini-program entry', () => {
+  const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false},{desktopToken:'test-token',wechat:false})
+  assert.match(html,/data-wechat-enabled="false"/)
+  assert.match(html,/class="connection-grid app-only-grid"/)
+  assert.match(html,/Windows 客户端 · 仅需 APP/)
+  for(const id of ['renew','open-organizer','android-installer','open-scan-settings'])assert.match(html,new RegExp('id="'+id+'"'))
+  assert.doesNotMatch(html,/id="wechat-start"|id="wechat-modal"|\/api\/wechat\//)
+})
 test('account selection belongs inside the sync and connection settings card', () => {
   const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false})
   const start=html.indexOf('<section class="settings-card glass" id="sync-connection-section">')
@@ -25,10 +34,11 @@ test('pending indicator opens its own gallery page while settings stays separate
   assert.match(html,/class="organizer-grid"/)
 })
 
-test('first-use guide replaces the unfinished WeChat entry and exposes the three next steps', () => {
+test('first-use guide and the requested WeChat entry expose independent connection choices', () => {
   const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:0,pairedDevices:0,firstRun:true},{remoteToken:'test-token',wechat:true})
   assert.match(html, /首次使用引导/)
-  assert.doesNotMatch(html, /id="wechat-start"|id="wechat-modal"|微信小程序/)
+  assert.match(html, /id="wechat-start"/)
+  assert.match(html, /id="wechat-modal"/)
   for(const id of ['open-network-settings','open-scan-settings','android-installer']) assert.match(html,new RegExp('id="'+id+'"'))
   assert.match(html, /校园网.*隔离/)
   assert.match(html, /<button[^>]+id="scan-directory-help"[^>]+aria-expanded="false"/)
@@ -81,6 +91,10 @@ function mount(fetcher: (url: string,options?:{body?:string;signal?:AbortSignal}
     attributes: Record<string, string> = {}
     onclick?: (event?: unknown) => Promise<void> | void
     onchange?: () => void
+    listeners = new Map<string, ((event: unknown) => void)[]>()
+    addEventListener(name: string, listener: (event: unknown) => void) {
+      this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener])
+    }
     setAttribute(name: string, value: string) { this.attributes[name] = value }
     removeAttribute(name: string) { delete this.attributes[name] }
     replaceChildren() { this.innerHTML = '';this.children=[] }

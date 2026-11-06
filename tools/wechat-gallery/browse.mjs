@@ -12,14 +12,14 @@ export function validateQuery(query={}){
 export function projectPhoto(record){
  const explicit=record.metadata?.identity?.gameVersion,known=typeof explicit==='string'&&/^\d{1,3}(\.\d{1,3}){1,2}$/.test(explicit.trim())?explicit.trim():'';
  const version=known||inferInfinityNikkiGameVersion(record.date);
- return {id:record.id,date:record.date,version:version||'',versionSource:version?(known?'explicit':'inferred'):'unknown',...(record.mime?{mime:record.mime}:{}),...(record.motion?{live:true}:{})};
+ return {id:record.id,date:record.date,version:version||'',versionSource:version?(known?'explicit':'inferred'):'unknown',...(record.mime?{mime:record.mime}:{}),...(record.motion?{live:true}:{}),...(record.video?{video:true}:{})};
 }
 const compareVersion=(a,b)=>{if(!a)return b?1:0;if(!b)return -1;const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let n=0;n<3;n++){const diff=(y[n]||0)-(x[n]||0);if(diff)return diff;}return 0;};
 export function browseSnapshot(records,offset,rawQuery){
  if(!Number.isInteger(offset)||offset<0||offset>500||!Array.isArray(records)||records.length>500)throw new Error('Browse bounds');const query=validateQuery(rawQuery),text=query.text?.normalize('NFKC').toLocaleLowerCase();
- const all=records.map(record=>({record,item:projectPhoto(record)})),counts=new Map();
+ const all=records.map(record=>({record,item:projectPhoto(record)})).sort((a,b)=>b.item.date.localeCompare(a.item.date)||(b.record.orderKey||b.item.id).localeCompare(a.record.orderKey||a.item.id)),counts=new Map();
  for(const {item} of all){const key=item.version;const value=counts.get(key)||{version:key,count:0,inferred:false};value.count++;if(item.versionSource==='inferred')value.inferred=true;counts.set(key,value);}
- const filtered=all.filter(({record,item})=>{
+ const matches=all.filter(({record,item})=>{
   if(query.version&&(query.version==='unknown'?item.version!=='':item.version!==query.version))return false;
   const day=item.date?new Date(Date.parse(item.date)+(query.offsetMinutes||0)*60000).toISOString().slice(0,10):'';
   if((query.from||query.to)&&(!day||query.from&&day<query.from||query.to&&day>query.to))return false;
@@ -27,7 +27,9 @@ export function browseSnapshot(records,offset,rawQuery){
    const words=[item.version,day,m.filter?.name,m.lighting?.name,m.location?.name,...names].filter(x=>typeof x==='string').map(x=>x.slice(0,120));
    if(!words.some(x=>x.normalize('NFKC').toLocaleLowerCase().includes(text)))return false;}
   return true;
- }).map(x=>x.item).sort((a,b)=>compareVersion(a.version,b.version)||b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
+ }).map(x=>x.item);
+ // Same as App GalleryVersionGroups: preserve newest-first first appearance, then keep each version together.
+ const groups=new Map();for(const item of matches){if(!groups.has(item.version))groups.set(item.version,[]);groups.get(item.version).push(item);}const filtered=[...groups.values()].flat();
  const items=filtered.slice(offset,offset+12),versions=Array.from(counts.values()).sort((a,b)=>compareVersion(a.version,b.version));if(versions.length>32)throw new Error('Version count limit');
  return {offset,total:filtered.length,items,next:offset+items.length<filtered.length?offset+items.length:null,versions,libraryTotal:records.length};
 }

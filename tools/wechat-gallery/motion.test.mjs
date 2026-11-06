@@ -8,7 +8,7 @@ async function renderFixture(){
  const module={exports:{}};runInNewContext(await readFile(motionFile,'utf8'),{module,Math});
  const writes=[],calls=[],nodes={};
  function node(name,data){return nodes[name]={data,style:{},getDataset(){return this.data;},setStyle(x){Object.assign(this.style,x);writes.push({name,...x});}};}
- node('.photo-stage',{frame:1});node('.viewer-backdrop',{frame:1});node('.viewer-chrome',{frame:1});node('.photo-info',{frame:1,infoFrame:1});node('.info-backdrop',{frame:1});
+ node('.photo-stage',{frame:1});node('.photo-viewport',{frame:1});node('.viewer-backdrop',{frame:1});node('.viewer-chrome',{frame:1});node('.photo-info',{frame:1,infoFrame:1});node('.info-backdrop',{frame:1});
  const owner={selectComponent:s=>nodes[s],callMethod:(name,event)=>calls.push({name,event})};
  return {motion:module.exports,owner,nodes,writes,calls};
 }
@@ -58,11 +58,12 @@ test('native zoom still reports scale privately; zoomed gesture never becomes ou
 test('sheet render-layer grip follows finger, rejects stale handle and uses interruptible transform-only settling',async()=>{
  const f=await renderFixture(),m=f.motion,o=f.owner;
  m.sheetState({frame:1,key:1,phase:'open',expanded:false,settle:0,reduced:false},undefined,o,f.nodes['.photo-info']);
- assert.match(f.nodes['.photo-info'].style.transform,/37vh/);m.sheetStart(event(100,100,{type:'touchstart'}),o);const calls=f.calls.length;
- m.sheetMove(event(100,40),o);assert.equal(f.calls.length,calls);assert.match(f.nodes['.photo-info'].style.transform,/calc/);
+ assert.equal(f.nodes['.photo-info'].style.transform,'translate3d(0,208px,0)');m.sheetStart(event(100,100,{type:'touchstart'}),o);const calls=f.calls.length;
+ m.sheetMove(event(100,40),o);assert.equal(f.calls.length,calls);assert.match(f.nodes['.photo-info'].style.transform,/translate3d\(0,[\d.]+px,0\)/);
+ assert.equal(f.nodes['.photo-info'].style.opacity,1);assert.doesNotMatch(f.nodes['.photo-info'].style.transform,/calc|vh/);
  m.sheetEnd(event(100,40,{type:'touchend'}),o);assert.equal(f.calls.at(-1).name,'infoTouchEnd');
  m.sheetState({frame:1,key:1,phase:'open',expanded:true,settle:1,reduced:false},{frame:1,key:1,phase:'open',expanded:false,settle:0,reduced:false},o,f.nodes['.photo-info']);
- assert.match(f.nodes['.photo-info'].style.transition,/cubic-bezier\(0.32,0.72,0,1\)/);assert.match(f.nodes['.photo-info'].style.transform,/0vh/);
+ assert.match(f.nodes['.photo-info'].style.transition,/cubic-bezier\(0.32,0.72,0,1\)/);assert.equal(f.nodes['.photo-info'].style.transform,'translate3d(0,0px,0)');
  f.nodes['.photo-info'].data.infoFrame=2;const count=f.writes.length;m.sheetMove(event(100,10),o);assert.equal(f.writes.length,count);
  assert.equal(f.writes.some(x=>Object.hasOwn(x,'height') || Object.hasOwn(x,'top')),false);
 });
@@ -72,7 +73,7 @@ test('viewer exit retains DOM until animation completes, ignores repeated exit a
  p.popupLeft();p.openPhoto({currentTarget:{dataset:{index:0}}});f.flush();p.dismissPhoto();const late=Array.from(f.timers.values());p.onHide();assert.equal(f.timers.size,0);for(const t of late)t.fn();assert.equal(p.data.viewerOpen,false);
 });
 test('info closes semantically first but remains mounted for exit; reopening retargets and invalidates old unmount',async()=>{
- const f=await pageFixture(),p=f.page;f.flush();p.showPhotoInfo();assert.equal(p.data.infoMounted,true);assert.equal(p.data.infoPhase,'enter');f.flush();assert.equal(p.data.infoPhase,'open');
+ const f=await pageFixture(),p=f.page;f.flush();p.showPhotoInfo();assert.equal(p.data.infoMounted,true);assert.equal(p.data.infoExpanded,true);assert.equal(p.data.infoPhase,'enter');f.flush();assert.equal(p.data.infoPhase,'open');
  p.closeInfo();assert.equal(p.data.infoOpen,false);assert.equal(p.data.infoMounted,true);assert.equal(p.data.infoPhase,'exit');const late=Array.from(f.timers.values());
  p.showPhotoInfo();assert.equal(p.data.infoOpen,true);assert.equal(p.data.infoPhase,'open');for(const t of late)t.fn();assert.equal(p.data.infoMounted,true);
  p.closeInfo();f.flush();assert.equal(p.data.infoMounted,false);assert.equal(p.data.viewerOpen,true);
@@ -89,7 +90,34 @@ test('unrelated rendering updates never reset a live photo or sheet drag; sheet 
  let count=f.writes.length;m.photoState({...photo},photo,o,f.nodes['.photo-stage']);assert.equal(f.writes.length,count,'HD/chrome updates must not reset drag');
  m.sheetState(sheet,undefined,o,f.nodes['.photo-info']);m.sheetStart(event(100,100,{type:'touchstart'}),o);m.sheetMove(event(100,40),o);
  count=f.writes.length;m.sheetState({...sheet},sheet,o,f.nodes['.photo-info']);assert.equal(f.writes.length,count,'metadata updates must not reset grip drag');
- m.sheetState({...sheet,key:2,expanded:true},sheet,o,f.nodes['.photo-info']);assert.match(f.nodes['.photo-info'].style.transform,/0vh/);
+ m.sheetState({...sheet,key:2,expanded:true},sheet,o,f.nodes['.photo-info']);assert.equal(f.nodes['.photo-info'].style.transform,'translate3d(0,0px,0)');
+});
+
+test('expanded details fit portrait, landscape and rotated photos above the sheet and restore the full photo on close',async()=>{
+ for(const [width,height,rotation] of [[400,800,0],[800,400,0],[400,800,90]]){
+  const f=await renderFixture(),m=f.motion,o=f.owner,state={frame:1,key:1,phase:'open',expanded:true,settle:0,reduced:false,height:800,width:400,imageWidth:width,imageHeight:height,rotation};
+  m.sheetState(state,undefined,o,f.nodes['.photo-info']);
+  const transform=f.nodes['.photo-viewport'].style.transform,match=/translate3d\(0,(-?[\d.]+)px,0\) scale\(([\d.]+)\)/.exec(transform);
+  assert.ok(match,transform);const y=Number(match[1]),scale=Number(match[2]);assert.ok(y<0);assert.ok(scale>0&&scale<1);
+  const rw=rotation?height:width,rh=rotation?width:height,fit=Math.min(400/rw,800/rh),bottom=400+y+rh*fit*scale/2;
+  assert.ok(bottom<=800/3+1,'entire photo stays above expanded sheet');
+  m.sheetState({...state,phase:'exit'},state,o,f.nodes['.photo-info']);assert.equal(f.nodes['.photo-viewport'].style.transform,'translate3d(0,0px,0) scale(1)');
+ }
+});
+
+test('drawer remains visible throughout extreme drags and the photo follows without native scale feedback',async()=>{
+ for(const expanded of [true,false]){
+  const f=await renderFixture(),m=f.motion,o=f.owner,state={frame:1,key:1,phase:'open',expanded,settle:0,reduced:false,height:800,width:400};
+  m.sheetState(state,undefined,o,f.nodes['.photo-info']);
+  const target={dataset:{frame:1,infoFrame:1,expanded,height:800,width:400}};
+  m.sheetStart(event(100,300,{type:'touchstart',currentTarget:target}),o);const calls=f.calls.length;
+  for(const dy of [-10000,-180,-20,20,180,10000]){
+   m.sheetMove(event(100,300+dy,{currentTarget:target}),o);const match=/translate3d\(0,(-?[\d.]+)px,0\)/.exec(f.nodes['.photo-info'].style.transform);
+   assert.ok(match);assert.equal(f.nodes['.photo-info'].style.opacity,1);assert.ok(Number(match[1])+800/3<=728.01,'grip stays on screen');
+   assert.ok(f.nodes['.photo-viewport'].style.transform);assert.equal(f.calls.length,calls);
+  }
+  assert.equal(f.writes.some(x=>Object.hasOwn(x,'scale-value')),false);
+ }
 });
 test('stationary second finger cannot turn a pinch into a toolbar tap; closing viewer cannot be reopened by a late tile action',async()=>{
  const f=await pageFixture(),p=f.page;f.flush();const currentTarget={dataset:{frame:p.data.viewerFrames[0].key,image:true}};

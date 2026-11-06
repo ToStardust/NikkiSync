@@ -14,6 +14,14 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class HomeTabPagerTest {
+    @Test public void gallerySelectionOwnsHorizontalSwipeUntilSelectionEnds() {
+        var f=fixture();f.pager.setSelectionActive(true);
+        event(f.pager,0,800,800,0);event(f.pager,2,300,800,100);event(f.pager,1,300,800,200);idle();
+        assertTrue(f.selected.isEmpty());
+        f.pager.setSelectionActive(false);
+        event(f.pager,0,800,800,300);event(f.pager,2,300,800,400);event(f.pager,1,300,800,500);idle();
+        assertEquals(java.util.List.of(1),f.selected);
+    }
     private record Fixture(HomeTabPager pager,ArrayList<Integer> selected,View[] pages){}
     private Fixture fixture(){
         var c=RuntimeEnvironment.getApplication();var selected=new ArrayList<Integer>();

@@ -18,14 +18,17 @@ test('every allowlisted payload input exists and excludes local profiles and sec
   }
 });
 
-test('portable builder stages an allowlist, includes current APK and omits experimental media tools', () => {
+test('portable builder stages an allowlist and supports explicit local Live tools with their notices', () => {
   const script = read('apps/windows-shell/package-portable.ps1');
   assert.match(script, /--self-contained true/);
   assert.match(script, /PublishSingleFile=true/);
   assert.match(script, /IncludeNativeLibrariesForSelfExtract=true/);
   assert.match(script, /--compile-exec-argv="--smol"/);
   assert.match(script, /NikkiSync-Android.apk/);
-  assert.doesNotMatch(script, /ffmpeg|ffprobe|Copy-Item.*-Recurse/);
+  assert.doesNotMatch(script, /Copy-Item.*-Recurse/);
+  assert.match(script, /\[switch\]\$IncludeWeChatLiveTools/);
+  assert.match(script, /if \(\$IncludeWeChatLiveTools\)/);
+  for(const name of ['ffmpeg','ffprobe','LICENSE','README.txt'])assert.ok(script.includes(name));
   assert.match(script, /PortablePayloadDirectory/);
 });
 

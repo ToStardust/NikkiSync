@@ -18,11 +18,38 @@ test('authenticated Live video and package use existing download profile and int
  const config={type:'NikkiSyncLocalGalleryLive',version:1,host:'192.168.1.2',port:32001,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};
  const video=Buffer.from([0,0,0,16,102,116,121,112,105,115,111,109,0,0,0,0]),livp=Buffer.from([80,75,3,4,1,2,3,4]);
  const source={list:offset=>({offset,total:1,items:[{id,date:'',live:true}],next:null}),motion:async()=>({image:Buffer.from(video),mime:'video/mp4'}),live:async(_id,o)=>{assert.equal(o.rotation,0);return {image:Buffer.from(livp),mime:'application/x-livp'};}};
- const {server,stop}=createGalleryServer(config,source);await new Promise(r=>server.listen(0,'127.0.0.1',r));let channel;
+ const {server,stop}=createGalleryServer(config,source,{allowLivePackaging:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));let channel;
  try{channel=await new Promise((r,j)=>{const c=clientApi('gallery-channel').connectGallery(adapter(server),config,{ready:()=>r(c),failed:j});});assert.equal((await new Promise(r=>channel.list(0,r))).items[0].live,true);
   const motion=await new Promise(r=>channel.motion(id,r));assert.equal(motion.status,'ok');assert.equal(motion.motion,true);assert.deepEqual(Buffer.from(motion.image),video);
   const pack=await new Promise(r=>channel.live(id,{exif:true,rotation:0},r));assert.equal(pack.status,'ok');assert.equal(pack.live,true);assert.equal(pack.original,false);assert.deepEqual(Buffer.from(pack.image),livp);
  }finally{channel?.close();await stop();}
+});
+test('video rotation negotiates before download and keeps ordinary video compatible', async () => {
+  const video = Buffer.from([0,0,0,16,102,116,121,112,105,115,111,109,0,0,0,0]);
+  for (const supported of [false, true]) {
+    const config = {type:'NikkiSyncLocalGalleryLive',version:1,host:'192.168.1.2',port:32001,
+      key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};
+    const requested = [];
+    const source = { motionRotation: supported, async motion(photoId, angle = 0) {
+      assert.equal(photoId, id);
+      requested.push(angle);
+      return { image: Buffer.from(video), mime: 'video/mp4' };
+    } };
+    const { server, stop } = createGalleryServer(config, source);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    let channel;
+    try {
+      channel = await new Promise((resolve, reject) => {
+        const client = clientApi('gallery-channel').connectGallery(adapter(server), config, {ready: () => resolve(client), failed: reject});
+      });
+      assert.equal(await new Promise(done => channel.motionRotationSupported(done)), supported);
+      const angle = supported ? 90 : 0;
+      const value = await new Promise(done => channel.motion(id, done, undefined, angle));
+      assert.equal(value.status, 'ok');
+      assert.deepEqual(Buffer.from(value.image), video);
+      assert.deepEqual(requested, [angle]);
+    } finally { channel?.close(); await stop(); }
+  }
 });
 test('Live transfer handles a payload above the ordinary-photo limit without widening the old profile',async()=>{
  const config={type:'NikkiSyncLocalGalleryLive',version:1,host:'192.168.1.2',port:32001,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};
@@ -63,8 +90,8 @@ test('stale Live writes and wrong type are wiped; cancelled file shares are retr
  const wrong=new Uint8Array([255,216,255,217]);f.cache.put({status:'ok',original:true,image:wrong,mime:'image/jpeg'},'live',r=>result=r);assert.equal(result,null);assert.ok(wrong.every(x=>x===0));
  let path;f.cache.put({status:'ok',live:true,image:new Uint8Array([80,75,3,4,0]),mime:'application/x-livp'},'live',p=>path=p);f.write.success();f.cache.share(path,r=>result=r);f.share.fail({errMsg:'cancel'});assert.equal(result.status,'cancelled');assert.equal(f.deleted.includes(path),false);f.cache.clear();
 });
-test('ordinary batch refuses selected Live across pages and viewer exposes dedicated export rather than static success',async()=>{
+test('ordinary batch saves selected LIVE covers as photos without invoking package export',async()=>{
  let page,batches=0;runInNewContext(await readFile(new URL('pages/local-gallery/index.js',root),'utf8'),{Page:p=>page=p,Date,Uint8Array,wx:{getFileSystemManager:()=>({unlink(){}})},require:()=>({saveOriginalBatch:()=>{batches++;return {};}})});
- page.setData=(x,done)=>{Object.assign(page.data,x);done?.();};page.onLoad();page.onShow();page.setData({connected:true,downloadEnabled:true,photos:[{id,path:'/cache/cover.jpg',live:true}],total:1});page._liveIds.add(id);page._selected.add(id);page.saveSelected();assert.equal(batches,0);assert.match(page.data.saveMessage,/Live/);assert.equal(page._selected.has(id),true);
- page.openPhoto({currentTarget:{dataset:{index:0}}});assert.equal(page.data.viewerLive,true);const xml=await readFile(new URL('pages/local-gallery/index.wxml',root),'utf8');assert.match(xml,/导出 Live 封包/);assert.match(xml,/<video/);assert.doesNotMatch(xml,/Live 暂未开放/);
+ page.setData=(x,done)=>{Object.assign(page.data,x);done?.();};page.onLoad();page.onShow();page.setData({connected:true,downloadEnabled:true,photos:[{id,path:'/cache/cover.jpg',live:true}],total:1});page._liveIds.add(id);page._selected.add(id);page.saveSelected();assert.equal(batches,1);assert.equal(page._selected.has(id),true);
+ page.setData({saving:false});page.openPhoto({currentTarget:{dataset:{index:0}}});assert.equal(page.data.viewerLive,true);const xml=await readFile(new URL('pages/local-gallery/index.wxml',root),'utf8');assert.match(xml,/bindtap="saveViewed"/);assert.match(xml,/<video/);assert.doesNotMatch(xml,/导出 Live 封包/);
 });

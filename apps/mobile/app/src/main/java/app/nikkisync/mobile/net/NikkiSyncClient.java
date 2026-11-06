@@ -79,6 +79,12 @@ public final class NikkiSyncClient {
         return details==null?JsonCodec.assetDetail(http.json("GET", "/v1/assets/" + encode(assetId))):details.get(assetId);
     }
 
+    /** Always asks the paired PC; cached detail and HTTP 404 cannot prove deletion. */
+    public boolean sourceExplicitlyDeleted(String assetId) throws Exception {
+        JSONObject asset=new JSONObject(http.json("GET", "/v1/assets/"+encode(assetId))).getJSONObject("asset");
+        return assetId.equals(asset.optString("assetId")) && "deleted".equals(asset.optString("state"));
+    }
+
     public AssetDetail updateMetadata(String assetId, JSONObject patch) throws Exception {
         byte[] body = patch.toString().getBytes(StandardCharsets.UTF_8);
         HttpsURLConnection connection = http.open("PATCH", "/v1/assets/" + encode(assetId) + "/metadata", body, true);

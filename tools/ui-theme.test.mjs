@@ -49,7 +49,14 @@ test('platform chrome and Android primary/selected drawables follow the same the
   assert.equal(hex(app.window.navigationBarBackgroundColor), colors.backgroundTop);
   assert.match(await read('apps/windows-shell/MainWindow.xaml'), new RegExp('Background="' + colors.background + '"'));
   assert.match(await read('apps/mobile/app/src/main/res/drawable/bg_primary_action.xml'), /@color\/primary_action/);
-  assert.match(await read('apps/mobile/app/src/main/res/drawable/bg_selected_glass.xml'), /#FFFFFFFF/);
+  const overlay = await read('apps/mobile/app/src/main/res/drawable/bg_selected_glass.xml');
+  assert.match(overlay, /@color\/primary_action/);
+  assert.match(overlay, /@dimen\/gallery_cell_radius/);
+  const mark = await read('apps/mobile/app/src/main/res/drawable/photo_selection_checked.xml');
+  assert.match(mark, /@color\/selection_mark/);
+  const androidColors = await read('apps/mobile/app/src/main/res/values/colors.xml');
+  const pink = /name="selection_mark"(?:\s*)>(#[0-9A-F]{6})</i.exec(androidColors)?.[1];
+  assert.ok(pink && contrast(pink, '#FFFFFF') >= 4.5, 'white check on theme pink');
   const mobile = await read('apps/mobile/app/src/main/java/app/nikkisync/mobile/MainActivity.java');
   assert.match(mobile, /bg_gallery_ambient/);
   assert.match(mobile, /PhotoLayoutDock/);

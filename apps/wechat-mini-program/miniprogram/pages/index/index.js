@@ -1,10 +1,12 @@
 const { parseRemoteQr } = require('../../lib/remote-qr.js');
+const { readProfile, albumTitle } = require('../../lib/profile-page.js');
 
 Page({
-  data: { state: 'idle', message: '请先在电脑选择照片，生成临时二维码。', endpoint: '', expiresAt: '', scanning: false, toolsOpen: false },
+  data: { state: 'idle', message: '请先在电脑选择照片，生成临时二维码。', endpoint: '', expiresAt: '', scanning: false, toolsOpen: false, albumTitle: '暖暖相册' },
   toggleTools() { this.setData({ toolsOpen: !this.data.toolsOpen }); },
   onLoad() { this._generation = 0; this._alive = true; this._expiresAtMs = 0; },
   onShow() {
+    this.setData({ albumTitle: albumTitle(readProfile(wx).name) });
     if (this._expiresAtMs && Date.now() >= this._expiresAtMs) {
       this._expiresAtMs = 0;
       this.setData({ state: 'expired', endpoint: '', expiresAt: '', message: '二维码已过期，请在电脑上重新生成。' });

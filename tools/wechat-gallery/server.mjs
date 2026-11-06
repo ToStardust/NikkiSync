@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import QRCode from 'qrcode';
 import { clientApi } from '../wechat-crypto-spike/client-api.mjs';
 import { openLocalPreviewSource } from './source.mjs';
-export function createGalleryServer(config, source, { now = Date.now, events = {} } = {}) {
+export function createGalleryServer(config, source, { now = Date.now, events = {}, allowLivePackaging = false } = {}) {
   const api = clientApi('gallery-channel'), wire = clientApi(), { createGalleryPeer, createDownloadPeer,createLivePeer } = clientApi('noise-vendor');
   const checked = api.parseGalleryQr(JSON.stringify(config)), key = Buffer.from(checked.key, 'hex'); checked.key = null; config = null;
   const liveProfile=checked.type==='NikkiSyncLocalGalleryLive',download = liveProfile||checked.type === 'NikkiSyncLocalGalleryDownload', totalLimit = liveProfile?api.MAX_LIVE_TOTAL:download ? api.MAX_DOWNLOAD_TOTAL : api.MAX_TOTAL;
@@ -15,7 +15,7 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
   const server = net.createServer(socket => {
     socket.on('error', () => {});
     if (closed || claimed&&!resumeKey || now() >= expires || sockets.size>=(claimed?2:1) || attempts++ >= 32) { socket.destroy(); return; }
-    const resuming=claimed;sockets.add(socket);let peer,stage=0,busy=false,lastReq=0,authenticated=false;
+    const resuming=claimed;sockets.add(socket);let peer,stage=0,busy=false,lastReq=0,authenticated=false,upload;
     const write = async bytes => {
       if (closed || socket.destroyed || now() >= expires) throw new Error('Expired');
       const encoded = wire.frame(bytes); if ((sent += encoded.length) > totalLimit) throw new Error('Transfer limit');
@@ -28,6 +28,32 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
           api.fields(request,['kind','req']);if(request.req!==1)throw new Error('Session order');
           if(!resumeKey)resumeKey=randomBytes(32);
           await control({kind:'session',req:request.req,key:resumeKey.toString('hex'),expiresAt:checked.expiresAt});
+        } else if (['inspiration','inspirationUpload','deletion'].includes(request.kind)&&download) {
+          try{
+            let value;
+            if (request.kind === 'inspiration' || request.kind === 'deletion') {
+              api.fields(request, ['kind', 'req', 'action', 'input']);
+              if (typeof request.action !== 'string' || !request.input || typeof request.input !== 'object' || Array.isArray(request.input)) throw Error('input');
+              if (request.kind === 'deletion' && checked.deletion !== 1) throw Error('capability');
+              if (request.kind === 'inspiration' && request.action === 'galleryCapabilities') {
+                api.fields(request.input, []);
+                value = { motionRotation: liveProfile && source.motionRotation === true };
+              } else if (request.kind === 'inspiration' && request.action === 'galleryOutfit') {
+                api.fields(request.input, ['id','offset']);
+                const {id,offset}=request.input;
+                if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id)||!Number.isInteger(offset)||offset<0||offset>100)throw Error('Outfit bounds');
+                value=source.outfit(id,offset,true);
+              } else {
+                value = await source[request.kind](request.action, request.input);
+              }
+            }
+            else value=await source.inspirationUpload(request,request.image);
+            const text=JSON.stringify(value);if(text.length>131072)throw Error('response limit');
+            const prefix=request.kind==='deletion'?'deletion':'inspiration';
+            for(let part=0;part*500<text.length;part++)await control({kind:prefix+'-data',req:request.req,part,text:text.slice(part*500,(part+1)*500)});
+            await control({kind:prefix+'-end',req:request.req});
+          }catch{await control({kind:'error',req:request.req});}
+          finally{request.image?.fill(0)}
         } else if (request.kind === 'list') {
           api.fields(request, ['kind','req','offset']);
           if (!Number.isInteger(request.offset) || request.offset < 0 || request.offset > 500) throw new Error('Offset');
@@ -50,11 +76,30 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
         } else if(request.kind==='outfit'&&download){
           api.fields(request,['kind','req','id','offset']);if(!/^[a-f0-9]{32}$/.test(request.id)||!Number.isInteger(request.offset)||request.offset<0||request.offset>100)throw new Error('Outfit request');
           try{await control({kind:'outfit',req:request.req,id:request.id,...source.outfit(request.id,request.offset)});}catch{await control({kind:'error',req:request.req});}
+        } else if(request.kind==='reference'&&download){
+          api.fields(request,['kind','req','id','key','preview']);if(!/^[a-f0-9]{32}$/.test(request.id)||!/^[a-f0-9]{32}$/.test(request.key)||typeof request.preview!=='boolean')throw Error('id');
+          let image;
+          try{const value=await source.inspirationImage(request.id,request.key,request.preview);image=value.image;
+            if(!(image instanceof Uint8Array)||image.length<4||image.length>api.MAX_ORIGINAL||!['image/jpeg','image/png','image/webp','image/heic','image/heif'].includes(value.mime))throw Error('image');
+            await control({kind:'reference',req:request.req,id:request.id,size:image.length,sha256:createHash('sha256').update(image).digest('hex'),mime:value.mime});
+            for(let at=0;at<image.length;at+=4096)await write(peer.encrypt(image.subarray(at,at+4096)));
+            await control({kind:'end',req:request.req,id:request.id});
+          }catch{await control({kind:'error',req:request.req})}finally{image?.fill(0)}
         } else if (request.kind === 'get' || (['original','export','icon'].includes(request.kind) && download)||(['motion','live'].includes(request.kind)&&liveProfile)) {
-          const live=request.kind==='live',motion=request.kind==='motion',media=live||motion,icon=request.kind==='icon',exported=request.kind==='export';api.fields(request, icon?['kind','req','id','key']:exported||live?['kind','req','id','options']:['kind','req','id']); if (!/^[a-f0-9]{32}$/.test(request.id)||icon&&!/^[a-f0-9]{32}$/.test(request.key)) throw new Error('Id');
+          const live=request.kind==='live',motion=request.kind==='motion',media=live||motion,icon=request.kind==='icon',exported=request.kind==='export';
+          const rotatedMotion = motion && request.rotation !== undefined;
+          api.fields(request, icon?['kind','req','id','key']:exported||live?['kind','req','id','options']:rotatedMotion?['kind','req','id','rotation']:['kind','req','id']);
+          if (!/^[a-f0-9]{32}$/.test(request.id)||icon&&!/^[a-f0-9]{32}$/.test(request.key)) throw new Error('Id');
           if(exported||live)api.validateExportOptions(request.options);
           let image, mime='image/jpeg',extra={}; const original=request.kind === 'original',full=original||exported||media;
-          try { if(media){const value=live?await source.live(request.id,request.options):await source.motion(request.id);image=value.image;mime=value.mime;}
+          try {
+            if (media) {
+              if (live && !allowLivePackaging) throw new Error('Packaging disabled');
+              if (rotatedMotion && (!source.motionRotation || ![90, 180, 270].includes(request.rotation))) throw new Error('Motion rotation unavailable');
+              const value = live ? await source.live(request.id, request.options) : await source.motion(request.id, request.rotation);
+              image = value.image; mime = value.mime;
+              if (rotatedMotion) extra = { rotation: request.rotation };
+            }
             else if(icon){const value=await source.icon(request.id,request.key);image=value.image;mime=value.mime;extra={key:request.key,source:value.source};}
             else if(full){const value=exported?await source.export(request.id,request.options):await source.original(request.id);image=value.image;mime=value.mime;
             if(exported)extra={exifApplied:value.exifApplied,rotation:value.rotation};}else image = await source.preview(request.id); }
@@ -76,21 +121,35 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
         peer = (liveProfile?createLivePeer:download ? createDownloadPeer : createGalleryPeer)(false, resuming?resumeKey:key, api.galleryPrologue(checked,resuming), randomBytes(64)); peer.receiveHandshake(bytes); stage = 1;
         void write(peer.sendHandshake()).catch(() => socket.destroy()); return;
       }
+      if(upload){
+        const plain=peer.decrypt(bytes);
+        try{if(plain.length>upload.size-upload.at)throw Error('upload bounds');upload.image.set(plain,upload.at);upload.at+=plain.length;}finally{plain.fill(0)}
+        if(upload.at===upload.size){const request=upload;upload=undefined;
+          if(createHash('sha256').update(request.image).digest('hex')!==request.sha256){request.image.fill(0);throw Error('upload hash')}
+          const work=workTail.then(()=>{if(socket.destroyed||closed){request.image.fill(0);return;}return handle(request)});workTail=work.catch(()=>socket.destroy());
+        }return;
+      }
       if (busy) throw new Error('Concurrent request');
       const plain = peer.decrypt(bytes); let request;
       try { request = api.decode(plain); } finally { plain.fill(0); }
       if (!Number.isInteger(request.req) || request.req !== lastReq + 1 || ++quota > 256 || checked.resume===1&&lastReq===0&&request.kind!=='session') throw new Error('Request order');
-      if(!authenticated){authenticated=true;claimed=true;key.fill(0);const previous=activeSocket;activeSocket=socket;previous?.destroy();events.authenticated?.();socket.setTimeout(Math.max(1,expires-now()),()=>socket.destroy());}
+      if(!authenticated){authenticated=true;claimed=true;key.fill(0);const previous=activeSocket;activeSocket=socket;previous?.destroy();source.deletionConnected?.();events.authenticated?.();socket.setTimeout(Math.max(1,expires-now()),()=>socket.destroy());}
       lastReq=request.req;busy=true;
+      if(request.kind==='inspirationUpload'&&download){
+        api.fields(request,['kind','req','id','revision','size','sha256','mime']);
+        if(!source.inspirationUpload||!/^[a-f0-9]{32}$/.test(request.id)||!Number.isSafeInteger(request.revision)||request.revision<1||!Number.isInteger(request.size)||request.size<4||request.size>15*1024*1024||!/^[a-f0-9]{64}$/.test(request.sha256)||!['image/jpeg','image/png','image/webp','image/heic','image/heif'].includes(request.mime))throw Error('upload header');
+        upload={...request,at:0,image:Buffer.alloc(request.size)};return;
+      }
       // Recovery handshake can finish while a canceled conversion drains, but media work stays serial.
       if(request.kind==='session')void handle(request);
       else {const work=workTail.then(()=>{if(socket.destroyed||closed){busy=false;return;}return handle(request);});workTail=work.catch(()=>{socket.destroy();});}
     }, totalLimit);
     socket.setTimeout(Math.max(1, Math.min(30000, expires - now())), () => socket.destroy());
     socket.on('data', bytes => { try {if((received+=bytes.length)>totalLimit)throw new Error('Transfer limit');decoder.feed(Uint8Array.from(bytes)); } catch { socket.destroy(); } });
-    socket.on('close', () => { sockets.delete(socket); decoder.close(); peer?.close(); if (authenticated&&activeSocket===socket){activeSocket=undefined;events.disconnected?.();} });
+    socket.on('close', () => { upload?.image.fill(0);upload=undefined;sockets.delete(socket); decoder.close(); peer?.close(); if (authenticated&&activeSocket===socket){activeSocket=undefined;void source.deletionDisconnected?.().catch(()=>{});events.disconnected?.();} });
   });
-  const stop = () => new Promise(resolve => { closed = true; key.fill(0);resumeKey?.fill(0);resumeKey=undefined;for (const socket of sockets) socket.destroy();server.close(()=>{source.close?.();resolve();}); });
+  let stopping;
+  const stop = () => {if(stopping)return stopping;closed=true;key.fill(0);resumeKey?.fill(0);resumeKey=undefined;const cancelled=source.deletionDisconnected?.();for(const socket of sockets)socket.destroy();stopping=new Promise(resolve=>server.close(resolve)).then(async()=>{await cancelled;await workTail;source.close?.()});return stopping;};
   const timer = setTimeout(() => { void stop(); }, Math.max(1, expires - now())); timer.unref();
   return { server, stop: () => { clearTimeout(timer); return stop(); } };
 }

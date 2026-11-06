@@ -17,9 +17,13 @@ function uidFor(filePath: string, gamePlayRoot: string): string | undefined {
   return relative.find((part) => /^\d{5,}$/.test(part)) ?? filePath.split(path.sep).find((part) => /^\d{5,}$/.test(part))
 }
 
+export function isPendingUploadPath(filePath: string): boolean {
+  return /(?:^|[/\\])pendingup(?:[/\\]|$|\.(?:jpe?g|png|webp)$)/i.test(filePath)
+}
+
 function classifyKind(filePath: string): DiscoveredResourceKind {
   const lower = filePath.toLowerCase().replaceAll('\\', '/')
-  if (lower.includes('/pendingup/') || lower.endsWith('.tmp')) return 'ignored'
+  if (lower.endsWith('.tmp')) return 'ignored'
   const ext = path.extname(filePath).toLowerCase()
   if (ext === '.bin') return 'binary_companion'
   if (ext === '.mp4' && /\/videos?\//i.test(lower)) return 'motion_video'
@@ -124,10 +128,11 @@ export class ResourceClassifier {
     for(const cached of this.videoHashes.keys())if(cached===key||cached.startsWith(key+'/'))this.videoHashes.delete(cached)
   }
   classifyPath(filePath: string, extra?: ExtraScanRoot): DiscoveredResourceKind {
+    if (isPendingUploadPath(filePath)) return 'ignored'
     const original=classifyKind(filePath)
     if(extra?.mode!=='images')return original
     if(original==='unknown_image')return /_cover\.(jpe?g|png|webp)$/i.test(filePath)?'motion_cover':'high_quality'
-    if(path.extname(filePath).toLowerCase()==='.mp4'&&!/[/\\]pendingup[/\\]/i.test(filePath))return 'motion_video'
+    if(path.extname(filePath).toLowerCase()==='.mp4')return 'motion_video'
     return original
   }
 

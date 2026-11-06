@@ -7,16 +7,27 @@ const tap=index=>({currentTarget:{dataset:{index}}});
 const scale=(frame,value)=>({currentTarget:{dataset:{frame}},detail:{scale:value}});
 const touch=(frame,touches,type)=>({currentTarget:{dataset:{frame,image:true}},touches,type});
 const end=(frame,x,y,type='touchend')=>({currentTarget:{dataset:{frame,image:true}},changedTouches:[{clientX:x,clientY:y}],type});
-async function fixture(){
- let page,download,downloadCount=0;const writes=[];
+async function fixture(useTimers=false){
+ let page,download,downloadCount=0,seq=0;const writes=[],timers=new Map();
  runInNewContext(await readFile(new URL('index.js',root),'utf8'),{Page:p=>page=p,Date,Uint8Array,require:()=>({}),
+  ...(useTimers?{setTimeout:(fn,ms)=>{timers.set(++seq,{fn,ms});return seq;},clearTimeout:key=>timers.delete(key)}:{}),
   wx:{getFileSystemManager:()=>({unlink(){}})}});
  page.setData=(state,done)=>{writes.push(state);Object.assign(page.data,state);done?.();};page.onLoad();page.onShow();
  page.setData({connected:true,downloadEnabled:true,total:2,pageStart:1,photos:[1,2].map(n=>({id:n.toString(16).padStart(32,'0'),path:'/cache/'+n,date:''}))});
  page._channel={original:(id,done)=>{downloadCount++;download={id,done};},close(){}};
  page.openPhoto(tap(0));writes.length=0;
- return {page,writes,get download(){return download;},get downloadCount(){return downloadCount;}};
+ return {page,writes,timers,get download(){return download;},get downloadCount(){return downloadCount;}};
 }
+test('double tap zooms without toggling chrome, returns to fit, and an old tap cannot affect the next photo',async()=>{
+ const f=await fixture(true),p=f.page,photoTap=()=>p.viewerPhotoTap({currentTarget:{dataset:{frame:p._activeViewerFrame}},detail:{x:100,y:120}});
+ const chrome=p.data.viewerChrome;
+ photoTap();photoTap();assert.equal(p.data.viewerFrames[0].initialScale,2);assert.equal(p.data.viewerChrome,chrome);assert.equal(f.downloadCount,1);
+ photoTap();photoTap();assert.equal(p.data.viewerFrames[0].initialScale,1);assert.equal(p.data.viewerChrome,chrome);
+ photoTap();const pending=[...f.timers.values()].find(timer=>timer.ms===280);
+ // Finish the in-flight download before navigation.
+ f.download.done({status:'failed'});p.nextPhoto();pending.fn();assert.equal(p.data.viewerChrome,chrome);
+ photoTap();[...f.timers.values()].find(timer=>timer.ms===280).fn();assert.equal(p.data.viewerChrome,!chrome);
+});
 test('native scale samples never feed scale-value back through setData; original request occurs once',async()=>{
  const f=await fixture(),p=f.page,key=p.data.viewerFrames[0].key;
  for(const n of [1.1,1.42,1.7,2.13,1.8,2.25,2.01])p.viewerScaled(scale(key,n));

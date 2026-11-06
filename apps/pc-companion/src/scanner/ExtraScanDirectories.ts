@@ -5,6 +5,7 @@ import path from 'node:path'
 import type {ExtraScanRoot} from './types.js'
 import type {ScannerService} from './ScannerService.js'
 import {gamePlayUid,nativePhotoLayout,nativePhotoAccountDirectory} from './NativePhotoLayout.js'
+import {isPendingUploadPath} from './ResourceClassifier.js'
 
 const MAX_DIRECTORIES=16
 const key=(value:string)=>path.resolve(value).toLowerCase()
@@ -101,10 +102,12 @@ export class ExtraScanDirectories{
     if(this.directories.length+unique.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     let images=0,videos=0,observed=0,folders=0,limited=false
     const visit=async(directory:string,depth:number):Promise<void>=>{
+      if(isPendingUploadPath(directory))return
       if(depth>8||observed>=500||folders>=150){limited=true;return}folders++
       for(const entry of await readdir(directory,{withFileTypes:true})){
         if(entry.isSymbolicLink())continue
         if(entry.isDirectory()){await visit(path.join(directory,entry.name),depth+1);continue}
+        if(isPendingUploadPath(entry.name))continue
         if(++observed>500){limited=true;break}
         if(/\.(jpe?g|png|webp)$/i.test(entry.name))images++
         else if(/\.mp4$/i.test(entry.name))videos++

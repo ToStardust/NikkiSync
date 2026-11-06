@@ -3,21 +3,28 @@ const { saveOriginalBatch } = require('../../lib/original-save.js');
 const { createIconCache } = require('../../lib/icon-cache.js');
 const { createLiveCache } = require('../../lib/live-gallery.js');
 const { createShareCardJob, saveShareCard } = require('../../lib/share-card.js');
+const {inspirationPage,inspirationData}=require('../../lib/inspiration-page.js');
+const {deletionPage,deletionData}=require('../../lib/deletion-page.js');
+const {profilePage,profileData}=require('../../lib/profile-page.js');
 let sequence = 0;
 Page({
-  data: { busy: false, connected: false, resumeAvailable:false, total: 0, photos: [], next: null, selectedPath: '', selectedDate: '', viewerOpen: false, viewerChrome: true, connectionOpen: false,
+  ...inspirationPage,
+  ...deletionPage,
+  ...profilePage,
+  data: { ...inspirationData,busy: false, connected: false, resumeAvailable:false, total: 0, photos: [], next: null, selectedPath: '', selectedDate: '', viewerOpen: false, viewerChrome: true, connectionOpen: false,
     popupMode: 'connection', popupPosition: 'bottom', popupOverlay: true, popupRound: true, popupDuration: 220, popupStyle: 'background:#FFFCF7;border-radius:32px 32px 0 0;',
     downloadEnabled: false, saving: false, saveStopping: false, retryCount: 0, selectionMode: false, selectedCount: 0, saveMessage: '', permissionDenied: false,
-    viewerLive:false,livePath:'',livePackPath:'',livePlaying:false,
-    shareOpen:false,shareBusy:false,shareSaving:false,sharePath:'',shareIndex:0,shareCount:0,shareMessage:'',
+    ...deletionData,...profileData,viewerVideo:false,viewerLive:false,livePath:'',livePackPath:'',livePlaying:false,
+    shareOpen:false,shareBusy:false,shareSaving:false,sharePath:'',sharePreviewHeight:0,shareIndex:0,shareCount:0,shareMessage:'',
     selectedId: '', viewerFrames: [], viewerIndex: -1, viewerPosition: 0, viewerSelected: false, viewerClosing: false, viewerPhase: 'open', viewerSettle: 0,
     viewerQuality: 'preview', viewerPreviewPath: '', viewerOriginalPath: '', originalReady: false, hdLoading: false, hdMessage: '',
     infoOpen: false, infoMounted: false, infoExpanded: false, infoPhase: 'exit', infoFrame: 0, infoSettle: 0, infoLoading: false, infoRows: [], infoMessage: '', reduceMotion: false, windowHeight: 800,
-    windowWidth:400,writeExif:true,exportEnabled:false,browseEnabled:false,viewerRotation:0,viewerMime:'image/jpeg',rotationWidth:400,rotationHeight:800,groups:[],libraryTotal:0,
+    windowWidth:400,viewerImageWidth:400,viewerImageHeight:800,writeExif:true,exportEnabled:false,browseEnabled:false,viewerRotation:0,viewerMime:'image/jpeg',rotationWidth:400,rotationHeight:800,groups:[],libraryTotal:0,
     searchText:'',filterVersion:'',filterFrom:'',filterTo:'',filtersOpen:false,filterActive:false,versionOptions:[{label:'全部版本',version:''}],versionIndex:0,
     outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:'',
-    ambientPath: '', pageStart: 0, pageEnd: 0, loaded: 0, dateSummary: '', message: '照片只从你的电脑传到这台手机，不上传云端。' },
+    ambientPath: '', pageStart: 0, pageEnd: 0, loaded: 0, dateSummary: '', message: '', connectionDiagnostic: '' },
   onLoad() { this._alive = true; this._generation = 0; this._connectionEpoch = 0; this._popupEpoch = 0; this._saveEpoch = 0; this._metadataEpoch = 0; this._viewerSeq = 0; this._metadata = new Map(); this._popupClosing = false; this._files = new Set();
+    this.initProfile?.();
     this._selected = new Set(); this._saved = new Map(); this._retryIds = []; this._previewCache = new Map(); this._hdEpoch = 0; this._polls = 0; this._infoSeq=0;this._motionTimers={};this._motionSerial={};this.resetViewerGesture();
     this._rotations=new Map();this._query={};this._shareEpoch=0;this._sharePaths=[];this._resumable=false;this._resumeOffset=0;this._resumeAttempts=0;
     this._outfitEpoch=0;this._outfits=new Map();this._outfitBusy=0;
@@ -47,7 +54,6 @@ Page({
   setRotation(angle){
     if(!this._alive||!this._active||!this.data.viewerOpen||this.data.viewerClosing||this.data.busy||this.data.saving||this.data.infoLoading||this.data.infoOpen||this.data.hdLoading)return;
     if(!this.data.exportEnabled){this.setData({hdMessage:'旋转保存需要电脑运行新版 EXE。'});return;}
-    if(this.data.viewerLive){this.setData({hdMessage:'小程序 Live 暂保留原始方向；App 可同步旋转封面与完整视频。'});return;}
     const id=this.data.selectedId;if(!id)return;this._rotations.set(id,angle);
     const photos=this.data.photos.map(x=>Object.assign({},x,{rotation:this._rotations.get(x.id)||0}));this.setData({photos,groups:this.groupsFor(photos)});this.displayPhoto(this.data.viewerIndex);
   },
@@ -64,12 +70,16 @@ Page({
       delete this._motionTimers[name];action();
     },ms);
   },
-  toggleReducedMotion() {
-    const reduced=!this.data.reduceMotion;this.setData({reduceMotion:reduced});
+  toggleReducedMotion(event) {
+    const reduced=typeof event?.detail?.value==='boolean'?event.detail.value:!this.data.reduceMotion;
+    this.setData({reduceMotion:reduced});
     try{wx.setStorageSync?.('nikkisync.reduceMotion',reduced);}catch(_){}
   },
-  onShow() { this._active = true; if (this._pending) { const config = this._pending; this._pending = null; this.connect(config); }else if(this._resumable){this._resumeAttempts=0;this.resumeConnection();} },
+  onShow() { this._active = true;this.scheduleDeletionPolling?.();if(this._inspirationNativeHidden){this._inspirationNativeHidden=false;this._inspirationExternal=false;const result=this._inspirationExternalResult;this._inspirationExternalResult=null;result?.();return;} if (this._pending) { const config = this._pending; this._pending = null; this.connect(config); }else if(this._resumable){this._resumeAttempts=0;this.resumeConnection();} },
   onHide() {
+    this.stopDeletionPolling?.();
+    if(this._inspirationExternal){this._active=false;this._inspirationNativeHidden=true;this.stopRefresh();return;}
+    if(this.data.inspirationOpen)this.closeInspiration();
     this._active=false;this.stopResume();this._resumeOffset=Math.max(0,this.data.pageStart-1);
     this._saveEpoch++;this._metadataEpoch++;this._generation++;
     const retained=this._resumable&&this._channel?.suspend?.()===true;this._resumable=!!retained;
@@ -80,7 +90,7 @@ Page({
     if (this._alive) this.setData({resumeAvailable:!!retained,connectionOpen: false, ambientPath: '', saving: false, saveStopping: false, retryCount: 0, infoOpen: false, infoMounted: false, infoExpanded: false, infoPhase: 'exit', viewerClosing: false, viewerPhase: 'open', infoLoading: false, hdLoading: false, downloadEnabled: false, selectedCount:this._selected.size, selectionMode:retained&&this.data.selectionMode});
     if (this._alive && !this._scanning) this.setData({ connected: false, busy: false, photos: [],groups:[], selectedPath: '', viewerOpen: false, viewerChrome: true, message:retained?'连接已暂停，回到前台后自动恢复。':'连接已关闭。重新连接需要电脑生成新浏览码。' });
   },
-  onUnload() {this._alive=false;this._active=false;this._resumable=false;this.stopResume();this.closeShareCard();this.resetViewerGesture();this.stopRefresh(); this.discardOriginal();this._pending=null;this._saveEpoch++;this._metadataEpoch++;this._saveJob?.cancel();this._metadata.clear();this._selected.clear();this._saved.clear();this._retryIds=[];this._popupEpoch++;this._generation++;this._connectionEpoch++;this._channel?.close();this.clearFiles();},
+  onUnload() {this.stopDeletionPolling?.();this._alive=false;this._active=false;this._resumable=false;this.stopResume();this.closeShareCard();this.resetViewerGesture();this.stopRefresh(); this.discardOriginal();this._pending=null;this._saveEpoch++;this._metadataEpoch++;this._saveJob?.cancel();this._metadata.clear();this._selected.clear();this._saved.clear();this._retryIds=[];this._popupEpoch++;this._generation++;this._connectionEpoch++;this._channel?.close();this.clearFiles();},
   stopResume(){if(typeof clearTimeout==='function')clearTimeout(this._resumeTimer);this._resumeTimer=null;},
   resumeConnection(){
     if(!this._alive||!this._active||!this._resumable||this.data.busy)return;
@@ -88,6 +98,7 @@ Page({
     if(!this._channel?.resume?.()&&this._resumable)this.setData({busy:false,message:'恢复暂未成功，请确认电脑仍在运行并连接同一 Wi-Fi，再点重试连接。'});
   },
   connectionInterrupted(){
+    this.stopDeletionPolling?.();
     this.stopRefresh();this._generation++;this._metadataEpoch++;this._resumeOffset=Math.max(0,this.data.pageStart-1);
     if(!this._alive)return;
     this.setData({connected:false,busy:false,downloadEnabled:false,hdLoading:false,infoLoading:false,resumeAvailable:this._resumable,message:this._resumable?'连接暂时中断，正在等待恢复。':'连接已结束，请重新扫码。'});
@@ -96,29 +107,42 @@ Page({
     }else if(this._active&&this._resumable)this.setData({message:'暂时连不上电脑，请确认同一 Wi-Fi 和电脑仍在运行，再点重试连接。'});
   },
   removeFile(path) { if (!path) return; this._files.delete(path); try { wx.getFileSystemManager().unlink({ filePath: path, fail() {} }); } catch (_) {} },
-  clearFiles(keepPreviews=false) {this.discardLive();this._liveIds.clear();this._outfitEpoch++;this._outfitBusy=0;this._outfits?.clear();this._iconCache?.clear();const retained=keepPreviews?new Set(this._previewCache.values()):new Set();for(const path of Array.from(this._files))if(!retained.has(path))this.removeFile(path);if(!keepPreviews)this._previewCache.clear();},
+  clearFiles(keepPreviews=false) {this.discardLive();this._liveIds.clear();this._outfitEpoch++;this._outfitBusy=0;if(!keepPreviews)this._outfits?.clear();this._iconCache?.release(keepPreviews);const retained=keepPreviews?new Set(this._previewCache.values()):new Set();for(const path of Array.from(this._files))if(!retained.has(path))this.removeFile(path);if(!keepPreviews)this._previewCache.clear();},
   scanPc() {
     if (!this._alive || !this._active || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading) return;
+    this.stopDeletionPolling?.();this._deletionCancel=new Set();this.setData({deletionEnabled:false,deletionItems:[],deletionMessage:'',deletionOpen:false,connectionDiagnostic:''});
     this._resumable=false;this._resumeOffset=0;this._resumeAttempts=0;this.stopResume();this.setData({resumeAvailable:false});
     this.resetViewerGesture();this.stopRefresh(); this.discardOriginal(); this._selected.clear(); this._saved.clear(); this._retryIds=[]; this._polls=0;this._hdFailedId='';
     this._metadata.clear(); this._metadataEpoch++;this._rotations.clear();this._query={};this.setData({groups:[],exportEnabled:false,browseEnabled:false,searchText:'',filterVersion:'',filterFrom:'',filterTo:'',versionIndex:0,filterActive:false});
     if (this._channel) this._channel.close(); this._popupEpoch++; this._generation++; this._connectionEpoch++; this.clearFiles();
-    this._scanning = true; this.setData({ busy: true, connected: false, connectionOpen: false, downloadEnabled: false, selectionMode: false, selectedCount: 0, saveStopping: false, retryCount: 0, saveMessage: '', ambientPath: '', loaded: 0, photos: [], selectedPath: '', viewerOpen: false, viewerClosing: false, viewerPhase: 'open', infoMounted: false, infoOpen: false, viewerChrome: true, message: '扫描电脑本机图库浏览码。不要分享该二维码。' });
+    this._scanning = true; this.setData({ busy: true, connected: false, connectionOpen: false, downloadEnabled: false, selectionMode: false, selectedCount: 0, saveStopping: false, retryCount: 0, saveMessage: '', ambientPath: '', loaded: 0, photos: [], selectedPath: '', viewerOpen: false, viewerClosing: false, viewerPhase: 'open', infoMounted: false, infoOpen: false, viewerChrome: true, message: '请扫描电脑端的连接二维码' });
     wx.scanCode({ onlyFromCamera: true, scanType: ['qrCode'], success: value => {
       this._scanning = false; if (!this._alive) return; let config;
-      try { config = parseGalleryQr(value.result); } catch (_) { this.setData({ busy: false, message: '浏览码无效或过期，不接受其他测试码。' }); return; }
+      try { config = parseGalleryQr(value.result); } catch (_) { this.setData({ busy: false, message: '连接码无效或已过期，请在电脑重新生成' }); return; }
       if (!this._active) { this._pending = config; return; } this.connect(config);
     }, fail: () => { this._scanning = false; if (this._alive) this.setData({ busy: false, message: '扫码已取消。' }); } });
   },
   connect(config) {
     if (!this._alive || !this._active) return; const epoch = ++this._connectionEpoch;
-    this.setData({ busy: true, message: '正在验证扫码密钥…' });
+    this.setData({ busy: true, message: '正在连接电脑…', connectionDiagnostic: '' });
     this._channel = connectGallery(wx, config, {
+      progress:message=>{if(this._alive&&this._active&&epoch===this._connectionEpoch)this.setData({message});},
       ready: capabilities => { if (!this._alive || !this._active || epoch !== this._connectionEpoch) return;
-        this._resumable=!!capabilities?.resume;this._resumeAttempts=0;this.stopResume();
-        this.setData({ connected: true, busy: false,resumeAvailable:false,downloadEnabled: !!capabilities?.download,exportEnabled:!!capabilities?.export,browseEnabled:!!capabilities?.browse }); this.loadPage(this._resumeOffset); this.scheduleRefresh(); },
+        this._resumable=!!capabilities?.resume;this._resumeAttempts=0;this.stopResume();this.setData({deletionEnabled:!!capabilities?.deletion});this.scheduleDeletionPolling?.();
+        this.setData({ connected: true, busy: false,resumeAvailable:false,downloadEnabled: !!capabilities?.download,exportEnabled:!!capabilities?.export,browseEnabled:!!capabilities?.browse }); this.loadPage(this._resumeOffset); this.scheduleRefresh();this.scheduleDeletionPolling?.(); },
       disconnected:()=>{if(this._alive&&epoch===this._connectionEpoch)this.connectionInterrupted();},
-      failed: message => { if (this._alive && epoch === this._connectionEpoch) {this._resumable=false;this._generation++;this._metadataEpoch++;this.stopResume();this.stopRefresh();this.clearFiles();this.setData({connected:false,busy:false,resumeAvailable:false,hdLoading:false,infoLoading:false,photos:[],groups:[],ambientPath:'',selectedPath:'',viewerOpen:false,message});} }
+      failed: message => {
+        if (!this._alive || epoch !== this._connectionEpoch) return;
+        this._resumable=false;this._generation++;this._metadataEpoch++;
+        this.stopResume();this.stopRefresh();this.clearFiles();
+        const diagnostic = /（(C0[1-6])：([^）]+)）/.exec(message);
+        this.setData({
+          connected:false,busy:false,resumeAvailable:false,hdLoading:false,infoLoading:false,
+          photos:[],groups:[],ambientPath:'',selectedPath:'',viewerOpen:false,
+          message:diagnostic?message.replace(diagnostic[0], '（'+diagnostic[2]+'）'):message,
+          connectionDiagnostic:diagnostic?diagnostic[1]:'',
+        });
+      }
     });
   },
   loadPage(offset, viewerTarget) {
@@ -139,7 +163,7 @@ Page({
   },
   applyPage(value, offset, generation, viewerTarget) {
       for(const item of value.items)if(item.live===true)this._liveIds.add(item.id);else this._liveIds.delete(item.id);
-      const photos = value.items.map(x => ({ id: x.id,live:x.live===true, date: x.date ? new Date(Date.parse(x.date)-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) : '日期未知',version:x.version||'',versionSource:x.versionSource||'unknown',mime:x.mime||'image/jpeg',rotation:x.live?0:this._rotations.get(x.id)||0,path: this._previewCache.get(x.id) || '', selected: this._selected.has(x.id), saveState: this._saved.get(x.id) || '', state: '等待加载' }));
+      const photos = value.items.map(x => ({ id: x.id,video:x.video===true,live:x.live===true, date: x.date ? new Date(Date.parse(x.date)-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) : '日期未知',version:x.version||'',versionSource:x.versionSource||'unknown',mime:x.mime||'image/jpeg',rotation:x.live?0:this._rotations.get(x.id)||0,path: this._previewCache.get(x.id) || '', selected: this._selected.has(x.id), saveState: this._saved.get(x.id) || '', state: '等待加载' }));
       const dates = photos.map(x => x.date).filter(x => x !== '日期未知');
       const first = dates[0], last = dates[dates.length - 1];
       const versions=Array.isArray(value.versions)?[{label:'全部版本',version:''},...value.versions.map(x=>({label:(x.version?x.version+' 版本':'版本未知')+' · '+x.count+' 张',version:x.version||'unknown'}))]:this.data.versionOptions;
@@ -151,8 +175,9 @@ Page({
   },
   loadPreview(index, generation) {
     if (!this._alive || !this._active || generation !== this._generation) return;
-    if (index >= this.data.photos.length) { this.setData({ busy: false, message: this.data.filterActive&&!this.data.photos.length?'没有符合条件的照片，可以清除筛选。':this.data.downloadEnabled ? '轻点欣赏照片，长按选择；翻页不会丢失选择。' : '预览已加载。原图保存需要电脑生成新版浏览码。' });
+    if (index >= this.data.photos.length) { this.setData({ busy: false, message: this.data.filterActive&&!this.data.photos.length?'没有符合条件的照片，可以清除筛选。':'' });
       if(this.data.viewerOpen && this._nativeScale>=1.4)this.loadViewerOriginal(); return; }
+    if(this.data.photos[index].video){this.updatePhoto(index,{state:'▶ 视频'});this.loadPreview(index+1,generation);return;}
     if(this.data.photos[index].path){this.updatePhoto(index,{});this.loadPreview(index+1,generation);return;}
     const id = this.data.photos[index].id;
     try{this._channel.preview(id, value => {
@@ -182,7 +207,7 @@ Page({
     this._refreshTimer=setTimeout(()=>{this._refreshTimer=null;this.refreshPhotos(true);this.scheduleRefresh();},30000);
   },
   refreshPhotos(automatic) {
-    if(!this._alive || !this._active || !this.data.connected || !this.data.downloadEnabled || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || this.data.viewerOpen || this.data.connectionOpen || this.data.selectionMode || this.data.selectedCount || (automatic===true && this.data.pageStart>1) || typeof this._channel?.refresh!=='function') {
+    if(!this._alive || !this._active || !this.data.connected || !this.data.downloadEnabled || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || this.data.viewerOpen || this.data.connectionOpen || this.data.myOpen || this.data.inspirationOpen || this.data.selectionMode || this.data.selectedCount || (automatic===true && this.data.pageStart>1) || typeof this._channel?.refresh!=='function') {
       if(automatic!==true && this._alive)this.setData({message:'请先结束选择、预览或保存，再刷新照片。'});wx.stopPullDownRefresh?.();return;
     }
     const generation=++this._generation;this._polls++;this._metadata.clear();this._metadataEpoch++;this._outfits.clear();
@@ -221,7 +246,7 @@ Page({
   cancelSelection() { if (this.data.saving) return; this._selected.clear();this.setData({selectionMode:false});this.syncSelection(); },
   toggleSelection(event) {
     if(this.data.saving || this.data.busy) return;
-    const index=Number(event.currentTarget.dataset.index),photo=this.data.photos[index]; if(!photo?.path) return;
+    const index=Number(event.currentTarget.dataset.index),photo=this.data.photos[index];if(photo?.video){this.setData({saveMessage:'视频请点开后逐个保存。'});return;}if(!photo?.path)return;
     if(this._selected.has(photo.id))this._selected.delete(photo.id);else if(this._selected.size<100)this._selected.add(photo.id);else {this.setData({saveMessage:'每批最多选择 100 张；保存后可继续选择。'});return;}
     this.setData({selectionMode:true});this.syncSelection();
   },
@@ -230,7 +255,24 @@ Page({
   longSelect(event) {if(this.data.saving || this.data.busy) return;this._ignoreTapUntil=Date.now()+500;this.toggleSelection(event);},
   tileTapped(event) {if(Date.now()<(this._ignoreTapUntil || 0)) return;if(this.data.selectionMode)this.toggleSelection(event);else this.openPhoto(event);},
   saveSelected() {this.adoptSelection();this.beginSave(Array.from(this._selected));},
-  saveViewed() {if(this.data.viewerLive){this.exportLivePhoto();return;}if(this.data.selectedId)this.beginSave([this.data.selectedId]);},
+  saveViewed() {
+    if(this.data.viewerVideo){this.saveVideo();return;}
+    const id=this.data.selectedId;if(!id)return;
+    if(!this.data.viewerLive){this.beginSave([id]);return;}
+    const connection=this._connectionEpoch;
+    try{wx.showActionSheet({itemList:['照片','视频'],success:result=>{
+      if(!this._alive||!this._active||!this.data.viewerOpen||this.data.viewerClosing||id!==this.data.selectedId||connection!==this._connectionEpoch)return;
+      if(result.tapIndex===0)this.beginSave([id]);else if(result.tapIndex===1)this.saveVideo();
+    }});}catch(_){if(this._alive)this.setData({saveMessage:'暂时无法打开保存选项，请重试。'});}
+  },
+  saveVideo(){
+    if(!this._alive||!this._active||!this.data.viewerOpen||!this.data.viewerLive||this.data.saving||this.data.busy||!this.data.connected)return;
+    if(!this.data.livePath){this.requestLive('motion',true);return;}
+    const epoch=this._liveEpoch,id=this.data.selectedId;this.setData({saving:true,saveMessage:'正在保存视频到相册…'});
+    this._liveCache.saveVideo(this.data.livePath,result=>{if(!this._alive)return;
+      this.setData({saving:false,...(epoch===this._liveEpoch&&id===this.data.selectedId?{permissionDenied:!!result.permissionDenied,saveMessage:result.status==='saved'?'视频已保存到相册':result.status==='cancelled'?'已取消保存视频':'视频保存失败，请检查相册权限后重试。'}:{})});
+    });
+  },
   discardLive(){this._liveEpoch++;this._liveCache?.clear();if(this._alive)this.setData({livePath:'',livePackPath:'',livePlaying:false});},
   playLive(){
     if(this.data.livePlaying){this.setData({livePlaying:false});return;}
@@ -246,21 +288,36 @@ Page({
     }
     this.requestLive('live');
   },
-  requestLive(kind){
+  requestLive(kind,save=false){
+    if(kind!=='motion')return;
     if(!this._alive||!this._active||!this.data.viewerOpen||!this.data.viewerLive||!this.data.connected||!this.data.downloadEnabled||this.data.busy||this.data.saving||this.data.infoLoading||this.data.hdLoading||this.data.viewerClosing||!this._liveCache)return;
-    const id=this.data.selectedId,epoch=++this._liveEpoch,connection=this._connectionEpoch;
+    const id=this.data.selectedId,epoch=++this._liveEpoch,connection=this._connectionEpoch,rotation=this.data.viewerRotation||0;
     const current=()=>this._alive&&this._active&&epoch===this._liveEpoch&&connection===this._connectionEpoch&&id===this.data.selectedId;
-    this.setData({busy:true,saveMessage:kind==='live'?'正在电脑封装完整 Live…':'正在读取动态视频…'});
-    const failed=()=>{if(current())this.setData({busy:false,saveMessage:kind==='live'?'Live 封装未完成：请确认电脑有 FFmpeg/ffprobe，资源完整且封面可匹配。':'动态视频暂不可用，请检查连接或重试。'});};
+    this.setData({busy:true,saveMessage:rotation?'电脑正在旋转视频画面…':'正在读取动态视频…'});
+    const failed = (message = rotation?'旋转视频未完成，请检查电脑连接后重试。':'动态视频暂不可用，请检查连接或重试。') => {
+      if (current()) this.setData({ busy: false, saveMessage: message });
+    };
     const received=value=>{
       if(!current()){value.image?.fill(0);return;}if(value.status!=='ok'){value.image?.fill(0);failed();return;}
       this._liveCache.put(value,kind,path=>{if(!current())return;if(!path){failed();return;}
-        this.setData(kind==='live'?{busy:false,livePackPath:path,saveMessage:'Live 封包已准备好。点“转发 .livp 文件”，按已验证的方法导入相册。'}:{busy:false,livePath:path,livePlaying:true,saveMessage:''});
+        this.setData({busy:false,livePath:path,livePlaying:!save,saveMessage:''});if(save)this.saveVideo();
       });
     };
-    try{const progress=(done,total)=>{if(current())this.setData({saveMessage:(kind==='live'?'接收 Live 封包':'接收动态视频')+' · '+Math.floor(done/total*100)+'%'});};
-      if(kind==='live')this._channel.live(id,{exif:this.data.writeExif,rotation:0},received,progress);else this._channel.motion(id,received,progress);
-    }catch(_){failed();}
+    const requestMotion = () => {
+      const progress = (done, total) => {
+        if (current()) this.setData({ saveMessage: '接收动态视频 · ' + Math.floor(done / total * 100) + '%' });
+      };
+      try { this._channel.motion(id, received, progress, rotation); } catch (_) { failed(); }
+    };
+    try {
+      if (!rotation) { requestMotion(); return; }
+      this._channel.motionRotationSupported(supported => {
+        if (!current()) return;
+        if (supported) requestMotion();
+        else if (save) failed('旋转后保存视频需要更新电脑端。');
+        else failed('旋转后播放视频需要更新电脑端。');
+      });
+    } catch (_) { failed(); }
   },
   stopSaving() {
     if(!this._alive || !this._active || !this.data.saving || this.data.saveStopping || typeof this._saveJob?.stopAfterCurrent!=='function')return;
@@ -270,7 +327,6 @@ Page({
   retryUnfinished() { this.beginSave(this._retryIds.slice()); },
   beginSave(ids) {
     if(!this._alive || !this._active || !this.data.connected || !this.data.downloadEnabled || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || this.data.viewerClosing || !ids.length) return;
-    if(ids.some(id=>this._liveIds.has(id))){this.setData({saveMessage:'选中项含 Live。请逐张打开并导出 Live 封包；普通照片可单独选择批量保存。'});return;}
     const epoch=++this._saveEpoch;
     this._retryIds=[];
     this.setData({saving:true,saveStopping:false,retryCount:0,permissionDenied:false,saveMessage:'正在申请相册保存权限…'});
@@ -296,13 +352,13 @@ Page({
     if(!this._alive||!this._active||!this.data.viewerOpen||this.data.viewerClosing||!this.data.connected||!this.data.downloadEnabled||this.data.busy||this.data.saving||this.data.infoLoading||this.data.hdLoading)return;
     const id=this.data.selectedId,epoch=++this._shareEpoch,connection=this._connectionEpoch;
     const current=()=>this._alive&&this._active&&epoch===this._shareEpoch&&id===this.data.selectedId&&connection===this._connectionEpoch;
-    this._shareJob?.dispose();this._sharePaths=[];
-    this.setData({shareOpen:true,shareBusy:true,shareSaving:false,sharePath:'',shareIndex:0,shareCount:0,shareMessage:'正在准备分享图…',saving:true});
+    this._shareJob?.dispose();this._sharePaths=[];this._shareOriginalSaved=false;
+    this.setData({shareOpen:true,shareBusy:true,shareSaving:false,sharePath:'',sharePreviewHeight:0,shareIndex:0,shareCount:0,shareMessage:'正在准备分享图…',saving:true});
     const fail=error=>{if(current())this.setData({shareBusy:false,saving:false,shareMessage:error?.message||'分享图生成失败，请重试。'});};
     try{wx.createSelectorQuery().in(this).select('#share-card-canvas').fields({node:true,size:true}).exec(result=>{
       if(!current())return;
       const canvas=result?.[0]?.node;if(!canvas){fail(new Error('当前微信无法生成分享图，请更新后重试。'));return;}
-      try{const job=createShareCardJob(wx,{canvas,channel:this._channel,id,date:this.data.selectedDate,rotation:this.data.viewerRotation,iconCache:this._iconCache,
+      try{const job=createShareCardJob(wx,{canvas,channel:this._channel,id,date:this.data.selectedDate,rotation:this.data.viewerRotation,iconCache:this._iconCache,branding:this.shareBranding?.(),
         originalPath:this.data.viewerOriginalPath||'',progress:message=>{if(current())this.setData({shareMessage:message});}});
         this._shareJob=job;
         job.result.then(value=>{if(!current()){job.dispose();return;}this._sharePaths=value.paths;
@@ -314,26 +370,53 @@ Page({
   },
   closeShareCard(){
     this._shareEpoch=(this._shareEpoch||0)+1;
+    this._shareOriginalSaveJob?.cancel();this._shareOriginalSaveJob=null;
     const disconnected=this.data.shareBusy?this._shareJob?.cancel():false;
     if(!this.data.shareBusy)this._shareJob?.dispose();
     if(disconnected){this.stopRefresh();if(this._alive)this.setData({connected:false,downloadEnabled:false,message:this._resumable?'已取消生成，连接将自动恢复。':'已取消正在传输的分享图。请在电脑生成新浏览码后重新连接。'});}
     this._shareJob=null;this._sharePaths=[];
-    if(this._alive)this.setData({shareOpen:false,shareBusy:false,shareSaving:false,sharePath:'',shareCount:0,shareIndex:0,shareMessage:'',...(this.data.shareBusy?{saving:false}:{})});
+    if(this._alive)this.setData({shareOpen:false,shareBusy:false,shareSaving:false,sharePath:'',sharePreviewHeight:0,shareCount:0,shareIndex:0,shareMessage:'',...(this.data.shareBusy?{saving:false}:{})});
   },
   previousShareCard(){this.changeShareCard(-1);},
   nextShareCard(){this.changeShareCard(1);},
-  changeShareCard(delta){if(this.data.shareBusy||this.data.shareSaving)return;const index=this.data.shareIndex+delta;if(index>=0&&index<this._sharePaths.length)this.setData({shareIndex:index,sharePath:this._sharePaths[index],shareMessage:'分享图 '+(index+1)+' / '+this._sharePaths.length});},
-  saveGeneratedShareCard(){
+  changeShareCard(delta){if(this.data.shareBusy||this.data.shareSaving)return;const index=this.data.shareIndex+delta;if(index>=0&&index<this._sharePaths.length)this.setData({shareIndex:index,sharePath:this._sharePaths[index],sharePreviewHeight:0,shareMessage:'分享图 '+(index+1)+' / '+this._sharePaths.length});},
+  sharePreviewLoaded(event){
+    if(!this.data.shareOpen||event.currentTarget?.dataset?.path!==this.data.sharePath)return;
+    const {width,height}=event.detail||{};
+    if(width>0&&height>0&&width<=4096&&height<=4096)this.setData({sharePreviewHeight:Math.ceil((this.data.windowWidth*694/750)*height/width)});
+  },
+  saveOriginalAndShareCard(){return this.saveGeneratedShareCard(true);},
+  async saveGeneratedShareCard(withOriginal){
     if(!this._alive||!this._active||!this.data.shareOpen||this.data.shareBusy||this.data.shareSaving||!this.data.sharePath)return;
-    const path=this.data.sharePath,epoch=this._shareEpoch,job=this._shareJob;job?.pin(path);this.setData({shareSaving:true,shareMessage:'正在保存到相册…'});
-    const current=()=>this._alive&&this._active&&epoch===this._shareEpoch;
-    saveShareCard(wx,path).then(()=>{if(current())this.setData({shareSaving:false,shareMessage:'这张分享图已保存到相册。'});},error=>{if(current())this.setData({shareSaving:false,shareMessage:error.message,permissionDenied:/权限/.test(error.message)});}).finally(()=>job?.unpin(path));
+    // WXML supplies a tap event to the single-save action.
+    const both=withOriginal===true,id=this.data.selectedId,path=this.data.sharePath,epoch=this._shareEpoch,job=this._shareJob;
+    job?.pin(path);this.setData({shareSaving:true,permissionDenied:false,shareMessage:both&&!this._shareOriginalSaved?'正在下载并保存原图…':'正在保存分享图…'});
+    const current=()=>this._alive&&this._active&&epoch===this._shareEpoch&&id===this.data.selectedId;
+    try{
+      if(both&&!this._shareOriginalSaved){
+        if(!this.data.connected||!this.data.downloadEnabled||!id)throw Error('请重新连接电脑后保存原图。');
+        const result=await new Promise(resolve=>{this._shareOriginalSaveJob=saveOriginalBatch(wx,this._channel,[id],{complete:resolve},{exif:false});});
+        if(!current())return;
+        this._shareOriginalSaveJob=null;
+        if(result.permissionDenied)throw Error('请允许相册权限后重试。');
+        if(!result.results.some(item=>item.id===id&&item.status==='saved'))throw Error('原图保存未完成，请检查电脑连接后重试。');
+        this._shareOriginalSaved=true;this.setData({shareMessage:'原图已保存，正在保存分享图…'});
+      }
+      if(!current())return;
+      await saveShareCard(wx,path);
+      if(current())this.setData({shareMessage:both?'原图和这张分享图已保存到相册。':'这张分享图已保存到相册。'});
+    }catch(error){
+      if(current())this.setData({shareMessage:(both&&this._shareOriginalSaved?'原图已保存。':'')+error.message,permissionDenied:/权限/.test(error.message)});
+    }finally{
+      job?.unpin(path);
+      if(current()){this._shareOriginalSaveJob=null;this.setData({shareSaving:false});}
+    }
   },
   showPhotoInfo() {
     if(!this._alive || !this._active || !this.data.viewerOpen || this.data.viewerClosing)return;
     if(!this.data.infoOpen){
       const mounted=this.data.infoMounted,frame=++this._infoSeq;this.cancelMotion('infoExit');this._infoTouch=null;
-      this.setData({infoMounted:true,infoOpen:true,infoExpanded:false,infoFrame:frame,infoPhase:mounted?'open':'enter'},()=>{
+      this.setData({infoMounted:true,infoOpen:true,infoExpanded:true,infoFrame:frame,livePlaying:false,infoPhase:mounted?'open':'enter'},()=>{
         if(!mounted)this.deferMotion('infoEnter',16,()=>{if(this.data.infoOpen && frame===this.data.infoFrame)this.setData({infoPhase:'open'});});
       });
     }
@@ -353,28 +436,34 @@ Page({
     const epoch=++this._outfitEpoch,connection=this._connectionEpoch;this._outfitBusy=epoch;
     const live=()=>this._alive&&this._active&&connection===this._connectionEpoch,current=()=>live()&&epoch===this._outfitEpoch&&this.data.infoOpen&&id===this.data.selectedId;
     const finish=()=>{if(live()&&this._outfitBusy===epoch){this._outfitBusy=0;this.setData({infoLoading:false});}};
-    this.setData({infoLoading:true,outfitItems:[],outfitTotal:0,outfitOffset:offset,outfitNext:null,outfitNote:'正在读取这张照片的穿搭…'});
+    this.setData({infoLoading:true,outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:'正在读取整套穿搭…'});
+    let total=null,partial=false;const keys=new Set();
     const update=(index,patch)=>{if(!current())return;const items=this.data.outfitItems.slice();items[index]=Object.assign({},items[index],patch);this.setData({outfitItems:items});};
     const icons=index=>{
       if(!current()){finish();return;}
-      const item=this.data.outfitItems[index];if(!item){this.setData({outfitNote:this.data.outfitTotal?'图标来自电脑公共服装字典；分类示意不代表具体部件。':'这张照片暂时没有已解析的服装信息。'});finish();return;}
+      const item=this.data.outfitItems[index];if(!item){this.setData({outfitNote:partial?'部分穿搭未全部载入，请重新打开重试。':this.data.outfitTotal?'':'这张照片暂时没有已解析的服装信息。'});finish();return;}
       if(!item.hasIcon){icons(index+1);return;}
-      const hit=this._iconCache.get(item.key);if(hit){update(index,{iconPath:hit.path,iconSource:hit.source,iconState:''});icons(index+1);return;}
+      const hit=this._iconCache.get(item.cacheKey||item.key);if(hit){update(index,{iconPath:hit.path,iconSource:hit.source,iconState:''});icons(index+1);return;}
       try{this._channel.icon(id,item.key,value=>{
         if(!current()){value.image?.fill(0);finish();return;}
         if(value.status!=='ok'||value.icon!==true||value.original!==false){value.image?.fill(0);update(index,{iconState:'暂不可用'});icons(index+1);return;}
-        this._iconCache.put(item.key,value.image,value.mime,value.source,cached=>{if(!current()){finish();return;}update(index,cached?{iconPath:cached.path,iconSource:cached.source,iconState:''}:{iconState:'暂不可用'});icons(index+1);});
+        this._iconCache.put(item.cacheKey||item.key,value.image,value.mime,value.source,cached=>{if(!current()){finish();return;}update(index,cached?{iconPath:cached.path,iconSource:cached.source,iconState:''}:{iconState:'暂不可用'});icons(index+1);});
       });}catch(_){update(index,{iconState:'暂不可用'});this.setData({outfitNote:'服装图标暂时不可用，名称与参数仍可查看。'});finish();}
     };
-    const apply=value=>{if(!current()){finish();return;}if(value.status!=='ok'){this.setData({outfitNote:'穿搭信息暂时不可用，已有文字参数保留。'});finish();return;}
-      this.setData({outfitTotal:value.total,outfitOffset:value.offset,outfitNext:value.next,outfitItems:value.items.map(x=>Object.assign({},x,{iconPath:'',iconSource:'',iconState:x.hasIcon?'载入中':'暂无图标'}))});icons(0);
+    const unavailable=()=>{partial=true;if(this.data.outfitItems.length){icons(0);return;}this.setData({outfitNote:'穿搭信息暂时不可用，已有文字参数保留。'});finish();};
+    const apply=(value,offset)=>{if(!current()){finish();return;}
+      if(value.status!=='ok'||!Number.isInteger(value.total)||value.total<0||value.total>100||value.offset!==offset||!Array.isArray(value.items)||value.items.length!==Math.min(6,value.total-offset)||value.next!==(offset+value.items.length<value.total?offset+value.items.length:null)||(total!==null&&total!==value.total)||value.items.some(x=>keys.has(x.key))){unavailable();return;}
+      total=value.total;for(const item of value.items)keys.add(item.key);
+      this.setData({outfitTotal:total,outfitNext:null,outfitItems:this.data.outfitItems.concat(value.items.map(x=>Object.assign({},x,{iconPath:'',iconSource:'',iconState:x.hasIcon?'载入中':'暂无图标'})))});
+      if(value.next!==null)page(value.next);else icons(0);
     };
-    const cacheKey=id+':'+offset,cached=this._outfits.get(cacheKey);if(cached){this._outfits.delete(cacheKey);this._outfits.set(cacheKey,cached);apply(cached);return;}
-    try{this._channel.outfit(id,offset,value=>{if(current()&&value.status==='ok'){while(this._outfits.size>=40)this._outfits.delete(this._outfits.keys().next().value);this._outfits.set(cacheKey,value);}apply(value);});}catch(_){apply({status:'failed'});}
+    const page=offset=>{
+      if(!current()){finish();return;}
+      const cacheKey=id+':'+offset,cached=this._outfits.get(cacheKey);if(cached){this._outfits.delete(cacheKey);this._outfits.set(cacheKey,cached);apply(cached,offset);return;}
+      try{const request=this._channel.cachedOutfit||this._channel.outfit;request(id,offset,value=>{if(current()&&value.status==='ok'){while(this._outfits.size>=40)this._outfits.delete(this._outfits.keys().next().value);this._outfits.set(cacheKey,value);}apply(value,offset);});}catch(_){apply({status:'failed'},offset);}
+    };page(0);
   },
-  previousOutfit(){if(!this.data.infoLoading&&this.data.outfitOffset>0)this.loadOutfit(this.data.selectedId,Math.max(0,this.data.outfitOffset-6));},
-  nextOutfit(){if(!this.data.infoLoading&&this.data.outfitNext!==null)this.loadOutfit(this.data.selectedId,this.data.outfitNext);},
-  outfitIconFailed(event){const key=event.currentTarget.dataset.key,path=event.currentTarget.dataset.path,index=this.data.outfitItems.findIndex(x=>x.key===key&&x.iconPath===path);if(index<0)return;this._iconCache?.invalidate(key);const items=this.data.outfitItems.slice();items[index]=Object.assign({},items[index],{iconPath:'',iconState:'暂不可用'});this.setData({outfitItems:items});},
+  outfitIconFailed(event){const key=event.currentTarget.dataset.key,path=event.currentTarget.dataset.path,index=this.data.outfitItems.findIndex(x=>x.key===key&&x.iconPath===path);if(index<0)return;this._iconCache?.invalidate(this.data.outfitItems[index].cacheKey||key);const items=this.data.outfitItems.slice();items[index]=Object.assign({},items[index],{iconPath:'',iconState:'暂不可用'});this.setData({outfitItems:items});},
   closeInfo() {
     this._infoTouch=null;this.cancelMotion('infoEnter');
     if(!this._alive)return;
@@ -409,7 +498,7 @@ Page({
   },
   swallowTap() {},
   openPhoto(event) { const index = Number(event.currentTarget.dataset.index), photo = this.data.photos[index];
-    if (Number.isInteger(index) && photo && photo.path && !this.data.infoLoading && !this.data.viewerOpen && !this.data.connectionOpen && !this._popupClosing) {
+    if (Number.isInteger(index) && photo && (photo.path||photo.video) && !this.data.infoLoading && !this.data.viewerOpen && !this.data.connectionOpen && !this._popupClosing) {
       this._metadataEpoch++;
       this.discardOriginal();
       this.presentPopup('viewer', this.photoState(index));
@@ -418,7 +507,7 @@ Page({
     const photo=this.data.photos[index];
     this.resetViewerGesture();const frame=++this._viewerSeq;this._activeViewerFrame=frame;
     const rotation=this._rotations.get(photo.id)||0,swapped=rotation===90||rotation===270;
-    return {viewerLive:photo.live===true,livePath:'',livePackPath:'',livePlaying:false,viewerRotation:rotation,viewerMime:photo.mime||'image/jpeg',rotationWidth:swapped?this.data.windowHeight:this.data.windowWidth,rotationHeight:swapped?this.data.windowWidth:this.data.windowHeight,selectedPath:photo.path,viewerPreviewPath:photo.path,viewerOriginalPath:'',originalReady:false,selectedId:photo.id || '',selectedDate:photo.date || '日期未知',viewerIndex:index,
+    return {viewerVideo:photo.video===true,viewerLive:photo.live===true||photo.video===true,livePath:'',livePackPath:'',livePlaying:false,viewerRotation:rotation,viewerMime:photo.mime||'image/jpeg',viewerImageWidth:this.data.windowWidth,viewerImageHeight:this.data.windowHeight,rotationWidth:swapped?this.data.windowHeight:this.data.windowWidth,rotationHeight:swapped?this.data.windowWidth:this.data.windowHeight,selectedPath:photo.path,viewerPreviewPath:photo.path,viewerOriginalPath:'',originalReady:false,selectedId:photo.id || '',selectedDate:photo.date || '日期未知',viewerIndex:index,
       viewerPosition:Math.max(0,this.data.pageStart-1)+index+1,viewerSelected:this._selected.has(photo.id),viewerQuality:'preview',hdMessage:'',viewerFrames:[{key:frame,initialScale:1}],viewerClosing:false,viewerPhase:'open',viewerSettle:0,infoOpen:false,infoMounted:false,infoPhase:'exit',infoExpanded:false,infoLoading:false,infoRows:[],infoMessage:'',outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:''};
   },
   displayPhoto(index) { this.closeShareCard();this.discardOriginal();this._metadataEpoch++;this.setData(this.photoState(index)); },
@@ -433,20 +522,26 @@ Page({
     else if(direction<0 && this.data.pageStart>1)this.loadPage(Math.max(0,this.data.pageStart-13),11);
   },
   discardOriginal() { this.discardLive();this._hdEpoch++;if(this._originalPath){this.removeFile(this._originalPath);this._originalPath='';} },
-  resetViewerGesture() {for(const name of ['viewerEnter','viewerExit','infoEnter','infoExit'])this.cancelMotion(name);this._activeViewerFrame=0;this._nativeScale=1;this._viewerTouch=null;this._viewerIgnoreTapUntil=0;this._infoTouch=null;this._infoIgnoreTapUntil=0;},
+  resetViewerGesture() {for(const name of ['viewerEnter','viewerExit','infoEnter','infoExit','photoTap'])this.cancelMotion(name);this._photoTap=null;this._activeViewerFrame=0;this._nativeScale=1;this._viewerTouch=null;this._viewerIgnoreTapUntil=0;this._infoTouch=null;this._infoIgnoreTapUntil=0;},
   currentViewerEvent(event) {
     const frame=Number(event?.currentTarget?.dataset?.frame);
     return this._alive && this._active && this.data.viewerOpen && !this.data.viewerClosing && Number.isSafeInteger(frame) && frame>0 && frame===this._activeViewerFrame;
+  },
+  viewerImageLoaded(event){
+    if(!this.currentViewerEvent(event)||event.currentTarget.dataset.path!==this.data.viewerPreviewPath)return;
+    const width=Number(event.detail?.width),height=Number(event.detail?.height);
+    if(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0&&width<=100000&&height<=100000)this.setData({viewerImageWidth:width,viewerImageHeight:height});
   },
   viewerScaled(event) {
     if(!this.currentViewerEvent(event))return;
     const scale=Number(event.detail?.scale);if(!Number.isFinite(scale) || scale<1 || scale>6)return;
     // Native component owns the live transform. Writing it back to scale-value creates an echo loop.
-    // Only a newly keyed frame supplies the immutable initial scale; old frame events are ignored.
+    // Only explicit double taps supply a new scale command; old frame events are ignored.
     this._nativeScale=scale;
     if(scale>=1.4)this.loadViewerOriginal();
   },
   loadViewerOriginal() {
+    if(this.data.viewerVideo)return;
     if(!this._alive || !this._active || !this.data.viewerOpen || this.data.viewerClosing || this.data.viewerQuality==='original' || !this.data.downloadEnabled || !this.data.connected || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || !this.data.selectedId || this._hdFailedId===this.data.selectedId)return;
     const id=this.data.selectedId,epoch=++this._hdEpoch,connection=this._connectionEpoch;
     this.setData({hdLoading:true,hdMessage:'正在加载高清原图…'});
@@ -477,6 +572,25 @@ Page({
     const image=!!event.currentTarget?.dataset?.image || !event.currentTarget;
     this._viewerTouch=first?{x:first.clientX,y:first.clientY,endX:first.clientX,endY:first.clientY,moved:touches.length>1,multi:touches.length>1,swipe:image && this._nativeScale<=1.05 && !this.data.infoOpen}:null;
   },
+  viewerPhotoTap(event){
+    if(!this.currentViewerEvent(event)||this.data.infoOpen||this.data.shareOpen||this.data.livePlaying||Date.now()<this._viewerIgnoreTapUntil)return;
+    if(this.data.viewerVideo||!this.data.viewerPreviewPath){this.toggleViewerChrome();return;}
+    const frame=this._activeViewerFrame,now=Date.now(),previous=this._photoTap;
+    const {x,y}=event.detail||{},near=!previous||![x,y,previous.x,previous.y].every(Number.isFinite)||Math.hypot(x-previous.x,y-previous.y)<=36;
+    if(previous&&previous.frame===frame&&now-previous.time<=280&&near){
+      this.cancelMotion('photoTap');this._photoTap=null;
+      const target=this._nativeScale>1.05?1:2,seed=this.data.viewerFrames[0];
+      // A pinch can change the live scale without changing the last commanded prop.
+      const key=seed.initialScale===target?++this._viewerSeq:frame;
+      this._activeViewerFrame=key;this._nativeScale=target;
+      this.setData({viewerFrames:[{key,initialScale:target}]});
+      if(target>1)this.loadViewerOriginal();
+      return;
+    }
+    if(previous)this.toggleViewerChrome();
+    this._photoTap={frame,time:now,x,y};
+    this.deferMotion('photoTap',280,()=>{this._photoTap=null;if(frame===this._activeViewerFrame&&!this.data.viewerClosing&&!this.data.infoOpen&&!this.data.shareOpen)this.toggleViewerChrome();});
+  },
   viewerTouchMove(event) {
     if(!this.currentViewerEvent(event))return;
     const touches=event.touches || [],first=touches[0],start=this._viewerTouch;
@@ -488,7 +602,7 @@ Page({
     const start=this._viewerTouch;if(!start)return;
     if(event.motion?.multi)start.multi=true;
     if(event.motion?.moved)start.moved=true;
-    if(start.moved || start.multi)this._viewerIgnoreTapUntil=Date.now()+400;
+    if(start.moved || start.multi){this._viewerIgnoreTapUntil=Date.now()+400;this._photoTap=null;this.cancelMotion('photoTap');}
     const last=event?.changedTouches?.[0],dx=(last?.clientX ?? start.endX)-start.x,dy=(last?.clientY ?? start.endY)-start.y;
     this._viewerTouch=null;
     const valid=event?.type!=='touchcancel' && start.swipe && !start.multi && this._nativeScale<=1.05;
@@ -505,7 +619,7 @@ Page({
   closePhoto() { if (this._alive) { this.closeShareCard();this.resetViewerGesture();this.discardOriginal();if (this.data.viewerOpen) this._popupClosing = true; this._popupEpoch++; this.setData({ viewerOpen: false,viewerClosing:false,viewerPhase:'open',infoOpen:false,infoMounted:false,viewerOriginalPath:'',originalReady:false }); } },
   viewerLeaving() { this.closePhoto(); },
   viewerLeft() { if (this._alive && !this.data.viewerOpen) { this._popupClosing = false; this.setData({ selectedPath: '', viewerChrome: true }); } },
-  popupLeaving() { if (this.data.popupMode === 'viewer') this.closePhoto(); else this.closeConnection(); },
+  popupLeaving() { if (this.data.popupMode === 'viewer') this.closePhoto(); else if(this.data.popupMode==='inspirationEditor')this.cancelInspirationEdit();else this.closeConnection(); },
   popupLeft() { this._popupClosing = false; if (this.data.popupMode === 'viewer') this.viewerLeft(); },
   imageFailed(event) { const index = Number(event.currentTarget.dataset.index), photo = this.data.photos[index]; if (!photo || !photo.path) return;
     this._previewCache.delete(photo.id);this.removeFile(photo.path); this.updatePhoto(index, { path: '', state: '图片无法显示' }); }

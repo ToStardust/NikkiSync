@@ -65,7 +65,7 @@ test('high bit-depth PNG is rejected before a native decoder can silently reduce
 });
 test('empty filtered page still exposes selection cancel and PNG never advertises attached EXIF',async()=>{
  const xml=await readFile(new URL('pages/local-gallery/index.wxml',root),'utf8');
- assert.match(xml,/wx:if="{{photos.length \|\| selectedCount \|\| selectionMode}}"/);assert.match(xml,/viewerMime === 'image\/jpeg'/);
+ assert.match(xml,/wx:if="{{photos.length \|\| selectedCount \|\| selectionMode}}"/);assert.doesNotMatch(xml,/保存带参数照片/);
 });
 
 test('authenticated export rejects wrong digest, angle, EXIF flag, extra identity fields and original masquerade',()=>{

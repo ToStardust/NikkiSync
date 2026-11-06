@@ -21,11 +21,6 @@ public final class GalleryUxStyle {
         return context.getDrawable(R.drawable.bg_glass_chip);
     }
 
-    public static Drawable selectedOverlay(Context context) {
-        GradientDrawable overlay=(GradientDrawable)context.getDrawable(R.drawable.bg_selected_glass);
-        overlay.setCornerRadius(context.getResources().getDimension(R.dimen.gallery_cell_radius));
-        return overlay;
-    }
     public static Drawable glassButton(Context context) {
         GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0x80FFFFFF, 0x45FFFFFF});

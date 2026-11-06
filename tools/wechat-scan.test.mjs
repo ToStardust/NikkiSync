@@ -71,7 +71,7 @@ async function pageFixture() {
   let page, scan;
   let requestCount = 0;
   runInNewContext(await readFile(new URL('pages/index/index.js', root), 'utf8'), {
-    require: () => ({ parseRemoteQr: (raw) => parse(raw, now) }),
+    require: () => ({ parseRemoteQr: (raw) => parse(raw, now), readProfile:()=>({name:''}), albumTitle:()=> '暖暖相册' }),
     wx: { scanCode: options => { scan = options; }, request: () => { requestCount++; } },
     Page: definition => { page = definition; },
     Date: { now: () => now, parse: Date.parse }

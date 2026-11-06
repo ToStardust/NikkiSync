@@ -17,7 +17,7 @@ import org.robolectric.RobolectricTestRunner;
 @RunWith(RobolectricTestRunner.class)
 @org.robolectric.annotation.Config(sdk={30,31,32,35})
 public class SavedMissingPhotoTest {
-    @Test public void missingTileOffersRecordRemovalWithoutOpeningAnEmptyViewer() {
+    @Test public void missingOriginalOpensViewerAndLongPressStillOffersRemoval() {
         var controller=Robolectric.buildActivity(android.app.Activity.class).setup();
         var record=new SavedPhotoStore.Record("a","content://missing/photo",100,false,0,null,null,"JPEG");
         AtomicInteger opened=new AtomicInteger(), removed=new AtomicInteger();
@@ -30,8 +30,8 @@ public class SavedMissingPhotoTest {
             adapter.setGroups(SavedPhotoGroups.select(List.of(record),List.of(),0,0));
             adapter.setHealth(Map.of(record.uri(),new SavedPhotoHealthStore.Entry(SavedPhotoHealthStore.State.MISSING,1)));
             var holder=adapter.onCreateViewHolder(new FrameLayout(controller.get()),1);adapter.onBindViewHolder(holder,1);
-            holder.itemView.performClick();assertEquals(0,opened.get());assertEquals(1,removed.get());
-            holder.itemView.performLongClick();assertEquals(2,removed.get());
+            holder.itemView.performClick();assertEquals(1,opened.get());assertEquals(0,removed.get());
+            holder.itemView.performLongClick();assertEquals(1,removed.get());
         } finally {adapter.shutdown();controller.pause().stop().destroy();}
     }
 }

@@ -39,10 +39,16 @@ public class MainViewerEntryTest {
         set(activity,"shareCardExportCoordinator",new ShareCardExportCoordinator(activity,Runnable::run,Runnable::run));
         set(activity,"imageLoader",new ImageLoader(activity));
         set(activity,"savedPhotoStore",new SavedPhotoStore(activity));
+        set(activity,"savedPhotoHealthStore",new app.nikkisync.mobile.storage.SavedPhotoHealthStore(activity));
         invoke(activity,"buildUi",new Class<?>[0]);
         Field connectionField=MainActivity.class.getDeclaredField("connectionState");connectionField.setAccessible(true);
         var connection=(app.nikkisync.mobile.net.ConnectionState)connectionField.get(activity);connection.httpResult(connection.session(),true);
         return activity;
+    }
+    private static void awaitSavedHealth(MainActivity activity)throws Exception{
+        Field field=MainActivity.class.getDeclaredField("savedHealthIo");field.setAccessible(true);
+        ((java.util.concurrent.ExecutorService)field.get(activity)).submit(()->{}).get(10,java.util.concurrent.TimeUnit.SECONDS);
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
     }
     @Test public void offlinePhotoUsesSameViewerWithDisabledNetworkActions()throws Exception{
         var activity=fixture();try{
@@ -56,6 +62,157 @@ public class MainViewerEntryTest {
             assertTrue(findButton(activity.navigationHost(),"旋转").isEnabled());
             findButton(activity.navigationHost(),"详情").performClick();assertNotNull(findButton(activity.navigationHost(),"加入待删除"));
         }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void openOfflineViewerRestoresSaveAndShareWhenHttpRecovers()throws Exception{
+        for(String type:java.util.List.of("photo","motion_photo","video")){
+            var activity=fixture();try{
+                var state=connection(activity);state.beginSession();set(activity,"pairedServer",viewerServer());
+                var asset=new AssetSummary("reconnect-"+type,type,"ready",null,null,1,100,100,
+                        type.equals("motion_photo"),false,null,null,null,null);
+                invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},asset);
+                var save=findButton(activity.navigationHost(),"保存");assertFalse(save.isEnabled());
+                var gestures=activity.navigationHost().findViewWithTag("photo-gestures");
+                findButton(activity.navigationHost(),"旋转").performClick();
+                state.httpResult(state.session(),true);
+                invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+                assertTrue("Recovery must update the already open "+type+" viewer",save.isEnabled());
+                assertEquals(1f,save.getAlpha(),.001f);
+                assertSame("Recovery must not rebuild the photo or reset its gestures",gestures,activity.navigationHost().findViewWithTag("photo-gestures"));
+                Field rotations=MainActivity.class.getDeclaredField("rotationByAssetId");rotations.setAccessible(true);
+                assertEquals(90,((java.util.Map<?,?>)rotations.get(activity)).get(asset.assetId()));
+                if(!asset.isVideo())assertTrue(findButton(activity.navigationHost(),"分享").isEnabled());
+                save.performClick();
+                if(asset.hasMotion())findButton(activity.navigationHost(),"视频").performClick();
+                assertEquals("The restored action must reach the normal save flow","请先连接电脑",org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
+            }finally{cleanup(activity);}
+        }
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void viewerActionsTrackDisconnectAndEitherAuthenticatedChannel()throws Exception{
+        var activity=fixture();try{
+            set(activity,"pairedServer",viewerServer());var state=connection(activity);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("channels"));
+            var save=findButton(activity.navigationHost(),"保存");assertTrue(save.isEnabled());
+            state.realtimeResult(state.session(),true);state.httpResult(state.session(),false);
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertTrue(save.isEnabled());
+            state.realtimeResult(state.session(),false);
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertFalse(save.isEnabled());
+            assertEquals(.35f,save.getAlpha(),.001f);assertFalse(findButton(activity.navigationHost(),"分享").isEnabled());
+            state.httpResult(state.session(),true);
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertTrue(save.isEnabled());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void viewerDoesNotSaveItsPhotoThroughADifferentComputerOrCertificate()throws Exception{
+        var activity=fixture();try{
+            var server=viewerServer();set(activity,"pairedServer",server);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("scoped"));
+            var save=findButton(activity.navigationHost(),"保存");
+            set(activity,"pairedServer",new app.nikkisync.mobile.model.Models.PairedServer("other","PC","127.0.0.1",1,"a".repeat(64),"","",0));
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertFalse(save.isEnabled());
+            set(activity,"pairedServer",new app.nikkisync.mobile.model.Models.PairedServer(server.serverId(),"PC","127.0.0.1",1,"b".repeat(64),"","",0));
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertFalse(save.isEnabled());
+            set(activity,"pairedServer",server.withEndpoint("127.0.0.2",2));
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertTrue("The same paired PC may change its endpoint",save.isEnabled());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void pagingWhileOfflineRestoresOnlyTheCurrentPhotoActions()throws Exception{
+        var activity=fixture();try{
+            var state=connection(activity);state.beginSession();set(activity,"pairedServer",viewerServer());
+            var first=viewerAsset("first");var second=viewerAsset("second");
+            var context=java.util.List.of(first,second);
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class,java.util.List.class},first,context);
+            var oldSave=findButton(activity.navigationHost(),"保存");
+            var page=(app.nikkisync.mobile.ui.chrome.PhotoViewerPage)oldSave.getParent().getParent();
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class,app.nikkisync.mobile.ui.chrome.PhotoViewerPage.class,java.util.List.class,android.view.View.class},second,page,context,activity.navigationHost());
+            var currentSave=findButton(activity.navigationHost(),"保存");assertNotSame(oldSave,currentSave);
+            state.httpResult(state.session(),true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            assertTrue(currentSave.isEnabled());assertFalse("Detached photo actions must not be revived",oldSave.isEnabled());
+            assertEquals(1,activity.navigationHost().overlayCount());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void backgroundSessionInvalidatesOpenViewerUntilFreshConnection()throws Exception{
+        var activity=fixture();try{
+            set(activity,"pairedServer",viewerServer());var state=connection(activity);long previous=state.session();
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("resume"));
+            var save=findButton(activity.navigationHost(),"保存");
+            invoke(activity,"onStop",new Class<?>[0]);assertFalse(save.isEnabled());
+            state.httpResult(previous,true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertFalse(save.isEnabled());
+            state.httpResult(state.session(),true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);assertTrue(save.isEnabled());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk={30,35})
+    public void closingOfflineViewerRemovesItsConnectionRefresh()throws Exception{
+        var activity=fixture();try{
+            var state=connection(activity);state.beginSession();set(activity,"pairedServer",viewerServer());
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("closed"));
+            var save=findButton(activity.navigationHost(),"保存");
+            var page=(app.nikkisync.mobile.ui.chrome.PhotoViewerPage)save.getParent().getParent();
+            page.dismiss();activity.navigationHost().interrupt();assertEquals(0,activity.navigationHost().overlayCount());
+            state.httpResult(state.session(),true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            assertFalse(save.isEnabled());assertEquals(0,activity.navigationHost().overlayCount());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk=35,shadows=ShadowViewerClient.class)
+    public void recoveredViewerLoadsShareDetailsAndIgnoresAnEarlierConnectionResponse()throws Exception{
+        var activity=fixture();try{
+            var queue=viewerQueue(activity);var server=viewerServer();set(activity,"pairedServer",server);
+            set(activity,"client",new app.nikkisync.mobile.net.NikkiSyncClient(server,null));
+            var state=connection(activity);state.beginSession();
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("metadata"));
+            findButton(activity.navigationHost(),"详情").performClick();
+            var share=findButton(activity.navigationHost(),"生成分享图");assertFalse(share.isEnabled());
+            state.httpResult(state.session(),true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            assertEquals("Status renders must not duplicate the viewer metadata request",1,queue.queued.size());
+            queue.queued.remove(0).run(); // Its completion is still queued on the main thread.
+            state.httpResult(state.session(),false);invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            state.httpResult(state.session(),true);invoke(activity,"renderConnectionStatus",new Class<?>[0]);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertFalse("A response from before the disconnect cannot enable the new share action",share.isEnabled());
+            assertEquals(1,queue.queued.size());queue.queued.remove(0).run();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertTrue("The current session's details make sharing usable after recovery",share.isEnabled());
+        }finally{cleanup(activity);}
+    }
+    @Test @org.robolectric.annotation.Config(sdk=35,shadows=ShadowViewerClient.class)
+    public void dismissedViewerIgnoresPendingMetadataCompletion()throws Exception{
+        var activity=fixture();try{
+            var queue=viewerQueue(activity);var server=viewerServer();set(activity,"pairedServer",server);
+            set(activity,"client",new app.nikkisync.mobile.net.NikkiSyncClient(server,null));
+            invoke(activity,"showViewer",new Class<?>[]{AssetSummary.class},viewerAsset("late-details"));
+            findButton(activity.navigationHost(),"详情").performClick();
+            var share=findButton(activity.navigationHost(),"生成分享图");assertFalse(share.isEnabled());
+            assertEquals(1,queue.queued.size());queue.queued.remove(0).run();
+            activity.navigationHost().close();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertFalse(share.isEnabled());assertEquals(0,activity.navigationHost().overlayCount());
+        }finally{cleanup(activity);}
+    }
+    private static MainConnectionRecoveryTest.QueueExecutor viewerQueue(MainActivity activity)throws Exception{
+        Field field=MainActivity.class.getDeclaredField("io");field.setAccessible(true);
+        ((java.util.concurrent.ExecutorService)field.get(activity)).shutdownNow();
+        var queue=new MainConnectionRecoveryTest.QueueExecutor();field.set(activity,queue);return queue;
+    }
+    @org.robolectric.annotation.Implements(value=app.nikkisync.mobile.net.NikkiSyncClient.class,isInAndroidSdk=false)
+    public static class ShadowViewerClient {
+        @org.robolectric.annotation.Implementation
+        protected app.nikkisync.mobile.model.Models.AssetDetail asset(String id){
+            return new app.nikkisync.mobile.model.Models.AssetDetail(id,"photo","ready",java.util.List.of(),false,null,null,null,"{}");
+        }
+    }
+    private static app.nikkisync.mobile.net.ConnectionState connection(MainActivity activity)throws Exception{
+        Field field=MainActivity.class.getDeclaredField("connectionState");field.setAccessible(true);
+        return (app.nikkisync.mobile.net.ConnectionState)field.get(activity);
+    }
+    private static app.nikkisync.mobile.model.Models.PairedServer viewerServer(){
+        return new app.nikkisync.mobile.model.Models.PairedServer("viewer-pc","PC","127.0.0.1",1,"a".repeat(64),"","",0);
+    }
+    private static AssetSummary viewerAsset(String id){
+        return new AssetSummary(id,"photo","ready",null,null,1,100,100,false,false,null,null,null,null);
     }
     @Test public void openingFirstPhotoWithoutShareWorkShowsFullscreenViewer() throws Exception {
         var activity=fixture();
@@ -147,7 +304,20 @@ public class MainViewerEntryTest {
             var record=new SavedPhotoStore.Record("synthetic","content://media/external/images/media/100",0,false,0,
                     "2026-09-25T10:20:00Z","2.9","jpg");
             invoke(activity,"showSavedPhotoDetails",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            awaitSavedHealth(activity);
             assertEquals(1,activity.navigationHost().overlayCount());
+        } finally {cleanup(activity);}
+    }
+    @Test public void missingSavedPhotoOffersResaveInsteadOfOpeningSystemGallery() throws Exception {
+        var activity=fixture();
+        try {
+            var record=new SavedPhotoStore.Record("missing-source","content://missing.saved/photo",0,false,0,null,null,"jpg");
+            invoke(activity,"showSavedPhotoDetails",new Class<?>[]{SavedPhotoStore.Record.class},record);
+            awaitSavedHealth(activity);
+            findButton(activity.navigationHost(),"详情").performClick();
+            assertNotNull(findButton(activity.navigationHost(),"重新保存"));
+            assertFalse(findButton(activity.navigationHost(),"重新保存").isEnabled());
+            assertFalse(findButton(activity.navigationHost(),"系统相册文件不可访问").isEnabled());
         } finally {cleanup(activity);}
     }
     @Test public void widgetOpensOnlyAPhotoAlreadyInSavedHistory() throws Exception {
@@ -165,6 +335,7 @@ public class MainViewerEntryTest {
             intent.putExtra(app.nikkisync.mobile.widget.PhotoAlbumWidgetProvider.PHOTO_URI,uri);
             invoke(activity,"handleIntent",new Class<?>[]{android.content.Intent.class},intent);
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            awaitSavedHealth(activity);
             assertEquals(1,activity.navigationHost().overlayCount());
         } finally {cleanup(activity);}
     }

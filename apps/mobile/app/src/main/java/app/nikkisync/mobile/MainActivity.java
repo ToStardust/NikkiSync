@@ -99,11 +99,13 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private ChromeNavigationHost navigation;
     @Override public ChromeNavigationHost navigationHost(){return navigation;}
     @Override protected void onStop(){
+        if(galleryDragSelection!=null)galleryDragSelection.finish();
         if(imageLoader!=null)imageLoader.pauseOfflineCaching();
         cacheWakeRequested=false;getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         connectionForeground=false;main.removeCallbacks(connectionRecovery);
         inspirationEpoch.incrementAndGet();
         connectionState.beginSession();realtimeStop();if(discovery!=null)discovery.stop();
+        refreshViewerConnections();
         if(navigation!=null)navigation.interrupt();if(homeTabs!=null)homeTabs.interrupt();super.onStop();
     }
     @Override protected void onResume(){
@@ -127,6 +129,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService savedHealthIo = Executors.newSingleThreadExecutor();
+    private final ExecutorService savedSourceCheckIo = Executors.newSingleThreadExecutor();
     // Local organizer reads must never queue behind network timeouts.
     private final ExecutorService organizerIo = Executors.newSingleThreadExecutor();
     private final ExecutorService organizerNetworkIo = Executors.newSingleThreadExecutor();
@@ -239,6 +243,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private LinearLayout savedControls;
     private LinearLayout selectionBar;
     private RecyclerView galleryList;
+    private app.nikkisync.mobile.ui.GalleryDragSelection galleryDragSelection;
     private RecyclerView savedList;
     private ScrollView myScroll;
     private int activeTab = TAB_GALLERY;
@@ -247,6 +252,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private int savedSort = SavedViewState.SORT_SAVED;
     private final List<AssetSummary> assets = new ArrayList<>();
     private final Map<String, SavedPhotoHealthStore.Entry> savedHealth = new LinkedHashMap<>();
+    private final Map<PhotoViewerPage,Runnable> viewerConnections = new LinkedHashMap<>();
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -307,12 +313,14 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         if(photoSaveProgress!=null)photoSaveProgress.dismiss();
         shareWorker.shutdownNow();
         if(navigation!=null)navigation.close();
+        viewerConnections.clear();
         realtimeStop();
         if (discovery != null) discovery.stop();
         if (imageLoader != null) imageLoader.shutdown();
         if (savedAdapter != null) savedAdapter.shutdown();
         io.shutdownNow();
         organizerIo.shutdownNow();
+        savedHealthIo.shutdownNow();savedSourceCheckIo.shutdownNow();
         organizerNetworkIo.shutdownNow();
         inspirationEpoch.incrementAndGet();inspirationIo.shutdownNow();
         if (editedVariantStore != null) editedVariantStore.close();
@@ -420,11 +428,15 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             @Override public boolean onPhotoLongClick(AssetSummary asset) {
                 adapter.toggle(asset); updateSelection(); return true;
             }
+            @Override public void onSelectionChanged() { updateSelection(); }
         });
         layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
             @Override public int getSpanSize(int position) { return adapter.isHeader(position) ? 3 : 1; }
         });
         galleryList.setAdapter(adapter);
+        adapter.enableGroupSelection();
+        galleryDragSelection = new app.nikkisync.mobile.ui.GalleryDragSelection(galleryList, adapter);
+        galleryList.addOnItemTouchListener(galleryDragSelection);
         galleryPage.addView(galleryList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         savedList = new RecyclerView(this);
@@ -446,6 +458,13 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             }
             @Override public void onRemoveEdited(EditedVariantStore.Variant variant) {
                 confirmRemoveEditedRecord(variant);
+            }
+            @Override public void loadOriginalFallback(SavedPhotoStore.Record record, ImageView target) {
+                AssetSummary source=savedSource(record.assetId());
+                if(source!=null&&pairedServer!=null){
+                    if(findAsset(record.assetId())!=null&&connectionState.isReachable()&&client!=null)imageLoader.load(client,source,target);
+                    else imageLoader.loadOffline(pairedServer,source,target);
+                }
             }
         });
         savedLayout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
@@ -1106,17 +1125,47 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 || uris.stream().anyMatch(uri -> !savedHealth.containsKey(uri));
         if (records.isEmpty() && uris.isEmpty()) return;
         if (!forceCheck && !unchecked && System.currentTimeMillis() - newestCheck < 30_000L) return;
+        final NikkiSyncClient checkClient=client;
+        final long checkSession=connectionState.session();
+        final boolean checkOnline=checkClient!=null&&connectionState.isReachable();
 
-        io.execute(() -> {
+        savedHealthIo.execute(() -> {
             Map<String, SavedPhotoHealthStore.Entry> checked =
                     SavedPhotoVerifier.verify(this, savedPhotoHealthStore, records);
             checked.putAll(SavedPhotoVerifier.verifyUris(this, savedPhotoHealthStore, uris));
             main.post(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                savedHealth.clear();
-                savedHealth.putAll(checked);
-                savedAdapter.setHealth(savedHealth);
-                updateSavedSummary(records, edits);
+                savedHealth.clear();savedHealth.putAll(checked);
+                savedAdapter.setHealth(savedHealth);updateSavedSummary(records,edits);
+            });
+            // A missing phone file alone is not enough to discard the user's history.
+            // Only a fresh, authenticated explicit PC tombstone permits removal.
+            savedSourceCheckIo.execute(()->{
+            List<SavedPhotoStore.Record> removeRecords=new ArrayList<>();
+            List<EditedVariantStore.Variant> removeEdits=new ArrayList<>();
+            if(checkOnline)for(SavedPhotoStore.Record record:records){
+                var health=checked.get(record.uri());
+                if(health==null||!health.isMissing())continue;
+                try{boolean deleted=checkClient.sourceExplicitlyDeleted(record.assetId());
+                    if(SavedPhotoVerifier.mayRemoveRecord(SavedPhotoVerifier.checkUri(this,record.uri()),deleted)){
+                    removeRecords.add(record);
+                }}catch(Exception ignored){/* Offline, excluded scope and 404 remain recoverable. */}
+            }
+            if(checkOnline)for(EditedVariantStore.Variant edit:edits){
+                var health=checked.get(edit.uri());
+                if(health==null||!health.isMissing())continue;
+                try{boolean deleted=checkClient.sourceExplicitlyDeleted(edit.assetId());
+                    if(SavedPhotoVerifier.mayRemoveRecord(SavedPhotoVerifier.checkUri(this,edit.uri()),deleted)){
+                        removeEdits.add(edit);
+                    }
+                }catch(Exception ignored){/* A missing source in the current scope is not a tombstone. */}
+            }
+            if(!removeRecords.isEmpty()||!removeEdits.isEmpty())main.post(()->{
+                if(isFinishing()||isDestroyed()||client!=checkClient||!connectionState.isCurrent(checkSession)||!connectionState.isReachable())return;
+                for(var record:removeRecords){savedPhotoStore.removeIfUnchanged(record);savedPhotoHealthStore.remove(record.uri());}
+                for(var edit:removeEdits){editedVariantStore.unlink(edit.variantId());savedPhotoHealthStore.remove(edit.uri());}
+                refreshSavedPhotos(false);
+            });
             });
         });
     }
@@ -1212,8 +1261,15 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void showSavedPhotoDetails(SavedPhotoStore.Record record) {
-        PhotoViewerPage dialog = new PhotoViewerPage(this, findThumbnail(savedList, record.uri()));
-        showSavedPhotoDetails(record,dialog,savedAdapter.visiblePhotos());
+        savedHealthIo.execute(()->{
+            var state=SavedPhotoVerifier.checkUri(this,record.uri());long now=System.currentTimeMillis();
+            savedPhotoHealthStore.put(record.uri(),state,now);
+            main.post(()->{if(isFinishing()||isDestroyed())return;
+                savedHealth.put(record.uri(),new SavedPhotoHealthStore.Entry(state,now));
+                PhotoViewerPage dialog = new PhotoViewerPage(this, findThumbnail(savedList, record.uri()));
+                showSavedPhotoDetails(record,dialog,savedAdapter.visiblePhotos());
+            });
+        });
     }
     private void showSavedPhotoDetails(SavedPhotoStore.Record record,PhotoViewerPage dialog,List<SavedPhotoGroups.Member> context) {
         cancelShareCardFrom(pendingShareCardButton);
@@ -1230,7 +1286,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(text(record.hasMotion() ? "已保存 LIVE" : "已保存照片", 20, true, getColor(R.color.text_primary)),
+        SavedPhotoHealthStore.Entry healthEntry = savedHealth.get(record.uri());
+        boolean missing = healthEntry != null && healthEntry.isMissing();
+        boolean unavailable = healthEntry != null && healthEntry.isUnavailable();
+        header.addView(text(missing?"已删除":record.hasMotion() ? "已保存 LIVE" : "已保存照片", 20, true, getColor(R.color.text_primary)),
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button close = button("完成");
         close.setOnClickListener(v -> dialog.dismiss());
@@ -1246,7 +1305,9 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         previewLp.topMargin = dp(10);
         body.addView(preview, previewLp);
 
-        io.execute(() -> {
+        if(unavailable){AssetSummary fallback=savedSource(record.assetId());if(fallback!=null&&pairedServer!=null)
+            loadViewerPhoto(fallback,preview,findAsset(record.assetId())!=null&&connectionState.isReachable());}
+        else io.execute(() -> {
             try {
                 android.graphics.Bitmap bitmap = app.nikkisync.mobile.media.SavedPhotoDecoder.decode(this, record.mediaUri(), 4096);
                 main.post(() -> preview.setImageBitmap(bitmap));
@@ -1263,8 +1324,6 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         infoLp.topMargin = dp(10);
         body.addView(info, infoLp);
 
-        SavedPhotoHealthStore.Entry healthEntry = savedHealth.get(record.uri());
-        boolean missing = healthEntry != null && healthEntry.isMissing();
         String detail = PlayerFacingDetails.savedPhoto(record, missing);
         info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
         addSourceDetails(info,savedSource(record.assetId()));
@@ -1275,11 +1334,14 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         LinearLayout savedOutfit=new LinearLayout(this);savedOutfit.setOrientation(LinearLayout.VERTICAL);info.addView(savedOutfit);
         showSavedMetadata(savedOutfit,record.assetId(),savedSnapshot);
 
-        Button openSystem = button(missing ? "系统相册文件已不存在" : "在系统相册打开");
-        openSystem.setEnabled(!missing);
+        Button openSystem = button(unavailable ? "系统相册文件不可访问" : "在系统相册打开");
+        openSystem.setEnabled(!unavailable);
         LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         buttonLp.topMargin = dp(10);
         openSystem.setOnClickListener(v -> {
+            savedHealthIo.execute(()->{var latest=SavedPhotoVerifier.checkUri(this,record.uri());main.post(()->{
+            if(latest!=SavedPhotoHealthStore.State.ACTIVE){savedPhotoHealthStore.put(record.uri(),latest,System.currentTimeMillis());
+                openSystem.setEnabled(false);toast("系统相册文件已删除或暂时无法访问");refreshSavedPhotos(true);return;}
             try {
                 Intent intent = new Intent(Intent.ACTION_VIEW);
                 intent.setDataAndType(record.mediaUri(), "image/*");
@@ -1287,12 +1349,12 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                 startActivity(intent);
             } catch (Exception error) {
                 toast("系统相册无法打开这张照片");
-            }
+            }});});
         });
         info.addView(openSystem, buttonLp);
 
-        Button shareSaved = button(missing ? "原图不可访问，无法生成分享图" : "生成分享图");
-        shareSaved.setEnabled(!missing);
+        Button shareSaved = button(unavailable ? "原图不可访问，无法生成分享图" : "生成分享图");
+        shareSaved.setEnabled(!unavailable);
         LinearLayout.LayoutParams shareSavedLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1334,6 +1396,13 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         info.addView(linkEdit, linkEditLp);
 
         AssetSummary source = findAsset(record.assetId());
+        if(unavailable){
+            Button restore=button("重新保存");restore.setEnabled(source!=null&&connectionState.isReachable());
+            LinearLayout.LayoutParams restoreLp=new LinearLayout.LayoutParams(-1,-2);restoreLp.topMargin=dp(6);
+            restore.setOnClickListener(v->{if(source!=null&&connectionState.isReachable()){dialog.dismiss();requestPhotoSave(List.of(source),false);}});
+            info.addView(restore,restoreLp);dialog.addAction("保存",source!=null&&connectionState.isReachable(),restore::performClick);
+            if(!restore.isEnabled())info.addView(text("连接原电脑后可重新保存。",12,false,getColor(R.color.text_secondary)));
+        }
         if (source != null) {
             Button sourceButton = button("查看源照片");
             LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1361,7 +1430,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
         dialog.setOnDismissListener(() -> cancelShareCardFrom(shareSaved));
         dialog.setContentView(scroll);
-        if(record.hasMotion())dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.saved(this,record));
+        if(record.hasMotion()&&!unavailable)dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.saved(this,record));
         preloadSavedNeighbors(dialog,record.uri(),context);
         dialog.show();
     }
@@ -1895,6 +1964,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         android.util.Log.i("NikkiSync-Connection","Starting paired connection session");
         String previousScope=app.nikkisync.mobile.storage.OrganizerStore.scope(pairedServer);
         pairedServer = server; profileStats = null; profileStatsLoading = false; connectionProbePending = false;
+        refreshViewerConnections();
         adapter.setOfflineServer(server);
         if(!previousScope.equals(app.nikkisync.mobile.storage.OrganizerStore.scope(server))){assets.clear();adapter.setItems(List.of());organizerPage=null;}
         setStatus(message); realtimeStop();
@@ -1959,6 +2029,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     assets.clear(); assets.addAll(next); renderGallery(); updateGalleryCacheCount();
                     connectionState.httpResult(session, true);
                     setBusy(false); renderConnectionStatus(); updateSelection(); updateGalleryEmptyState();
+                    if(activeTab==TAB_SAVED)refreshSavedPhotos(true);
                     maybeWarmOfflineCache();
                     refreshOrganizer();syncOrganizer();
                     syncInspirations(true);
@@ -1990,6 +2061,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private void onConnectionAvailable(){
         // Inspiration is independent of the gallery snapshot, which can take time for large albums.
         syncInspirations(false);
+        if(activeTab==TAB_SAVED)refreshSavedPhotos(true);
     }
 
     private void syncInspirations(boolean force){
@@ -2020,6 +2092,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private void renderConnectionStatus() {
         if(imageLoader!=null)imageLoader.setNetworkAvailable(connectionState.isReachable());
+        refreshViewerConnections();
         if(libraryLoadedForSession&&connectionState.isReachable())maybeWarmOfflineCache();
         updateCacheWakeLock();
         if (connectionState.isRealtimeConnected()) setStatus("已连接 · 实时同步中");
@@ -2030,6 +2103,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         refreshSettingsPage();
         renderRemoteProfileStats();
         if(profileStatsContent!=null)loadRemoteProfileStats();
+    }
+
+    private void refreshViewerConnections(){
+        for(Runnable refresh:new ArrayList<>(viewerConnections.values()))refresh.run();
     }
 
     private void probeConnection(long session) {
@@ -2203,6 +2280,12 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     } else if (!standaloneVideo) {
                         savedPhotoStore.record(asset, savedUri, savedRotation, savedFormat);
                     }
+                    if(!standaloneVideo)for(SavedPhotoStore.Record previous:savedPhotoStore.load()){
+                        if(previous.assetId().equals(asset.assetId())&&!previous.uri().equals(savedUri.toString())
+                                &&SavedPhotoVerifier.checkUri(this,previous.uri())==SavedPhotoHealthStore.State.MISSING){
+                            savedPhotoStore.removeUri(previous.uri());savedPhotoHealthStore.remove(previous.uri());
+                        }
+                    }
                     try{if(savedSourceStore!=null)savedSourceStore.put(asset);}catch(Exception ignored){}
                     try {
                         AssetDetail savedDetail = current.asset(asset.assetId());
@@ -2258,8 +2341,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void showViewer(AssetSummary asset,PhotoViewerPage dialog,List<AssetSummary> context,View sourceScope) {
-        final boolean online=connectionState.isReachable();
-        final NikkiSyncClient viewerClient=client;
+        final String viewerScope=app.nikkisync.mobile.storage.OrganizerStore.scope(pairedServer);
+        java.util.function.BooleanSupplier viewerOnline=()->connectionState.isReachable()
+                &&viewerScope.equals(app.nikkisync.mobile.storage.OrganizerStore.scope(pairedServer));
+        final boolean online=viewerOnline.getAsBoolean();
         cancelShareCardFrom(pendingShareCardButton);
         dialog.preparePhoto(findThumbnail(sourceScope,asset.assetId()+":"));
         int index=0;for(int i=0;i<context.size();i++)if(context.get(i).assetId().equals(asset.assetId())){index=i;break;}
@@ -2291,7 +2376,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         image.setClipToOutline(true);
         int previewSize = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(28));
         body.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewSize));
-        loadViewerPhoto(asset,image,online);
+        if(!online)loadViewerPhoto(asset,image,false);
 
         int[] rotationHolder = new int[]{rotationByAssetId.getOrDefault(asset.assetId(), 0)};
         image.setRotation(rotationHolder[0]);
@@ -2339,10 +2424,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         body.addView(infoSheet, sheetLp);
 
         String description = PlayerFacingDetails.sourcePhoto(asset);
-        if(!online)description="离线预览 · 当前为已缓存图片，保存、分享及 LIVE 播放需要连接电脑。\n"+description;
-        TextView info = text(description, 13, false, getColor(R.color.text_secondary));
+        String offlineDescription="离线预览 · 当前为已缓存图片，保存、分享及 LIVE 播放需要连接电脑。\n"+description;
+        TextView info = text(online?description:offlineDescription, 13, false, getColor(R.color.text_secondary));
         info.setPadding(dp(2), 0, dp(2), dp(10));
-        info.setVisibility(description.isEmpty() ? View.GONE : View.VISIBLE);
+        info.setVisibility(online&&description.isEmpty() ? View.GONE : View.VISIBLE);
         infoSheet.addView(info);
         addSourceDetails(infoSheet,asset);
 
@@ -2368,21 +2453,10 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             if(cached!=null)renderClothingSection(asset.assetId(),cached.metadataJson(),clothingSection);
             else if(!asset.hasMetadata())renderClothingSection(asset.assetId(),null,clothingSection);
         }
-        if(!asset.isVideo()&&online)io.execute(() -> {
-            try {
-                AssetDetail detail = viewerClient.asset(asset.assetId());
-                cacheMetadataSnapshot(asset.assetId(), asset.capturedAt(), asset.gameVersion(), detail);
-                detailHolder[0] = detail;
-                main.post(() -> {
-                    renderClothingSection(asset, detail, clothingSection);
-                    shareCard.setEnabled(true);
-                });
-            } catch (Exception ignored) {main.post(()->showMetadataNotice(clothingSection,"暂时无法读取照片参数，请连接电脑后重试。"));}
-        });
-
         shareCard.setOnClickListener(v -> {
             AssetDetail detail = detailHolder[0];
             NikkiSyncClient current = client;
+            if(!viewerOnline.getAsBoolean()){toast("请先连接这张照片所属的电脑");return;}
             if (detail == null || current == null) {
                 toast("照片参数尚未准备好");
                 return;
@@ -2406,13 +2480,63 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         selection.setOnClickListener(v->{adapter.toggle(asset);updateSelection();boolean selected=adapter.isSelected(asset);
             stylePhotoSelection(selection,selected);selection.setContentDescription(selected?"取消选择照片":"选择照片");select.setText(selected?"✓ 已选择":"○ 选择照片");});
         viewerHeader.addView(selection,0,new LinearLayout.LayoutParams(dp(48),dp(48)));
-        dialog.addAction("保存", online, () -> {if(connectionState.isReachable())requestPhotoSave(List.of(asset), false);});
+        dialog.addAction("保存", online, () -> {if(viewerOnline.getAsBoolean())requestPhotoSave(List.of(asset), false);});
         if(!asset.isVideo())dialog.addAction("分享", online, () -> { if (shareCard.isEnabled()) shareCard.performClick(); else toast("正在读取照片信息，请稍后"); });
 
-        dialog.setOnDismissListener(() -> cancelShareCardFrom(shareCard));
         dialog.setContentView(scroll);
-        if(online&&asset.isVideo())dialog.setRemoteVideo(viewerClient,asset.assetId());
-        else if(online&&asset.hasMotion())dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.remote(this,viewerClient,asset.assetId()));
+        // A viewer can open from the offline cache while a probe is still in flight.
+        // Keep its controls and remote sources bound to the current verified session.
+        Runnable refreshConnection=new Runnable(){
+            private boolean available;
+            private NikkiSyncClient loadedClient;
+            private long loadedSession=Long.MIN_VALUE,generation;
+            private boolean accepts(long request,long session,NikkiSyncClient requested){
+                return viewerConnections.get(dialog)==this&&generation==request
+                        &&connectionState.isCurrent(session)&&client==requested&&viewerOnline.getAsBoolean();
+            }
+            @Override public void run(){
+                if(viewerConnections.get(dialog)!=this)return;
+                boolean now=viewerOnline.getAsBoolean();
+                dialog.setActionEnabled("保存",now);dialog.setActionEnabled("分享",now);
+                info.setText(now?description:offlineDescription);
+                info.setVisibility(now&&description.isEmpty()?View.GONE:View.VISIBLE);
+                if(!now){
+                    if(available){
+                        generation++;loadedClient=null;loadedSession=Long.MIN_VALUE;
+                        detailHolder[0]=null;shareCard.setEnabled(false);cancelShareCardFrom(shareCard);
+                        dialog.clearLivePhoto();
+                    }
+                    available=false;return;
+                }
+                NikkiSyncClient current=client;long session=connectionState.session();
+                if(available&&loadedClient==current&&loadedSession==session)return;
+                available=true;loadedClient=current;loadedSession=session;long request=++generation;
+                detailHolder[0]=null;shareCard.setEnabled(false);
+                imageLoader.loadPreview(current,asset,image);
+                if(asset.isVideo())dialog.setRemoteVideo(current,asset.assetId());
+                else if(asset.hasMotion())dialog.setLivePhoto(app.nikkisync.mobile.media.live.MotionPreviewLoader.remote(MainActivity.this,current,asset.assetId()));
+                if(asset.isVideo()||current==null||io.isShutdown())return;
+                showMetadataNotice(clothingSection,"正在读取照片参数…");
+                io.execute(()->{
+                    try{
+                        AssetDetail detail=current.asset(asset.assetId());
+                        main.post(()->{
+                            if(!accepts(request,session,current))return;
+                            cacheMetadataSnapshot(asset.assetId(),asset.capturedAt(),asset.gameVersion(),detail);
+                            detailHolder[0]=detail;renderClothingSection(asset,detail,clothingSection);shareCard.setEnabled(true);
+                        });
+                    }catch(Exception ignored){main.post(()->{
+                        if(accepts(request,session,current))showMetadataNotice(clothingSection,"暂时无法读取照片参数，请连接电脑后重试。");
+                    });}
+                });
+            }
+        };
+        viewerConnections.put(dialog,refreshConnection);
+        dialog.setOnDismissListener(()->{
+            if(viewerConnections.get(dialog)==refreshConnection)viewerConnections.remove(dialog);
+            cancelShareCardFrom(shareCard);
+        });
+        refreshConnection.run();
         dialog.setAdjacentPhotos(position>0?preloadRemotePhoto(context.get(position-1)):null,
                 position+1<context.size()?preloadRemotePhoto(context.get(position+1)):null);
         dialog.show();
@@ -2425,16 +2549,19 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private void stylePhotoSelection(Button button,boolean selected){
         button.setTag("photo-selection");
         button.setBackgroundTintList(null);
-        android.graphics.drawable.GradientDrawable circle=new android.graphics.drawable.GradientDrawable();circle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        circle.setColor(selected?0xffdf7894:0x993d333b);circle.setStroke(dp(2),android.graphics.Color.WHITE);
-        button.setBackground(new android.graphics.drawable.InsetDrawable(circle,dp(7)));button.setPadding(0,0,0,0);button.setMinWidth(0);button.setMinimumWidth(0);button.setText(selected?"✓":"");button.setTextSize(19);button.setGravity(Gravity.CENTER);button.setTextColor(android.graphics.Color.WHITE);
+        button.setBackground(new android.graphics.drawable.InsetDrawable(getDrawable(R.drawable.photo_selection_mark),dp(7)));
+        button.setActivated(selected);
+        button.setPadding(0,0,0,0);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setText("");
     }
     private AssetSummary savedSource(String id){AssetSummary source=findAsset(id);return source==null&&savedSourceStore!=null?savedSourceStore.get(id):source;}
     private void addSourceDetails(LinearLayout target,AssetSummary asset){
         if(asset==null)return;
         target.addView(text("所属 UID："+(asset.uid()==null||asset.uid().isBlank()?"未识别":asset.uid()),13,false,getColor(R.color.text_secondary)));
         if(asset.sourcePath()!=null&&!asset.sourcePath().isBlank()){
-            TextView path=text("文件路径："+app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath()),13,false,getColor(R.color.text_secondary));path.setBackgroundResource(R.drawable.bg_glass_chip);path.setPadding(dp(10),dp(8),dp(10),dp(8));path.setContentDescription("点击展开并复制文件路径");
+            TextView path=text("文件路径："+app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath()),13,false,getColor(R.color.text_secondary));path.setBackground(roundRect(0x88FFFFFF,14));path.setPadding(dp(10),dp(8),dp(10),dp(8));path.setContentDescription("点击展开并复制文件路径");
             boolean[] expanded={false};path.setOnClickListener(v->{expanded[0]=!expanded[0];path.setText("文件路径："+(expanded[0]?asset.sourcePath():app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath())));copyText("照片文件路径",asset.sourcePath());toast("已复制文件路径");});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);lp.bottomMargin=dp(6);target.addView(path,lp);
         }else target.addView(text("文件路径：暂未记录，连接新版电脑端后更新",12,false,getColor(R.color.text_secondary)));
@@ -2596,6 +2723,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
 
     private void updateSelection() {
         if (selectionBar == null || adapter == null) return;
+        if(homeTabs!=null)homeTabs.setSelectionActive(activeTab==TAB_GALLERY&&adapter.hasSelection());
         int count = adapter.selectedCount();
         selectionBar.setVisibility(activeTab == TAB_GALLERY && count > 0 ? View.VISIBLE : View.GONE);
         selectionLabel.setText("已选择 " + count + " 张"); saveButton.setText("保存原图");

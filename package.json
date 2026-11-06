@@ -14,6 +14,9 @@
   "scripts": {
     "test:decoded-metadata": "node --test --test-isolation=none packages/core/dist/test/decoded-metadata.test.js apps/pc-companion/dist/test/cached-decoded-metadata.test.js apps/pc-companion/dist/test/scanner-progress.test.js apps/pc-companion/dist/test/scanner-diagnostics.test.js tools/releases/source-privacy.test.mjs",
     "test:wechat-resume": "node --test --test-isolation=none tools/wechat-gallery/resume.test.mjs",
+    "test:wechat-connect": "npm run build && node --test --test-isolation=none tools/wechat-gallery/connection-diagnostics.test.mjs tools/wechat-gallery/resume.test.mjs tools/wechat-gallery/desktop.test.mjs",
+    "test:wechat-ui-alignment": "npm run build && node --test --test-isolation=none tools/wechat-gallery/consistency.test.mjs tools/wechat-gallery/profile.test.mjs tools/wechat-gallery/desktop.test.mjs tools/wechat-gallery/inspiration-ui.test.mjs tools/wechat-gallery/share-card.test.mjs",
+    "test:wechat-deletion": "npm run build && node --test --test-isolation=none apps/pc-companion/dist/test/wechat-deletion.test.js tools/wechat-gallery/deletion.test.mjs tools/wechat-gallery/deletion-ui.test.mjs",
     "test:wechat-share-card": "node --test --test-isolation=none tools/wechat-gallery/share-card.test.mjs",
     "test:performance": "npm run build && node --test --test-isolation=none apps/pc-companion/dist/test/runtime-memory.test.js apps/pc-companion/dist/test/scanner.test.js apps/pc-companion/dist/test/local-sync-server.test.js apps/pc-companion/dist/test/metadata-resolver.test.js apps/pc-companion/dist/test/desktop-page.test.js apps/pc-companion/dist/test/windows-app.test.js tools/branding.test.mjs tools/windows-performance/sqlite-cache.test.mjs && bun test tools/windows-performance/sqlite-cache.test.mjs",
     "test:wechat-live-gallery": "npm run build && node --test --test-isolation=none tools/wechat-gallery/live.test.mjs tools/wechat-gallery/live-client.test.mjs",
@@ -30,6 +33,7 @@
     "mobile:validate": "node apps/mobile/scripts/validate-m2.mjs",
     "test:ui": "node --test --test-isolation=none tools/ui-theme.test.mjs",
     "test:inspiration": "node --test --test-isolation=none apps/pc-companion/dist/test/inspiration-sync.test.js apps/pc-companion/dist/test/desktop-inspiration-ui.test.js",
+    "test:wechat-adaptation": "npm run build && node --test --test-isolation=none tools/wechat-gallery/media-scope.test.mjs tools/wechat-gallery/inspiration.test.mjs tools/wechat-gallery/inspiration-ui.test.mjs tools/wechat-gallery/standalone-video.test.mjs",
     "mobile:build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\apps\\mobile\\scripts\\build-android.ps1",
     "mobile:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\apps\\mobile\\scripts\\build-android.ps1 -Install",
     "release:bundle": "npm run mobile:build && npm run pc:exe && powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Copy-Item -Force '.\\apps\\mobile\\app\\build\\outputs\\apk\\debug\\app-debug.apk' '.\\release\\NikkiSync\\NikkiSync-Android.apk'\"",

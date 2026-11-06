@@ -7,6 +7,13 @@ runInNewContext(readFileSync(new URL('../../apps/wechat-mini-program/miniprogram
 const {buildPayload,layoutCards,createShareCardJob,saveShareCard}=m.exports;
 const id='a'.repeat(32);
 const ctx={font:'',measureText:s=>({width:Array.from(s).length*24}),fillRect(){},fillText(){},drawImage(){},save(){},restore(){},translate(){},rotate(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},closePath(){},fill(){},stroke(){},arc(){}};
+test('explicit local profile text is drawn on the card without sending profile fields to the PC',async()=>{
+ const f=api(),drawn=[],requests=[];f.canvas.getContext=()=>({...ctx,fillText:text=>drawn.push(text)});
+ const channel={metadata:(...args)=>{requests.push(args.slice(0,-1));args.at(-1)({status:'ok',rows:[]});},outfit:(...args)=>{requests.push(args.slice(0,-1));args.at(-1)({status:'ok',offset:0,total:0,next:null,items:[]});}};
+ const branding={title:'暖暖的大喵相机',footer:'UID：123456789 MomoCamera'},job=createShareCardJob(f.wx,{channel,id,canvas:f.canvas,originalPath:'/cache/own.jpg',branding});
+ await new Promise(r=>setImmediate(r));f.exported.success({tempFilePath:'/cache/card.png'});const value=await job.result;
+ assert.equal(JSON.stringify(value.payload.branding),JSON.stringify(branding));assert.ok(drawn.includes(branding.title));assert.ok(drawn.includes(branding.footer));assert.doesNotMatch(JSON.stringify(requests),/123456789|暖暖/);job.dispose();
+});
 test('share payload contains only presentation fields; missing/zero values and complete long outfits survive pagination',()=>{
  const payload=buildPayload({date:'2026-10-06',rows:[{label:'曝光',value:'0'},{label:'滤镜',value:'晴日'},{label:'UID',value:'PRIVATE'}],outfits:Array.from({length:100},(_,n)=>({name:'服装'+n+'长名字'.repeat(20),key:'PRIVATE'}))});
  assert.doesNotMatch(JSON.stringify(payload),/PRIVATE|UID|key/);assert.equal(payload.camera[0].value,'0');
@@ -20,6 +27,17 @@ function api(){let exportCallback,album;const deleted=[],written=[];
   canvasToTempFilePath:o=>exportCallback=o,authorize:o=>o.success(),saveImageToPhotosAlbum:o=>album=o};
  return {wx,canvas,deleted,written,get exported(){return exportCallback;},get album(){return album;}};
 }
+test('share background draws the verified full-resolution image, not a tiny intermediate canvas',async()=>{
+ const f=api(),draws=[],image={width:3840,height:2160};
+ Object.defineProperty(image,'src',{set(){queueMicrotask(()=>image.onload());}});
+ f.canvas.createImage=()=>image;f.canvas.getContext=()=>({...ctx,drawImage:(...args)=>draws.push(args)});
+ f.wx.createOffscreenCanvas=()=>({width:360,height:203,getContext:()=>({...ctx,drawImage(){}})});
+ const channel={metadata:(_,done)=>done({status:'ok',rows:[]}),outfit:(_,offset,done)=>done({status:'ok',offset,total:0,next:null,items:[]})};
+ const job=createShareCardJob(f.wx,{channel,id,canvas:f.canvas,originalPath:'/cache/original.jpg'});
+ await new Promise(r=>setImmediate(r));assert.equal(draws[0][0],image,'background uses decoded original');
+ assert.equal(f.exported.destWidth,1440);assert.ok(f.exported.destHeight>=1740);
+ f.exported.success({tempFilePath:'/cache/card.png'});await job.result;job.dispose();
+});
 test('job serially collects every outfit page and verified original, wipes subarray bytes and waits for PNG export',async()=>{
  const f=api(),requests=[],bytes=new Uint8Array([9,255,216,255,217,8]);
  const channel={metadata:(_id,done)=>{requests.push('metadata');done({status:'ok',rows:[{label:'焦距',value:'35'}]});},outfit:(_id,offset,done)=>{requests.push(offset);done({status:'ok',offset,total:7,next:offset===0?6:null,items:Array.from({length:offset===0?6:1},(_,n)=>({name:'裙'+(n+offset)}))});},original:(_id,done)=>{requests.push('original');done({status:'ok',original:true,mime:'image/jpeg',image:bytes.subarray(1,5),sha256:'b'.repeat(64)});}};
@@ -41,6 +59,21 @@ test('save reports success only after album callback and preserves file for retr
  await new Promise(r=>setImmediate(r));assert.equal(saved,false);f.album.success();await result;assert.equal(saved,true);
  assert.equal(f.deleted.length,0);
  f.wx.authorize=o=>o.fail({errMsg:'auth deny'});await assert.rejects(saveShareCard(f.wx,'/cache/card.png'),/权限/);
+});
+test('combined save writes the unmodified original and retries only the share image after a partial failure',async()=>{
+ const f=api(),saved=[],requests=[];let page,album;
+ const original={exports:{}};
+ runInNewContext(readFileSync(new URL('../../apps/wechat-mini-program/miniprogram/lib/original-save.js',import.meta.url),'utf8'),{module:original,Uint8Array,Date,Set});
+ f.wx.saveImageToPhotosAlbum=o=>{saved.push(o.filePath);album=o;};
+ runInNewContext(readFileSync(new URL('../../apps/wechat-mini-program/miniprogram/pages/local-gallery/index.js',import.meta.url),'utf8'),{Page:p=>page=p,require:name=>name.includes('share-card')?m.exports:name.includes('original-save')?original.exports:{},wx:f.wx,Date,Uint8Array,Promise,setTimeout,clearTimeout});
+ page.setData=x=>Object.assign(page.data,x);page._alive=true;page._active=true;page._shareEpoch=1;
+ Object.assign(page.data,{shareOpen:true,sharePath:'/cache/card.png',selectedId:id,connected:true,downloadEnabled:true,viewerRotation:90,writeExif:true});
+ page._channel={export(){assert.fail('original must not be rotated or rewritten');},original:(key,done)=>{requests.push(key);done({status:'ok',image:new Uint8Array([255,216,255,217]),original:true,mime:'image/jpeg',sha256:'c'.repeat(64)});}};
+ const first=page.saveOriginalAndShareCard();assert.match(saved[0],/nikkisync-original-/);assert.equal(saved.length,1);album.success();
+ await new Promise(r=>setImmediate(r));assert.equal(saved[1],'/cache/card.png');album.fail();await first;
+ assert.match(page.data.shareMessage,/原图已保存/);assert.equal(page.data.shareSaving,false);
+ const retry=page.saveOriginalAndShareCard();assert.equal(saved[2],'/cache/card.png');album.success();await retry;
+ assert.deepEqual(requests,[id]);assert.match(page.data.shareMessage,/原图和这张分享图已保存/);
 });
 test('page offers both entries, previews the PNG and closing viewer cancels ownership; stale selector cannot reopen it',async()=>{
  const f=api();let page,selected;

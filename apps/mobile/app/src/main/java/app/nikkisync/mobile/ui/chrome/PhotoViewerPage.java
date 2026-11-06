@@ -180,7 +180,7 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(live==null)return;LayoutParams params=(LayoutParams)live.controls().getLayoutParams();
         params.bottomMargin=((LayoutParams)toolbar.getLayoutParams()).bottomMargin+dp(68);live.controls().setLayoutParams(params);
     }
-    private void clearLivePhoto(){
+    public void clearLivePhoto(){
         if(live!=null){live.close();removeView(live.surface());removeView(live.controls());live=null;}
         if(liveGlass!=null){removeView(liveGlass);liveGlass=null;}if(liveBackdrop!=null){liveBackdrop.close();liveBackdrop=null;}
     }
@@ -200,6 +200,14 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         Button b=new Button(getContext());b.setText(label);b.setTextSize(14);b.setTextColor(Color.WHITE);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);b.setBackgroundColor(Color.TRANSPARENT);
         b.setEnabled(enabled);b.setAlpha(enabled?1f:.35f);
         b.setOnClickListener(v->{action.run();if(image!=null)setZoom(zoom);});toolbar.addView(b,new LinearLayout.LayoutParams(0,-1,1));
+    }
+    /** Update an existing action without rebinding the photo, zoom or details sheet. */
+    public void setActionEnabled(String label,boolean enabled){
+        for(int i=0;i<toolbar.getChildCount();i++){
+            if(toolbar.getChildAt(i) instanceof Button button&&label.contentEquals(button.getText())){
+                button.setEnabled(enabled);button.setAlpha(enabled?1f:.35f);
+            }
+        }
     }
     public void show(){
         if(getParent()!=null){settle();requestApplyInsets();postDelayed(()->logViewport(),250);return;}

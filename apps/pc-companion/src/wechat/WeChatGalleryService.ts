@@ -7,6 +7,7 @@ type Listener = { port: number; stop(): Promise<void> }
 export interface WeChatGalleryStatus { state: 'idle'|'starting'|'waiting'|'connected'|'disconnected'|'closed'|'expired'|'error'; photoCount: number; originalsSent: number; expiresAt?: string }
 export interface WeChatGalleryConfig {
   host: string | (() => string)
+  hosts?(): string[]
   snapshot(): Promise<GallerySource>
   qrSvg(payload: string): Promise<string>
   listen?(config: GalleryConfig, source: GallerySource, events: GalleryEvents): Promise<Listener>
@@ -15,9 +16,9 @@ export interface WeChatGalleryConfig {
   onWorkSettled?(): void
 }
 async function listen(config: GalleryConfig, source: GallerySource, events: GalleryEvents): Promise<Listener> {
-  const service = createGalleryServer(config, source, {events})
+  const service = createGalleryServer(config, source, {events,allowLivePackaging:false})
   try {
-    await new Promise<void>((resolve,reject)=>{service.server.once('error',reject);service.server.listen(config.port,config.host,resolve)})
+    await new Promise<void>((resolve,reject)=>{service.server.once('error',reject);service.server.listen(config.port,config.hosts && config.hosts.length>1 ? '0.0.0.0' : config.host,resolve)})
     // Lifetime errors close the session, never become an unhandled process exception.
     service.server.on('error',()=>{events.disconnected();void service.stop()})
     return {port:(service.server.address() as net.AddressInfo).port,stop:service.stop}
@@ -54,6 +55,7 @@ export class WeChatGalleryService {
     try {
       const host=typeof this.config.host === 'function' ? this.config.host() : this.config.host
       if (!net.isIPv4(host)||! /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) throw new Error('请连接局域网后重试')
+      const hosts=[...new Set([host,...(this.config.hosts?.()??[]).filter(value=>net.isIPv4(value)&&/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value))])].slice(0,8)
       const source=await this.config.snapshot();guard()
       const port=await (this.config.reservePort??(async()=>{
         const reserve=net.createServer()
@@ -62,7 +64,7 @@ export class WeChatGalleryService {
         await new Promise<void>(resolve=>reserve.close(()=>resolve()));return value
       }))();guard()
       const expiresAt=new Date(Date.now()+(this.config.ttlMs??600000)).toISOString()
-      const payload:GalleryConfig={type:'NikkiSyncLocalGalleryLive',version:1,resume:1,host,port,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt}
+      const payload:GalleryConfig={type:'NikkiSyncLocalGalleryLive',version:1,resume:1,...(source.deletion?{deletion:1 as const}:{}),host,...(hosts.length>1?{hosts}:{}),port,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt}
       this.current={state:'waiting',photoCount:source.count,originalsSent:0,expiresAt}
       const events:GalleryEvents={authenticated:()=>{if(active())this.current.state='connected'},disconnected:()=>{if(active())this.current.state='disconnected';this.config.onWorkSettled?.()},transferred:()=>{if(active())this.current.originalsSent++},refreshed:count=>{if(active())this.current.photoCount=count},settled:()=>this.config.onWorkSettled?.()}
       listener=await (this.config.listen??listen)(payload,source,events);guard()

@@ -27,7 +27,9 @@ public class GallerySelectionRefreshTest {
             adapter.setItems(List.of(asset));int position=1;
             var holder=adapter.onCreateViewHolder(new FrameLayout(context),adapter.getItemViewType(position));
             adapter.onBindViewHolder(holder,position);
-            ImageView image=(ImageView)((FrameLayout)holder.itemView).getChildAt(0);
+            FrameLayout tile=(FrameLayout)holder.itemView;
+            ImageView image=(ImageView)((FrameLayout)tile.getChildAt(0)).getChildAt(0);
+            View mark=tile.getChildAt(2);
             var pixels=new ColorDrawable(0xffef9fb8);image.setImageDrawable(pixels);
             int[] fullRefresh={0},partial={0};
             adapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver(){
@@ -38,8 +40,10 @@ public class GallerySelectionRefreshTest {
                 }
             });
             adapter.toggle(asset);assertTrue(adapter.isSelected(asset));assertSame(pixels,image.getDrawable());
+            assertEquals(View.VISIBLE,mark.getVisibility());assertTrue(mark.isActivated());
             adapter.setItems(List.of(asset));assertTrue(adapter.isSelected(asset));assertSame(pixels,image.getDrawable());
             adapter.clearSelection();assertFalse(adapter.hasSelection());assertSame(pixels,image.getDrawable());
+            assertEquals(View.GONE,mark.getVisibility());assertFalse(mark.isActivated());
             assertEquals(0,fullRefresh[0]);assertEquals(2,partial[0]);
         }finally{images.shutdown();}
     }

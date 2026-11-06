@@ -47,11 +47,11 @@ test('late filesystem writes after unload are removed and cannot appear in UI; A
   assert.equal(h.page.data.ready,false);assert.equal(h.getSave(),undefined);
   const a=await harness('android');await a.receive();a.page.imageLoaded();a.page.saveCandidate();assert.equal(a.getSave(),undefined);assert.match(a.page.data.message,/iPhone/);
 });
-test('probe route remains developer-only; gallery promises Live file export, not native paired album save',async()=>{
+test('legacy probe remains isolated and the landing page offers separate photo and video saving',async()=>{
   const base=new URL('../../apps/wechat-mini-program/miniprogram/',import.meta.url);
   const app=JSON.parse(await readFile(new URL('app.json',base),'utf8'));
   assert.ok(app.pages.includes('pages/live-diagnostics/index'));
   const landing=await readFile(new URL('pages/index/index.wxml',base),'utf8');
-  assert.match(landing,/Live 播放与文件导出/);assert.match(landing,/live-diagnostics/);assert.doesNotMatch(landing,/Live 一键保存到相册/);
+  assert.match(landing,/照片和视频分别保存/);assert.doesNotMatch(landing,/live-diagnostics|Live 一键保存到相册/);
   for(const file of ['index.wxml','index.wxss','index.json'])await readFile(new URL('pages/live-diagnostics/'+file,base),'utf8');
 });

@@ -15,14 +15,14 @@ test('WeChat project uses the supplied public AppID and retains URL checks', asy
   assert.equal(config.cloudfunctionRoot, undefined);
 });
 
-test('landing page remains explicitly unofficial/developmental and scopes Live to playback/file export', async () => {
+test('landing page remains explicitly unofficial/developmental and offers separate photo/video saves', async () => {
   const app = await json('miniprogram/app.json');
   assert.deepEqual(app.pages, ['pages/index/index', 'pages/diagnostics/index', 'pages/tcp-diagnostics/index', 'pages/encrypted-diagnostics/index', 'pages/image-diagnostics/index', 'pages/local-gallery/index', 'pages/live-diagnostics/index']);
   assert.equal(app.window.navigationBarTitleText, '大喵相机助手');
   const page = await readFile(new URL('miniprogram/pages/index/index.wxml', root), 'utf8');
   assert.match(page, /开发预览/);
   assert.match(page, /非官方/);
-  assert.match(page, /Live 播放与文件导出/);
+  assert.match(page, /照片和视频分别保存/);
   assert.doesNotMatch(page,/Live 一键保存到相册/);
   assert.match(page, /bindtap="toggleTools"/);
   assert.match(page, /wx:if="\{\{toolsOpen\}\}"/);

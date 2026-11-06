@@ -16,13 +16,48 @@ function adapter(server){
    connect(){s=net.connect(target.address().port,'127.0.0.1');sockets.push(s);s.on('connect',()=>e.connect());s.on('data',b=>e.message({message:Uint8Array.from(b).buffer}));s.on('error',()=>e.error());s.on('close',()=>e.close());},write:b=>{packets.push(Buffer.from(b));s.write(Buffer.from(b));},close:()=>s?.destroy()};
  }};
 }
-async function fixture(s=source(),options={}){const config=qr(),service=createGalleryServer(config,s,options);await new Promise(r=>service.server.listen(0,'127.0.0.1',r));return {...service,config,wx:adapter(service.server)};}
+async function fixture(s=source(),options={},patch={}){const config={...qr(),...patch},service=createGalleryServer(config,s,options);await new Promise(r=>service.server.listen(0,'127.0.0.1',r));return {...service,config,wx:adapter(service.server)};}
 function connect(f){let ready,failed,disconnected;const events=[];const c=g.connectGallery(f.wx,f.config,{ready:v=>{events.push(v);ready?.(v);},failed:m=>failed?.(m),disconnected:()=>disconnected?.()});
  return {c,events,ready:()=>new Promise((r,j)=>{ready=r;failed=j;}),disconnected:()=>new Promise(r=>disconnected=r)};}
 test('resume QR is explicitly bounded and capability is bound to the handshake context',()=>{
  const config=qr();assert.equal(g.parseGalleryQr(JSON.stringify(config)).resume,1);
  for(const patch of [{resume:0},{resume:true},{resume:2},{path:'private'}])assert.throws(()=>g.parseGalleryQr(JSON.stringify({...config,...patch})));
  const legacy={...config};delete legacy.resume;assert.notEqual(g.galleryPrologue(config),g.galleryPrologue(legacy));
+});
+test('alternative addresses are private, bounded, unique and authenticated as part of the QR context',()=>{
+ const config={...qr(),hosts:['192.168.1.8','10.1.2.3']};
+ assert.deepEqual(Array.from(g.parseGalleryQr(JSON.stringify(config)).hosts),config.hosts);
+ assert.notEqual(g.galleryPrologue(config),g.galleryPrologue({...config,hosts:['192.168.1.8','10.1.2.4']}));
+ for(const hosts of [[],['10.1.2.3'],['192.168.1.8','8.8.8.8'],['192.168.1.8','192.168.1.8'],Array.from({length:9},(_,i)=>'192.168.1.'+(i+8))])
+  assert.throws(()=>g.parseGalleryQr(JSON.stringify({...config,hosts})));
+});
+test('initial connection and recovery try the next advertised address, ignoring callbacks from the failed socket',async()=>{
+ const f=await fixture(source(),{},{hosts:['192.168.1.8','10.1.2.3']});const attempts=[],original=f.wx.createTCPSocket;let stale;
+ f.wx.createTCPSocket=()=>{const socket=original();const connect=socket.connect;socket.connect=options=>{
+  attempts.push(options.address);
+  if(options.address===f.config.host){stale=f.wx.callbacks.at(-1);setImmediate(()=>stale.error());}else connect(options);
+ };return socket;};let conn;
+ try{g.parseGalleryQr(JSON.stringify(f.config));conn=connect(f);await conn.ready();assert.deepEqual(attempts,f.config.hosts);
+  stale.close();stale.message({message:new Uint8Array([255,255]).buffer});
+  assert.equal((await new Promise(r=>conn.c.list(0,r))).status,'ok');
+  conn.c.suspend();await new Promise(r=>setImmediate(r));const ready=conn.ready();conn.c.resume();await ready;
+  assert.deepEqual(attempts,[...f.config.hosts,...f.config.hosts]);
+  assert.equal((await new Promise(r=>conn.c.preview(id,r))).status,'ok');
+ }finally{conn?.c.close();await f.stop();}
+});
+test('a stalled request times out once and remains recoverable without accepting late bytes',async()=>{
+ const f=await fixture(),timers=[];let conn,finish;
+ const module={exports:{}};
+ runInNewContext(await readFile(new URL('../../apps/wechat-mini-program/miniprogram/lib/gallery-channel.js',import.meta.url),'utf8'),{
+  module,Uint8Array,ArrayBuffer,Date,require:name=>clientApi(name.slice(2,-3)),
+  setTimeout:(callback,delay)=>{const token={callback,delay};timers.push(token);return token;},clearTimeout:token=>{if(token)token.cleared=true;}
+ });
+ const old=f.wx.createTCPSocket;f.wx.createTCPSocket=()=>{const socket=old(),write=socket.write;let count=0;socket.write=bytes=>{if(++count<=2)write(bytes);};return socket;};
+ try{const ready=new Promise(r=>{conn=module.exports.connectGallery(f.wx,f.config,{ready:r,disconnected:()=>finish?.(),failed:m=>assert.fail(m)});});await ready;
+  let results=0;conn.list(0,result=>{results++;assert.equal(result.status,'failed');});
+  const lost=new Promise(r=>finish=r);timers.findLast(x=>x.delay===20000&&!x.cleared).callback();await lost;
+  assert.equal(results,1);assert.equal(conn.suspend(),true);assert.equal(conn.resume(),true);
+ }finally{conn?.close();await f.stop();}
 });
 test('same logical session reconnects with fresh Noise, stable ids and no reuse of the original QR',async()=>{
  let authenticated=0,disconnected=0;const f=await fixture(source(),{events:{authenticated:()=>authenticated++,disconnected:()=>disconnected++}});let conn;

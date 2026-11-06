@@ -140,10 +140,18 @@ public final class ChromeNavigationHost extends FrameLayout {
     }
     private void addSheetControlGlass(View view,ContentBackdrop source,FrameLayout recording,ArrayList<LiquidGlassDockView> controls){
         if(view instanceof android.widget.Button || view instanceof android.widget.EditText){
-            view.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             ((android.widget.TextView)view).setTextColor(getContext().getColor(app.nikkisync.mobile.R.color.text_primary));
-            LiquidGlassDockView effect=new LiquidGlassDockView(getContext(),source,view);
-            recording.addView(effect,new LayoutParams(-1,-1));controls.add(effect);
+            // Scrolling controls must own their material: an independently rendered
+            // overlay can lag or remain visible during overscroll on real devices.
+            boolean scrolling=false;
+            for(android.view.ViewParent p=view.getParent();p instanceof View;p=p.getParent())
+                if(p instanceof android.widget.ScrollView){scrolling=true;break;}
+            if(scrolling)view.setBackgroundResource(app.nikkisync.mobile.R.drawable.bg_glass_chip);
+            else {
+                view.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                LiquidGlassDockView effect=new LiquidGlassDockView(getContext(),source,view);
+                recording.addView(effect,new LayoutParams(-1,-1));controls.add(effect);
+            }
         }
         if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++)addSheetControlGlass(group.getChildAt(i),source,recording,controls);
     }

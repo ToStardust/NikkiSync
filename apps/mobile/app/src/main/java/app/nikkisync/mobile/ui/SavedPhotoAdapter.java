@@ -38,6 +38,7 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         void onEditedClick(EditedVariantStore.Variant variant);
         default void onRemoveOriginal(SavedPhotoStore.Record record) {}
         default void onRemoveEdited(EditedVariantStore.Variant variant) {}
+        default void loadOriginalFallback(SavedPhotoStore.Record record, ImageView target) {}
     }
 
     private static final int TYPE_HEADER = 0;
@@ -102,8 +103,7 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
         media.cell.bind(row.member);
         media.cell.setOnClickListener(v -> {
             if (row.member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
-                if (media.cell.unavailable) listener.onRemoveOriginal(row.member.original());
-                else listener.onOriginalClick(row.member.original());
+                listener.onOriginalClick(row.member.original());
             } else {
                 if (media.cell.unavailable) listener.onRemoveEdited(row.member.edited());
                 else listener.onEditedClick(row.member.edited());
@@ -213,14 +213,15 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
 
         void bind(SavedPhotoGroups.Member member) {
             SavedPhotoHealthStore.Entry checked=health.get(member.uri());
-            unavailable=checked!=null&&checked.isMissing();
+            unavailable=checked!=null&&checked.isUnavailable();
             if (member.kind() == SavedPhotoGroups.MemberKind.ORIGINAL) {
                 SavedPhotoStore.Record record = member.original();
                 String badge = record.hasMotion()
                         ? "LIVE"
                         : record.rotationDegrees() == 0 ? "原图" : "旋转 " + record.rotationDegrees() + "°";
                 SavedPhotoHealthStore.Entry entry = health.get(record.uri());
-                if (entry != null && entry.isMissing()) badge = "文件不可访问 · 点击处理";
+                if (entry != null && entry.isMissing()) badge = "已删除";
+                else if(entry!=null&&entry.isUnavailable()) badge="暂时无法访问";
                 else if (record.hasMotion()) {
                     if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_MISSING) badge = "LIVE 不完整";
                     else if (entry != null && entry.state() == SavedPhotoHealthStore.State.MOTION_UNVERIFIED) badge = "LIVE 待核验";
@@ -237,6 +238,7 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
             image.setBackgroundResource(R.drawable.bg_gallery_photo);
             String expected = member.uri();
             image.setTag(expected);
+            if(unavailable&&member.kind()==SavedPhotoGroups.MemberKind.ORIGINAL){listener.loadOriginalFallback(member.original(),image);return;}
             Uri uri = Uri.parse(expected);
             thumbnails.execute(() -> {
                 try {
@@ -246,15 +248,13 @@ public final class SavedPhotoAdapter extends RecyclerView.Adapter<RecyclerView.V
                         if (expected.equals(image.getTag())) image.setImageBitmap(bitmap);
                     });
                 } catch (Exception ignored) {
-                    boolean inaccessible;
-                    try(android.os.ParcelFileDescriptor file=activity.getContentResolver().openFileDescriptor(uri,"r")){inaccessible=file==null;}
-                    catch(Exception error){inaccessible=true;}
-                    boolean missing=inaccessible;
+                    SavedPhotoHealthStore.State status=app.nikkisync.mobile.storage.SavedPhotoVerifier.checkUri(activity,expected);
                     main.post(() -> {
                         if (expected.equals(image.getTag())) {
                             image.setImageDrawable(null);
                             image.setBackgroundResource(R.drawable.bg_gallery_photo);
-                            if(missing){unavailable=true;state.setText("文件不可访问 · 点击处理");}
+                            if(status!=SavedPhotoHealthStore.State.ACTIVE){unavailable=true;state.setText(status==SavedPhotoHealthStore.State.MISSING?"已删除":"暂时无法访问");
+                                if(member.kind()==SavedPhotoGroups.MemberKind.ORIGINAL)listener.loadOriginalFallback(member.original(),image);}
                         }
                     });
                 }

@@ -12,6 +12,27 @@ public sealed class RuntimePayloadTests : IDisposable
     private static readonly byte[] Content = Encoding.UTF8.GetBytes("test service bytes");
     private static readonly PayloadFile File = new("runtime/NikkiSync-PC-service.exe", Content.Length, Hash(Content));
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
+    [Theory]
+    [InlineData("runtime/wechat/media/ffmpeg.exe")]
+    [InlineData("runtime/wechat/media/ffprobe.exe")]
+    public void Fixed_media_tools_can_pass_manifest_validation_without_loosening_archive_hash_checks(string path)
+    {
+        var zip=Archive((File.Path,Content));var steps=new List<PayloadPreparationStep>();
+        Assert.Throws<InvalidDataException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),new string('0',64),_root,
+            [new PayloadFile(path,227398656,Hash(Content))],step:steps.Add));
+        Assert.Contains(PayloadPreparationStep.ValidateArchive,steps);
+    }
+    [Theory]
+    [InlineData("runtime/other.exe",227398656)]
+    [InlineData("runtime/wechat/media/ffmpeg.exe",268435457)]
+    [InlineData("runtime/wechat/media/other.exe",227398656)]
+    public void Large_file_exception_does_not_apply_to_other_paths_or_unbounded_media(string path,long length)
+    {
+        var zip=Archive((File.Path,Content));var steps=new List<PayloadPreparationStep>();
+        Assert.Throws<InvalidDataException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,
+            [new PayloadFile(path,length,Hash(Content))],step:steps.Add));
+        Assert.DoesNotContain(PayloadPreparationStep.CreateCache,steps);
+    }
     private static byte[] Archive(params (string Path, byte[] Bytes)[] files)
     {
         using var memory = new MemoryStream();

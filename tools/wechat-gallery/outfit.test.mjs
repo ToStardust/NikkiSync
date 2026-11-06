@@ -10,6 +10,37 @@ import {createPreviewSource} from './source.mjs';
 import {createGalleryServer} from './server.mjs';
 import {clientApi} from '../wechat-crypto-spike/client-api.mjs';
 
+test('persistent icon cache survives a new page and evicts missing files without keeping session keys',async()=>{
+ const module={exports:{}};
+ runInNewContext(await readFile(new URL('../../apps/wechat-mini-program/miniprogram/lib/icon-cache.js',import.meta.url),'utf8'),{module,Uint8Array,Date});
+ const disk=new Map(),storage=new Map(),key='d'.repeat(64),sessionKey='e'.repeat(32);
+ const wx={env:{USER_DATA_PATH:'/cache'},getStorageSync:k=>storage.get(k),setStorageSync:(k,v)=>storage.set(k,v),
+  getFileSystemManager:()=>({
+   writeFile:o=>{disk.set(o.filePath,new Uint8Array(o.data).slice());o.success();},
+   unlink:o=>disk.delete(o.filePath),
+   accessSync:path=>{if(!disk.has(path))throw Error('missing');},
+   statSync:path=>({size:disk.get(path)?.length}),
+  })};
+ const first=module.exports.createIconCache(wx);
+ await new Promise(done=>first.put(key,new Uint8Array(8),'image/png','category',done));
+ await new Promise(done=>first.put(sessionKey,new Uint8Array(8),'image/png','item',done));
+ first.release(true);assert.ok(first.get(sessionKey));first.release();
+ assert.equal(first.get(sessionKey),undefined);
+ const second=module.exports.createIconCache(wx),hit=second.get(key);
+ assert.ok(hit);assert.equal(hit.source,'category');assert.equal(second.stats().bytes,8);
+ assert.doesNotMatch(JSON.stringify([...storage.values()]),new RegExp(sessionKey));
+ disk.delete(hit.path);assert.equal(second.get(key),undefined);assert.equal(second.stats().bytes,0);
+});
+
+test('public icon cache identity follows dictionary content while photo and access ids remain session-bound',async()=>{
+ const {outfitDescriptors}=await import('./outfit.mjs');
+ const metadata={dressing:{clothes:[{id:'private-clothing-id',name:'裙子',thumbnail:'https://example.test/icon.png'}]},raw:{dictionary:{providerVersion:'v1'}}};
+ const a=outfitDescriptors(metadata,randomBytes(32))[0],b=outfitDescriptors(metadata,randomBytes(32))[0];
+ assert.notEqual(a.key,b.key);assert.equal(a.cacheKey,b.cacheKey);
+ metadata.raw.dictionary.providerVersion='v2';
+ assert.notEqual(a.cacheKey,outfitDescriptors(metadata,randomBytes(32))[0].cacheKey);
+});
+
 test('outfit source exposes bounded named cards, only opaque icon ids and source-bound icon access',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'nikki-outfit-')),path=join(directory,'a.jpg'),bytes=Buffer.from([255,216,255,217]);await writeFile(path,bytes);let loads=0;
  try{
@@ -31,10 +62,11 @@ test('outfit list splits large Chinese descriptions into six-card controls under
 function adapter(server){const e={};let socket;return {getRandomValues:o=>o.success({randomValues:Uint8Array.from(randomBytes(64)).buffer}),createTCPSocket:()=>({onConnect:f=>e.connect=f,onMessage:f=>e.message=f,onError:f=>e.error=f,onClose:f=>e.close=f,connect(){socket=net.connect(server.address().port,'127.0.0.1');socket.on('connect',()=>e.connect());socket.on('data',b=>e.message({message:Uint8Array.from(b).buffer}));socket.on('error',()=>e.error());socket.on('close',()=>e.close());},write:b=>socket.write(Buffer.from(b)),close:()=>socket?.destroy()})};}
 test('outfit and verified icons use existing encrypted quota/profile, without counting icons as saved originals',async()=>{
  const id='a'.repeat(32),key='b'.repeat(32),config={type:'NikkiSyncLocalGalleryDownload',version:1,host:'192.168.1.2',port:32001,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};let transfers=0;
- const source={outfit:(_id,offset)=>({offset,total:1,items:[{key,name:'星光裙',hasIcon:true}],next:null}),icon:async()=>({image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'category'})};
+ const source={outfit:(_id,offset,cacheKeys)=>({offset,total:1,items:[{key,name:'星光裙',hasIcon:true,...(cacheKeys?{cacheKey:'c'.repeat(64)}:{})}],next:null}),icon:async()=>({image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'category'})};
  const {server,stop}=createGalleryServer(config,source,{events:{transferred:()=>transfers++}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let c;
  try{c=await new Promise((r,j)=>{const channel=clientApi('gallery-channel').connectGallery(adapter(server),config,{ready:()=>r(channel),failed:j});});
   const list=await new Promise(r=>c.outfit(id,0,r));assert.equal(list.status,'ok');assert.equal(list.items[0].name,'星光裙');
+  const cached=await new Promise(r=>c.cachedOutfit(id,0,r));assert.equal(cached.status,'ok');assert.equal(cached.items[0].name,'星光裙');assert.equal(cached.items[0].cacheKey,'c'.repeat(64));assert.equal(list.items[0].cacheKey,undefined);
   const icon=await new Promise(r=>c.icon(id,key,r));assert.equal(icon.status,'ok');assert.equal(icon.icon,true);assert.equal(icon.original,false);assert.equal(icon.source,'category');assert.equal(transfers,0);assert.throws(()=>c.icon(id,'https://evil.test',()=>{}));
  }finally{c?.close();await stop();}
 });
@@ -58,12 +90,38 @@ async function pageFixture(){
  runInNewContext(await readFile(new URL('pages/local-gallery/index.js',root),'utf8'),{Page:p=>page=p,Date,Uint8Array,wx,require:x=>x.includes('icon-cache')?module.exports:{}});page.setData=(x,done)=>{Object.assign(page.data,x);done?.();};page.onLoad();page.onShow();
  page.setData({viewerOpen:true,infoOpen:true,connected:true,downloadEnabled:true,selectedId:'a'.repeat(32),photos:[],infoRows:[{label:'焦距',value:'35'}]});return {page,removed,get pending(){return pending;}};
 }
-test('outfit panel loads only six requested cards, reuses repeated icons and stops on sheet close',async()=>{
+test('a fresh QR session reuses a verified icon despite its new opaque outfit access key',async()=>{
+ const f=await pageFixture(),p=f.page,cacheKey='d'.repeat(64);let icons=0;
+ const connect=accessKey=>{
+  p._channel={outfit:(_id,offset,done)=>done({status:'ok',offset,total:1,next:null,items:[{key:accessKey,cacheKey,name:'裙子',hasIcon:true}]}),
+   icon:(_id,_key,done)=>{icons++;done({status:'ok',icon:true,original:false,image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'item'});}};
+ };
+ connect('b'.repeat(32));p.loadOutfit(p.data.selectedId,0);f.pending.success();assert.equal(icons,1);
+ p.clearFiles(false);p._connectionEpoch++;p._outfits.clear();p.setData({selectedId:'e'.repeat(32)});
+ connect('c'.repeat(32));p.loadOutfit(p.data.selectedId,0);
+ assert.equal(icons,1);assert.ok(p.data.outfitItems[0].iconPath);assert.equal(p.data.infoLoading,false);
+});
+test('outfit panel automatically collects every six-item wire page, reuses icons and stops on sheet close',async()=>{
  const f=await pageFixture(),p=f.page,key='b'.repeat(32),second='c'.repeat(32);let icons=0,outfits=0;
- p._channel={outfit:(_id,offset,done)=>{outfits++;done({status:'ok',offset,total:7,next:6,items:[{key,name:'裙子',hasIcon:true},{key:second,name:'帽子',hasIcon:false}]});},icon:(_id,_key,done)=>{icons++;done({status:'ok',icon:true,original:false,key,image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'category'});}};
+ const items=Array.from({length:7},(_,n)=>({key:n===0?key:n===1?second:String(n).repeat(32),name:'部件'+n,hasIcon:n===0}));
+ p._channel={outfit:(_id,offset,done)=>{outfits++;done({status:'ok',offset,total:7,next:offset===0?6:null,items:items.slice(offset,offset+6)});},icon:(_id,_key,done)=>{icons++;done({status:'ok',icon:true,original:false,key,image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'category'});}};
  p.loadOutfit(p.data.selectedId,0);assert.equal(icons,1);assert.equal(p.data.infoLoading,true);f.pending.success();assert.equal(p.data.infoLoading,false);assert.equal(p.data.outfitItems[0].iconSource,'category');assert.equal(p.data.outfitItems[1].iconState,'暂无图标');
- p.loadOutfit(p.data.selectedId,0);assert.equal(outfits,1);assert.equal(icons,1);assert.equal(p.data.infoLoading,false);
+ assert.equal(p.data.outfitItems.length,7);assert.equal(outfits,2);assert.equal(p.data.outfitNext,null);
+ p.loadOutfit(p.data.selectedId,0);assert.equal(outfits,2);assert.equal(icons,1);assert.equal(p.data.infoLoading,false);
  p._iconCache.clear();p.loadOutfit(p.data.selectedId,0);const late=f.pending;p.closeInfo();late.success();assert.equal(p.data.infoLoading,false);assert.equal(p.data.infoOpen,false);
+});
+
+test('closing details during automatic outfit paging ignores late pages and does not request icons',async()=>{
+ const f=await pageFixture(),p=f.page;let finish,icons=0,calls=0;
+ p._channel={outfit:(_id,_offset,done)=>{calls++;finish=done;},icon(){icons++;}};
+ p.loadOutfit(p.data.selectedId,0);p.closeInfo();finish({status:'ok',offset:0,total:7,next:6,items:Array.from({length:6},(_,n)=>({key:String(n).repeat(32),name:'部件',hasIcon:true}))});
+ assert.equal(calls,1);assert.equal(icons,0);assert.equal(p.data.outfitItems.length,0);assert.equal(p.data.infoLoading,false);
+});
+
+test('partial outfit paging preserves the loaded names and reports incomplete information',async()=>{
+ const f=await pageFixture(),p=f.page;
+ p._channel={outfit:(_id,offset,done)=>done(offset?{status:'failed'}:{status:'ok',offset:0,total:7,next:6,items:Array.from({length:6},(_,n)=>({key:String(n).repeat(32),name:'部件'+n,hasIcon:false}))})};
+ p.loadOutfit(p.data.selectedId,0);assert.equal(p.data.outfitItems.length,6);assert.equal(p.data.infoLoading,false);assert.match(p.data.outfitNote,/部分|未全部/);
 });
 test('background clears owned icon files; late native write cannot redraw or remain on disk',async()=>{
  const f=await pageFixture(),p=f.page,key='b'.repeat(32);

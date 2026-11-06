@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class SavedPhotoHealthStore {
-    public enum State { ACTIVE, MISSING, MOTION_MISSING, MOTION_UNVERIFIED }
+    public enum State { ACTIVE, MISSING, UNAVAILABLE, MOTION_MISSING, MOTION_UNVERIFIED }
 
     public static final class Entry {
         private final State state;
@@ -16,6 +16,7 @@ public final class SavedPhotoHealthStore {
         public State state(){return state;}
         public long lastCheckedAt(){return lastCheckedAt;}
         public boolean isMissing(){return state==State.MISSING;}
+        public boolean isUnavailable(){return state==State.MISSING||state==State.UNAVAILABLE;}
         public String motionWarning(){return switch(state){
             case MOTION_MISSING -> "动态视频不存在或无法访问；静态图仍可打开。";
             case MOTION_UNVERIFIED -> "旧双文件记录没有视频 URI，动态完整性待核验；请重新保存源 Live。";

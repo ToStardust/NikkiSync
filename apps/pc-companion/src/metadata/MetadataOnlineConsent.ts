@@ -15,10 +15,9 @@ export class MetadataOnlineConsent {
       const saved=JSON.parse(readFileSync(file,'utf8')) as Record<string,unknown>
       this.granted=!initiallyDisabled&&saved.enabled===true&&saved.policyVersion===MetadataOnlineConsent.POLICY_VERSION
         &&saved.recipients===this.fingerprint&&typeof saved.acceptedAt==='string'&&Number.isFinite(Date.parse(saved.acceptedAt))
-    }catch(error){
-      // Fresh public-beta installs enable decoding by default. Preserve an
-      // explicit opt-out and fail closed for malformed existing settings.
-      this.granted=!initiallyDisabled&&(error as NodeJS.ErrnoException).code==='ENOENT'
+    } catch {
+      // Missing and unreadable settings cannot establish consent.
+      this.granted = false
     }
   }
   enabled(): boolean{return this.granted}

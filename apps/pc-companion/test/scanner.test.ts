@@ -142,6 +142,37 @@ test('classifier separates HQ/LQ, motion bundle, binary and pending files', asyn
   await rm(f.root, { recursive: true, force: true })
 })
 
+test('a rescan removes an indexed PendingUp copy while keeping the original and the source files', async () => {
+  const f = await fixture()
+  const pending = path.join(f.uid, 'PendingUp.jpeg')
+  const original = path.join(f.uid, 'NikkiPhotos_HighQuality', 'PendingUploadExample.jpeg')
+  const database = new DatabaseManager()
+  database.initialize()
+  const scanner = new ScannerService(database, { startingPaths: [f.game], runningExecutablePaths: [], watcher: false, stability: { pollIntervalMs: 0, stableChecks: 1, maxWaitMs: 1000 } })
+  try {
+    await writeFile(pending, 'upload copy')
+    await writeFile(original, 'original')
+    const classifier = scanner['coordinator']['classifier']
+    const classifyPath = classifier.classifyPath.bind(classifier)
+    classifier.classifyPath = (file, extra) => file === pending ? 'high_quality' : classifyPath(file, extra)
+    assert.equal((await scanner.start()).assetsCreated, 2)
+    classifier.classifyPath = classifyPath
+
+    const extra = { id: 'folder', path: f.uid, mode: 'images' as const }
+    assert.equal(classifyPath(path.join(f.uid, 'PENDINGUP.JPG'), extra), 'ignored')
+    assert.equal(classifyPath(path.join(f.uid, 'PendingUp', 'clip.mp4'), extra), 'ignored')
+    assert.equal((await scanner.fullScan()).assetsDeleted, 1)
+    const state = database.connection.prepare('SELECT asset_state FROM assets JOIN resources USING (asset_id) WHERE file_name = ?')
+    assert.equal(state.get('PendingUp.jpeg')?.asset_state, 'deleted')
+    assert.equal(state.get('PendingUploadExample.jpeg')?.asset_state, 'ready')
+    assert.equal(await readFile(pending, 'utf8'), 'upload copy')
+  } finally {
+    await scanner.stop()
+    database.close()
+    await rm(f.root, { recursive: true, force: true })
+  }
+})
+
 test('a burst of scans shares one pass and never scans the library concurrently', async () => {
   const f = await fixture(), database = new DatabaseManager(); database.initialize()
   const scanner = new ScannerService(database, { startingPaths: [f.game], runningExecutablePaths: [], watcher: false, stability: { pollIntervalMs: 0, stableChecks: 1, maxWaitMs: 1000 } })
@@ -325,6 +356,22 @@ test('native game photo filenames retain capture time across file copying and re
     await scanner.fullScan()
     assert.equal(database.connection.prepare('SELECT captured_at FROM assets').get()?.captured_at, expected)
   } finally { await scanner.stop(); database.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('cloud photos do not infer capture dates and rescan clears old download dates',async()=>{
+  const f=await fixture(),database=new DatabaseManager(':memory:');database.initialize()
+  const cloud=path.join(f.uid,'CloudPhotos');await mkdir(cloud)
+  await writeFile(path.join(cloud,'2026_09_18_17_54_57_3499251.jpeg'),'cloud')
+  const scanner=new ScannerService(database,{startingPaths:[f.game],runningExecutablePaths:[],watcher:false,stability:{pollIntervalMs:0,stableChecks:1,maxWaitMs:1000}})
+  try{
+    await scanner.start()
+    assert.equal(database.connection.prepare('SELECT captured_at FROM assets').get()?.captured_at,null)
+    database.connection.prepare('UPDATE assets SET captured_at=?').run('2026-10-30T00:00:00Z')
+    const before=database.connection.prepare('SELECT revision FROM assets').get()?.revision as number
+    await scanner.fullScan()
+    assert.equal(database.connection.prepare('SELECT captured_at FROM assets').get()?.captured_at,null)
+    assert.ok((database.connection.prepare('SELECT revision FROM assets').get()?.revision as number)>before,'phone receives a revision to discard the old inferred group')
+  }finally{await scanner.stop();database.close();await rm(f.root,{recursive:true,force:true})}
 })
 
 test('file stability guard waits for stable readable content', async () => {

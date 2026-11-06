@@ -3,16 +3,15 @@
   <image wx:if="{{ambientPath}}" class="photo-atmosphere" src="{{ambientPath}}" mode="aspectFill"></image>
   <view class="atmosphere-wash"></view>
 </view>
-<view class="gallery">
+<view class="gallery" hidden="{{inspirationOpen || myOpen}}">
   <view class="gallery-header">
-    <view class="eyebrow">NIKKISYNC · 大喵相机助手</view>
     <view class="heading-row">
-      <text class="title">暖暖相册</text>
+      <text class="title album-title">{{albumTitle}}</text>
       <button class="connection-pill glass-surface" bindtap="openConnection" aria-label="查看连接状态">
         <view class="status-dot {{connected ? 'online' : ''}}"></view>{{busy ? '载入中' : connected ? '已连接' : '未连接'}} <text>›</text>
       </button>
     </view>
-    <view class="header-caption">{{connected ? (filterActive ? total + ' 张符合条件 · 图库 ' + libraryTotal + ' 张' : total + ' 张照片 · 来自你的电脑') : '收藏每一个心动瞬间'}}</view>
+    <view wx:if="{{connected}}" class="header-caption">{{filterActive ? total + ' 张符合条件 · 图库 ' + libraryTotal + ' 张' : total + ' 张照片 · 来自你的电脑'}}</view>
     <button wx:if="{{resumeAvailable && !connected}}" class="refresh-entry" bindtap="resumeConnection" disabled="{{busy}}">{{busy ? '正在恢复连接…' : '重试连接 ↻'}}</button>
     <view wx:if="{{connected && browseEnabled}}" class="search-row">
       <input class="photo-search glass-surface" value="{{searchText}}" maxlength="80" placeholder="搜索服装、版本、日期" confirm-type="search" bindinput="searchChanged" bindconfirm="applyFilters" disabled="{{busy || saving}}" />
@@ -35,11 +34,10 @@
   </view>
   <view wx:if="{{!photos.length}}" class="empty-card glass-surface">
     <view class="empty-camera" aria-hidden="{{true}}"><view></view></view>
-    <view class="empty-title">{{busy ? '相册正在赶来' : filterActive ? '没有符合条件的照片' : connected ? '还没有照片' : '让照片来到手机'}}</view>
-    <view class="empty-copy">{{busy ? '正在安全连接你的电脑，请稍候。' : filterActive ? '换个服装名称或日期试试，未解析的服装暂时无法按名称搜索。' : connected ? '在无限暖暖里拍下第一张照片吧。' : '电脑与手机连接同一 Wi-Fi，扫描电脑生成的临时浏览码。'}}</view>
+    <view class="empty-title">{{busy ? '正在连接电脑' : filterActive ? '没有符合条件的照片' : connected ? '还没有照片' : '连接你的电脑'}}</view>
+    <view class="empty-copy">{{busy ? '连接后照片会显示在这里' : filterActive ? '换个服装名称或日期试试' : connected ? '在无限暖暖里拍下第一张照片吧。' : '在电脑端点击「微信下载照片」，然后扫码连接。'}}</view>
     <button wx:if="{{filterActive && !busy}}" class="secondary-action" bindtap="clearFilters">清除筛选</button>
     <button wx:if="{{!connected}}" class="primary-action" bindtap="scanPc" loading="{{busy}}" disabled="{{busy}}">扫码连接电脑</button>
-    <view class="empty-hint">只读开发预览 · 不上传云端图库</view>
   </view>
   <block wx:else>
     <view class="section-heading">
@@ -54,60 +52,91 @@
         <view wx:else class="placeholder"><view class="placeholder-mark"></view><text>{{item.state}}</text></view>
         <view wx:if="{{selectionMode}}" class="selection-check {{item.selected ? 'checked' : ''}}">{{item.selected ? '✓' : ''}}</view>
         <view wx:if="{{item.live}}" class="live-badge">◉ LIVE</view>
-        <button wx:if="{{selectionMode && item.path}}" class="peek-photo" catchtap="openPhoto" data-index="{{item.index}}">预览</button>
+        <button wx:if="{{selectionMode && (item.path || item.video)}}" class="peek-photo" catchtap="openPhoto" data-index="{{item.index}}">预览</button>
         <text wx:if="{{item.saveState}}" class="save-badge">{{item.saveState === 'saved' ? '已保存' : '未完成'}}</text>
       </view>
     </view>
     </view>
   </block>
-  <view class="gallery-message" aria-live="polite">{{busy && photos.length ? '正在载入预览 · ' + loaded + ' / ' + photos.length : message}}</view>
+  <view wx:if="{{message || (busy && photos.length)}}" class="gallery-message" aria-live="polite">{{busy && photos.length ? '正在载入预览 · ' + loaded + ' / ' + photos.length : message}}</view>
+  <view wx:if="{{connectionDiagnostic}}" class="connection-diagnostic">连接诊断 {{connectionDiagnostic}}</view>
   <view class="pagination" wx:if="{{connected && photos.length}}">
     <button class="secondary-action" bindtap="previousPage" disabled="{{busy || saving || infoLoading || hdLoading || pageStart === 1}}">‹ 上一页</button>
     <button class="secondary-action" bindtap="nextPage" disabled="{{busy || saving || infoLoading || hdLoading || next === null}}">{{next === null ? '已经到底了' : '下一页 ›'}}</button>
   </view>
   <view class="save-message" aria-live="polite">{{saveMessage}}</view>
+  <view wx:if="{{deletionItems.length || deletionMessage}}" class="deletion-panel glass-surface">
+    <button class="deletion-heading" bindtap="toggleDeletionList">删除申请 · {{deletionItems.length}} 项 {{deletionOpen ? '⌃' : '⌄'}}</button>
+    <view class="deletion-note" aria-live="polite">{{deletionMessage}}</view>
+    <block wx:if="{{deletionOpen}}">
+      <view class="deletion-row" wx:for="{{deletionItems}}" wx:key="id">
+        <view><text class="deletion-label">{{item.label}}</text><text class="deletion-note">{{item.count}} 个关联文件 · {{item.message}}</text></view>
+        <button wx:if="{{item.canCancel && connected}}" data-id="{{item.id}}" bindtap="cancelDeletion">取消申请</button>
+      </view>
+    </block>
+  </view>
   <view class="save-controls">
     <button wx:if="{{saving}}" class="secondary-action" bindtap="stopSaving" disabled="{{saveStopping}}">{{saveStopping ? '正在停止…' : '处理完这张后停止'}}</button>
     <button wx:if="{{!saving && retryCount}}" class="secondary-action" bindtap="retryUnfinished" disabled="{{busy || infoLoading || hdLoading || !downloadEnabled || !connected}}">重试 {{retryCount}} 张未完成</button>
   </view>
   <button wx:if="{{permissionDenied}}" class="secondary-action" bindtap="openAlbumSettings">开启相册保存权限</button>
-  <view class="preview-label">{{downloadEnabled ? '普通照片保存到相册 · Live 可播放并导出封包' : '旧版浏览码仅预览 · 原图保存需新版码'}}</view>
+  <view wx:if="{{connected && !downloadEnabled && !busy}}" class="preview-label">保存照片需要更新电脑端</view>
 </view>
 <view class="glass-dock glass-surface">
-  <button wx:if="{{selectionMode}}" class="dock-save" bindtap="saveSelected" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected || !selectedCount}}" loading="{{saving}}">保存 {{selectedCount}} 张照片</button>
+ <block wx:if="{{selectionMode && !inspirationOpen && !myOpen}}">
+  <button class="dock-action dock-save" bindtap="saveSelected" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected || !selectedCount}}" loading="{{saving}}">保存 {{selectedCount}} 张照片</button>
+  <button wx:if="{{deletionEnabled}}" class="dock-action dock-delete" bindtap="requestSelectedDeletion" disabled="{{busy || saving || infoLoading || hdLoading || !connected || !selectedCount}}">申请删除</button>
+ </block>
   <block wx:else>
-    <button class="dock-item active" bindtap="closeConnection"><view class="album-icon"><view></view></view><text>相册</text></button>
-    <button class="dock-item" bindtap="openConnection"><view class="computer-icon"><view></view></view><text>连接</text></button>
+    <button class="dock-item {{!inspirationOpen && !myOpen ? 'active' : ''}}" bindtap="openAlbum"><view class="album-icon"><view></view></view><text>相册</text></button>
+    <button class="dock-item {{inspirationOpen ? 'active' : ''}}" bindtap="openInspiration"><view class="inspiration-icon">✧</view><text>灵感</text></button>
+    <button class="dock-item {{myOpen ? 'active' : ''}}" bindtap="openMy"><view class="profile-icon"><view></view></view><text>我的</text></button>
   </block>
 </view>
 <page-container show="{{viewerOpen || connectionOpen}}" position="{{popupPosition}}" overlay="{{popupOverlay}}" round="{{popupRound}}" duration="{{popupDuration}}" close-on-slide-down="{{false}}" bindbeforeleave="popupLeaving" bindafterleave="popupLeft" custom-style="{{popupStyle}}">
+  <view wx:if="{{popupMode === 'inspirationEditor'}}" class="inspiration-editor-sheet">
+   <view class="sheet-grabber"></view>
+   <view class="sheet-heading"><text>{{inspirationDraft.title ? '编辑灵感' : '记录灵感'}}</text><button class="sheet-close" bindtap="cancelInspirationEdit" disabled="{{inspirationBusy}}" aria-label="收起编辑">×</button></view>
+   <scroll-view scroll-y="{{true}}" class="editor-scroll">
+    <view class="editor-section"><text class="field-label">分享码</text><view class="editor-caption">把心动的搭配和染色留在这里</view>
+     <picker range="{{['染色码','搭配码','待识别']}}" value="{{inspirationTypeIndex}}" bindchange="inspirationTypeChanged"><view class="inspiration-field">{{['染色码','搭配码','待识别'][inspirationTypeIndex]}}<text>切换 ›</text></view></picker>
+     <textarea class="inspiration-code-input" value="{{inspirationDraft.code}}" data-field="code" bindinput="inspirationInput" maxlength="600" placeholder="粘贴分享码或玩家分享的文字" adjust-position="{{true}}" />
+     <button class="paste-action" bindtap="pasteInspiration" disabled="{{inspirationBusy}}">粘贴并识别分享码</button>
+    </view>
+    <view class="editor-section"><text class="field-label">标题</text><input class="form-input" value="{{inspirationDraft.title}}" data-field="title" bindinput="inspirationInput" maxlength="100" placeholder="给这份灵感起个名字（选填）" /></view>
+    <view class="editor-section"><text class="field-label">分类</text><input class="form-input" value="{{inspirationDraft.categories}}" data-field="categories" bindinput="inspirationInput" maxlength="120" placeholder="例如：日常、童话、舞台" />
+     <picker range="{{inspirationStatusNames}}" value="{{inspirationStatusIndex}}" bindchange="inspirationStatusChanged"><view class="inspiration-field">{{inspirationStatusNames[inspirationStatusIndex]}}<text>状态 ›</text></view></picker>
+    </view>
+    <view class="editor-caption">保存后可在卡片的“更多”中添加参考图。</view><view class="inspiration-message">{{inspirationMessage}}</view>
+   </scroll-view>
+   <view class="editor-footer"><button class="secondary-action" bindtap="cancelInspirationEdit" disabled="{{inspirationBusy}}">取消</button><button class="primary-action" bindtap="saveInspiration" disabled="{{inspirationBusy}}" loading="{{inspirationBusy}}">保存灵感</button></view>
+  </view>
   <view wx:if="{{popupMode === 'connection'}}" class="connection-sheet">
     <view class="sheet-grabber"></view>
     <view class="sheet-heading"><text>我的电脑</text><button class="sheet-close" bindtap="closeConnection" aria-label="关闭连接面板">×</button></view>
     <view class="connection-card glass-surface">
-      <view class="sheet-state"><view class="status-dot {{connected ? 'online' : ''}}"></view>{{busy ? '正在载入' : connected ? '电脑已连接' : '等待连接'}}</view>
-      <view class="sheet-caption">{{connected ? total + ' 张照片可浏览' : '在同一 Wi-Fi 下扫码连接'}}</view>
+      <view class="sheet-state"><view class="status-dot {{connected ? 'online' : ''}}"></view>{{busy ? '正在连接' : connected ? '电脑已连接' : '等待连接'}}</view>
+      <view class="sheet-caption">{{connected ? total + ' 张照片' : '手机与电脑需连接同一 Wi-Fi'}}</view>
     </view>
-    <view class="sheet-message">{{message}}</view>
-    <button class="primary-action" bindtap="scanPc" disabled="{{busy || saving || infoLoading || hdLoading}}" loading="{{busy}}">{{connected ? '扫描新的浏览码' : '扫码连接电脑'}}</button>
-    <view class="privacy-title">只在你的电脑与手机之间</view>
-    <view class="privacy-copy">照片不上传云端。浏览码包含临时密钥，请勿转发；退出或过期后需要电脑生成新码。</view>
-    <view class="privacy-copy">普通照片可直接保存；Live 可播放并导出 .livp 文件，由你选择转发和导入。原图与视频不改写，界面只显示已解析的拍摄与服装信息。</view>
-    <view class="save-preference"><view><text>保存时附带拍摄参数</text><text class="preference-caption">JPEG 写入 Momo Camera 与游戏参数，不改电脑原图。PNG 暂不写入 EXIF。</text></view><switch checked="{{writeExif}}" bindchange="toggleExif" disabled="{{saving}}" color="#D780AA" /></view>
-    <button class="motion-preference" bindtap="toggleReducedMotion" aria-label="切换减少动态效果">{{reduceMotion ? '✓ 已减少动态效果' : '减少动态效果'}}</button>
+    <view wx:if="{{message}}" class="sheet-message">{{message}}</view>
+    <view wx:if="{{connectionDiagnostic}}" class="connection-diagnostic">连接诊断 {{connectionDiagnostic}}</view>
+    <button class="primary-action" bindtap="scanPc" disabled="{{busy || saving || infoLoading || hdLoading}}" loading="{{busy}}">{{connected ? '重新扫码' : '扫码连接电脑'}}</button>
+    <view class="privacy-copy">请勿转发连接二维码。连接码过期后，请在电脑重新生成。</view>
   </view>
   <view wx:if="{{popupMode === 'viewer'}}" class="viewer {{reduceMotion ? 'reduce-motion' : ''}}" bindtap="toggleViewerChrome">
     <view class="viewer-backdrop" data-frame="{{viewerFrames[0].key}}"></view>
     <block wx:for="{{viewerFrames}}" wx:key="key">
-      <view class="photo-stage" data-frame="{{item.key}}" data-blocked="{{busy || saving || infoLoading || infoOpen || viewerClosing}}" motion="{{ {frame:item.key, phase:viewerPhase, settle:viewerSettle, reduced:reduceMotion} }}" change:motion="{{motion.photoState}}">
-      <movable-area class="zoom-area" data-frame="{{item.key}}" data-image="{{true}}" data-reduced="{{reduceMotion}}" scale-area="{{true}}" bindtouchstart="{{motion.photoStart}}" bindtouchmove="{{motion.photoMove}}" bindtouchend="{{motion.photoEnd}}" bindtouchcancel="{{motion.photoEnd}}">
+      <view class="photo-stage" data-frame="{{item.key}}" data-blocked="{{busy || saving || infoLoading || infoOpen || viewerClosing}}" motion="{{ {frame:item.key, phase:viewerPhase, settle:viewerSettle, reduced:reduceMotion, initialScale:item.initialScale} }}" change:motion="{{motion.photoState}}">
+      <view class="photo-viewport" data-frame="{{item.key}}">
+      <movable-area class="zoom-area" data-frame="{{item.key}}" data-image="{{true}}" data-reduced="{{reduceMotion}}" scale-area="{{true}}" catchtap="viewerPhotoTap" bindtouchstart="{{motion.photoStart}}" bindtouchmove="{{motion.photoMove}}" bindtouchend="{{motion.photoEnd}}" bindtouchcancel="{{motion.photoEnd}}">
         <movable-view class="zoom-image" data-frame="{{item.key}}" direction="all" scale="{{true}}" scale-min="{{1}}" scale-max="{{6}}" scale-value="{{item.initialScale}}" bindscale="{{motion.photoScale}}" x="{{0}}" y="{{0}}" animation="{{false}}">
           <view class="rotation-stage" style="width:{{rotationWidth}}px;height:{{rotationHeight}}px;transform:translate3d(-50%,-50%,0) rotate({{viewerRotation}}deg)">
-          <image wx:if="{{viewerPreviewPath}}" src="{{viewerPreviewPath}}" mode="aspectFit" />
+          <image wx:if="{{viewerPreviewPath}}" src="{{viewerPreviewPath}}" data-frame="{{item.key}}" data-path="{{viewerPreviewPath}}" mode="aspectFit" bindload="viewerImageLoaded" />
           <image wx:if="{{viewerOriginalPath}}" class="original-layer {{originalReady ? 'ready' : ''}}" src="{{viewerOriginalPath}}" data-path="{{viewerOriginalPath}}" mode="aspectFit" bindload="originalLoaded" binderror="originalFailed" />
           </view>
         </movable-view>
       </movable-area>
+      </view>
       </view>
     </block>
     <video wx:if="{{livePlaying && livePath}}" id="live-player" class="live-player" src="{{livePath}}" data-path="{{livePath}}" poster="{{viewerPreviewPath}}" object-fit="contain" autoplay="{{true}}" controls="{{true}}" show-fullscreen-btn="{{false}}" binderror="livePlaybackFailed" catchtap="swallowTap" />
@@ -123,26 +152,28 @@
         <button wx:if="{{selectionMode}}" bindtap="toggleViewedSelection" disabled="{{busy || saving}}">{{viewerSelected ? '✓ 已选中' : '选择这张'}}</button>
         <button bindtap="nextPhoto" disabled="{{busy || saving || infoLoading || infoOpen || viewerPosition >= total}}" aria-label="下一张照片">›</button>
       </view>
-      <button wx:if="{{viewerLive}}" bindtap="playLive" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">{{livePlaying ? '返回封面' : '播放 Live'}}</button>
-      <button class="viewer-save" bindtap="saveViewed" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}" loading="{{saving}}">{{viewerLive ? (livePackPath ? '转发 .livp 文件' : '导出 Live 封包') : viewerRotation ? '保存旋转照片' : writeExif && exportEnabled && viewerMime === 'image/jpeg' ? '保存带参数照片' : '保存原图'}}</button>
-      <button bindtap="showPhotoInfo" disabled="{{infoLoading || hdLoading}}">参数</button>
-      <button bindtap="generateShareCard" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">生成分享图</button>
-      <button wx:if="{{!viewerLive}}" bindtap="rotatePhoto" disabled="{{busy || saving || infoLoading || hdLoading || infoOpen || !exportEnabled}}" aria-label="顺时针旋转九十度">旋转 ↻</button>
+      <button wx:if="{{viewerLive}}" bindtap="playLive" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">{{livePlaying ? (viewerVideo ? '停止播放' : '返回封面') : viewerVideo ? '播放视频' : '播放动态视频'}}</button>
+      <view class="viewer-dock">
+        <button bindtap="rotatePhoto" disabled="{{busy || saving || infoLoading || hdLoading || infoOpen || !exportEnabled}}" aria-label="顺时针旋转九十度">旋转</button>
+        <button class="viewer-save" bindtap="saveViewed" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}" loading="{{saving}}">保存</button>
+        <button bindtap="generateShareCard" disabled="{{viewerVideo || busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">分享</button>
+        <button bindtap="showPhotoInfo" disabled="{{viewerVideo || infoLoading || hdLoading}}">详情</button>
+      </view>
+      <button wx:if="{{deletionEnabled}}" class="delete-action" bindtap="requestViewedDeletion" disabled="{{busy || saving || infoLoading || hdLoading || !connected}}">申请删除</button>
+      <button wx:if="{{deletionItems.length && connected}}" bindtap="cancelAllDeletions" disabled="{{saving}}">取消待处理申请</button>
+      <text wx:if="{{deletionMessage}}" class="viewer-deletion-note" aria-live="polite">{{deletionMessage}}</text>
       <button wx:if="{{viewerRotation}}" bindtap="restoreRotation" disabled="{{busy || saving || infoLoading || hdLoading || infoOpen}}">还原</button>
       <button wx:if="{{saving}}" bindtap="stopSaving" disabled="{{saveStopping}}">{{saveStopping ? '正在停止…' : '停止保存'}}</button>
       <button wx:if="{{!saving && retryCount}}" bindtap="retryUnfinished" disabled="{{busy || infoLoading || hdLoading || !downloadEnabled || !connected}}">重试 {{retryCount}} 张</button>
       <view wx:if="{{saving || saveMessage}}" class="viewer-save-message">{{saveMessage}}</view>
-      <view class="zoom-hint">{{hdLoading ? '正在加载高清原图…' : hdMessage || '左右切图 · 双指放大 · 下拉返回'}}</view>
+      <view class="zoom-hint">{{hdLoading ? '正在加载高清原图…' : hdMessage || '左右切图 · 双击放大 · 下拉返回'}}</view>
     </view>
     </view>
     <view wx:if="{{infoMounted}}" class="info-backdrop" data-frame="{{viewerFrames[0].key}}" catchtap="closeInfo" catchtouchmove="swallowTap"></view>
-    <view wx:if="{{infoMounted}}" class="photo-info glass-surface {{infoExpanded ? 'info-expanded' : ''}}" data-frame="{{viewerFrames[0].key}}" data-info-frame="{{infoFrame}}" data-open="{{infoOpen}}" motion="{{ {frame:viewerFrames[0].key, key:infoFrame, phase:infoPhase, expanded:infoExpanded, settle:infoSettle, reduced:reduceMotion} }}" change:motion="{{motion.sheetState}}" catchtap="swallowTap">
+    <view wx:if="{{infoMounted}}" class="photo-info glass-surface {{infoExpanded ? 'info-expanded' : ''}}" data-frame="{{viewerFrames[0].key}}" data-info-frame="{{infoFrame}}" data-open="{{infoOpen}}" motion="{{ {frame:viewerFrames[0].key, key:infoFrame, phase:infoPhase, expanded:infoExpanded, settle:infoSettle, reduced:reduceMotion, height:windowHeight, width:windowWidth, imageWidth:viewerImageWidth, imageHeight:viewerImageHeight, rotation:viewerRotation} }}" change:motion="{{motion.sheetState}}" catchtap="swallowTap">
       <view class="info-handle-zone" catchtouchstart="{{motion.sheetStart}}" catchtouchmove="{{motion.sheetMove}}" catchtouchend="{{motion.sheetEnd}}" catchtouchcancel="{{motion.sheetEnd}}" catchtap="toggleInfoSize" data-frame="{{viewerFrames[0].key}}" data-info-frame="{{infoFrame}}" data-expanded="{{infoExpanded}}" data-reduced="{{reduceMotion}}" data-height="{{windowHeight}}" aria-label="上拉展开参数，下拉收起"><view class="sheet-grabber"></view></view>
-      <view class="info-heading"><text>照片参数</text><view class="info-header-actions"><button bindtap="toggleInfoSize">{{infoExpanded ? '收起' : '展开'}}</button><button bindtap="closeInfo" aria-label="关闭参数">×</button></view></view>
-      <button class="share-entry" bindtap="generateShareCard" disabled="{{busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">生成穿搭与参数分享图</button>
+      <view class="info-heading"><text>穿搭与参数</text><view class="info-header-actions"><button bindtap="toggleInfoSize">{{infoExpanded ? '收起' : '展开'}}</button><button bindtap="closeInfo" aria-label="关闭参数">×</button></view></view>
       <scroll-view scroll-y="{{true}}" class="info-scroll">
-        <view class="info-note">{{infoMessage}}</view>
-        <view class="info-row" wx:for="{{infoRows}}" wx:key="label" wx:if="{{!(outfitTotal && item.label === '服装')}}"><text>{{item.label}}</text><text>{{item.value}}</text></view>
         <view wx:if="{{outfitItems.length}}" class="outfit-title">本次穿搭 <text>{{outfitTotal}} 件</text></view>
         <view class="outfit-grid">
           <view wx:for="{{outfitItems}}" wx:key="key" class="outfit-card">
@@ -150,27 +181,66 @@
               <image wx:if="{{item.iconPath}}" class="outfit-icon" src="{{item.iconPath}}" mode="aspectFit" data-key="{{item.key}}" data-path="{{item.iconPath}}" binderror="outfitIconFailed" />
               <view wx:else class="outfit-placeholder">{{item.iconState}}</view>
             </view>
-            <view class="outfit-name">{{item.name}}</view>
-            <view wx:if="{{item.iconSource === 'category'}}" class="outfit-fallback">分类示意</view>
+            <view class="outfit-labels"><view class="outfit-name">{{item.name}}</view><view wx:if="{{item.iconSource === 'category'}}" class="outfit-fallback">分类示意</view></view>
           </view>
         </view>
-        <view wx:if="{{outfitTotal > 6}}" class="outfit-pagination"><button bindtap="previousOutfit" disabled="{{infoLoading || outfitOffset === 0}}">上一组</button><text>{{outfitOffset + 1}}–{{outfitOffset + outfitItems.length}} / {{outfitTotal}}</text><button bindtap="nextOutfit" disabled="{{infoLoading || outfitNext === null}}">下一组</button></view>
         <view wx:if="{{outfitNote}}" class="info-note">{{outfitNote}}</view>
-        <view class="info-note">参数来自电脑已有解析结果。开启“保存时附带拍摄参数”可写入标准 EXIF；微信保存后是否保留，仍需在系统相册核对。</view>
+        <view wx:if="{{!outfitItems.length}}"><view class="info-row" wx:for="{{infoRows}}" wx:key="label" wx:if="{{item.label === '服装' || item.label === '服装名称'}}"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+        <view wx:if="{{infoRows.length}}" class="detail-section-title">拍摄参数</view>
+        <view class="parameter-grid"><view class="info-row" wx:for="{{infoRows}}" wx:key="label" wx:if="{{item.label !== '服装' && item.label !== '服装名称'}}"><text>{{item.label}}</text><text>{{item.value}}{{item.label === '焦距' ? ' mm' : ''}}</text></view></view>
+        <view class="info-note">{{selectedDate}} · {{infoMessage}}</view>
       </scroll-view>
+      <button class="share-entry" bindtap="generateShareCard" disabled="{{viewerVideo || busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">生成分享图</button>
     </view>
     <view wx:if="{{shareOpen}}" class="share-overlay" catchtap="swallowTap" catchtouchmove="swallowTap">
       <view class="share-heading"><text>穿搭与参数分享图</text><button bindtap="closeShareCard" disabled="{{shareSaving}}" aria-label="关闭分享图">×</button></view>
-      <scroll-view scroll-y="{{true}}" class="share-preview">
-        <image wx:if="{{sharePath}}" src="{{sharePath}}" mode="widthFix" class="share-preview-image" />
+      <scroll-view scroll-y="{{true}}" class="share-preview {{sharePreviewHeight ? 'share-preview-sized' : ''}}" style="{{sharePreviewHeight ? 'height:' + sharePreviewHeight + 'px' : ''}}">
+        <image wx:if="{{sharePath}}" src="{{sharePath}}" mode="widthFix" class="share-preview-image" data-path="{{sharePath}}" bindload="sharePreviewLoaded" />
         <view wx:else class="share-placeholder">{{shareMessage}}</view>
       </scroll-view>
       <view class="share-status">{{shareMessage}}</view>
       <view wx:if="{{shareCount > 1}}" class="share-pagination"><button bindtap="previousShareCard" disabled="{{shareSaving || shareIndex === 0}}">上一张</button><text>{{shareIndex + 1}} / {{shareCount}}</text><button bindtap="nextShareCard" disabled="{{shareSaving || shareIndex + 1 >= shareCount}}">下一张</button></view>
-      <button class="share-save" bindtap="saveGeneratedShareCard" loading="{{shareSaving}}" disabled="{{shareBusy || shareSaving || !sharePath}}">保存{{shareCount > 1 ? '这张' : '分享图'}}到相册</button>
+      <view wx:if="{{sharePath}}" class="share-actions">
+        <button class="share-save share-save-single" bindtap="saveGeneratedShareCard" disabled="{{shareBusy || shareSaving}}"><text class="share-action-label">保存分享图</text></button>
+        <button class="share-save" bindtap="saveOriginalAndShareCard" disabled="{{shareBusy || shareSaving || !connected}}"><text class="share-action-label">保存原图和分享图</text></button>
+      </view>
       <button wx:if="{{!shareBusy && !sharePath}}" bindtap="generateShareCard">重新生成</button>
       <button wx:if="{{permissionDenied && !shareSaving}}" bindtap="openAlbumSettings">打开相册权限设置</button>
     </view>
     <canvas type="2d" id="share-card-canvas" class="share-render-canvas" />
   </view>
 </page-container>
+<view wx:if="{{inspirationOpen}}" class="inspiration-page">
+ <view class="inspiration-heading"><text class="title">穿搭灵感</text><button class="small-round-action" bindtap="refreshInspiration" disabled="{{inspirationBusy}}" aria-label="刷新灵感库">↻</button></view>
+ <view class="page-subtitle">收藏心动搭配，留待下一次相遇</view>
+ <button class="inspiration-create glass-surface" bindtap="editInspiration" disabled="{{inspirationBusy}}"><view class="create-symbol">＋</view><view><text>记录一份新灵感</text><text class="card-caption">搭配码 · 染色码 · 参考图片</text></view><text class="row-chevron">›</text></button>
+ <view class="inspiration-message" aria-live="polite">{{inspirationMessage}}</view>
+ <view wx:if="{{!inspirationItems.length && !inspirationBusy}}" class="inspiration-empty"><text>✧</text><view>你的下一套搭配，从这里开始</view><view class="card-caption">收藏分享码，再添加参考图</view></view>
+ <view class="inspiration-grid">
+  <view wx:for="{{inspirationItems}}" wx:key="id" class="inspiration-card glass-surface">
+   <view class="inspiration-cover" bindtap="viewInspirationImage" data-id="{{item.id}}">
+    <image wx:if="{{item.coverPath}}" src="{{item.coverPath}}" mode="aspectFit"/><text wx:else>{{item.images.length ? '点击查看参考图' : '✧'}}</text><text wx:if="{{item.images.length > 1}}" class="reference-count">{{item.images.length}} 张</text>
+   </view>
+   <view class="inspiration-card-body"><view class="inspiration-tags"><text>{{item.type === 'dye' ? '染色' : '搭配'}}</text><text>{{item.statusLabel}}</text></view><view class="inspiration-title">{{item.title || '未命名灵感'}}</view><view class="inspiration-code">{{item.code}}</view>
+   <view class="inspiration-actions"><button class="copy-code" bindtap="copyInspiration" data-id="{{item.id}}" disabled="{{!item.code}}">复制分享码</button><button class="more-code" bindtap="inspirationOptions" data-id="{{item.id}}" disabled="{{inspirationBusy}}" aria-label="管理这条灵感">•••</button></view></view>
+  </view>
+ </view>
+ <button wx:if="{{inspirationNext}}" class="secondary-action" bindtap="moreInspiration" disabled="{{inspirationBusy}}">下一页灵感</button>
+</view>
+<view wx:if="{{myOpen}}" class="my-page">
+ <view class="heading-row"><text class="title">我的</text><button class="connection-pill glass-surface" bindtap="openConnection"><view class="status-dot {{connected ? 'online' : ''}}"></view>{{connected ? '电脑已连接' : '连接电脑'}} ›</button></view>
+ <view class="page-subtitle">让每一张分享都有你的名字</view>
+ <view class="profile-card glass-surface"><view class="profile-avatar">{{profileInitial || '喵'}}</view><view><view class="profile-card-name">{{profileSavedName || '搭配师'}}</view><view class="card-caption">{{profileSavedUid ? 'UID ' + profileSavedUid : '填写你的摄影名片'}}</view></view></view>
+ <view class="my-section glass-surface"><view class="section-title">摄影名片</view><view class="card-caption">用于这台手机的分享图署名</view>
+  <text class="field-label">昵称</text><input class="form-input" value="{{profileName}}" data-field="profileName" bindinput="profileInput" maxlength="32" placeholder="游戏内的名字" />
+  <text class="field-label">游戏 UID</text><input class="form-input" type="number" value="{{profileUid}}" data-field="profileUid" bindinput="profileInput" maxlength="20" placeholder="填写你的游戏 UID（选填）" />
+  <view class="watermark-preview"><text>{{profileTitle}}</text><text>{{profileFooter}}</text></view>
+  <button class="primary-action" bindtap="saveProfile">保存名片</button><button wx:if="{{profileSavedUid || profileSavedName}}" class="clear-profile" bindtap="clearProfile">清除名片</button><view wx:if="{{profileMessage}}" class="card-caption" aria-live="polite">{{profileMessage}}</view>
+ </view>
+ <button class="my-inspiration glass-surface" bindtap="openInspiration" disabled="{{!connected || busy || saving}}"><view class="create-symbol">✧</view><view><text>穿搭灵感库</text><text class="card-caption">收藏搭配、染色与参考图</text></view><text class="row-chevron">›</text></button>
+ <view class="my-section glass-surface"><view class="section-title">保存到相册</view><view class="save-preference"><view><text>附带拍摄参数</text><text class="preference-caption">保留游戏参数与原始拍摄时间</text></view><switch checked="{{writeExif}}" bindchange="toggleExif" disabled="{{saving}}" color="#D780AA" /></view>
+  <view class="preference-caption">仅 JPEG 照片支持附带参数</view>
+  <view class="save-location-note">保存位置由微信和手机系统管理，暂不支持选择文件夹。照片可能按拍摄时间归档，可在系统相册的“最近添加”中查看。</view>
+ </view>
+ <view class="my-section glass-surface"><view class="section-title">显示设置</view><view class="save-preference"><view><text>减少动态效果</text></view><switch checked="{{reduceMotion}}" bindchange="toggleReducedMotion" color="#D780AA" /></view></view>
+</view>

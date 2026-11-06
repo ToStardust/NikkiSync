@@ -14,6 +14,12 @@ function createLiveCache(wxApi){
    const finish=ok=>{if(settled)return;settled=true;copy.fill(0);if(!ok||current!==epoch){remove(path);done(null);}else done(path);};
    try{wxApi.getFileSystemManager().writeFile({filePath:path,data:copy.buffer,success:()=>finish(true),fail:()=>finish(false)});}catch(_){finish(false);}
   },
+  saveVideo(path,done){
+   if(!files.has(path)||!path.endsWith('.mp4')||pinned.has(path)||typeof wxApi.saveVideoToPhotosAlbum!=='function'){done({status:'failed'});return;}
+   pinned.add(path);let settled=false;
+   const finish=(status,error)=>{if(settled)return;settled=true;pinned.delete(path);if(!files.has(path))remove(path);done({status,permissionDenied:/auth|deny|permission/i.test(error?.errMsg||'')});};
+   try{wxApi.saveVideoToPhotosAlbum({filePath:path,success:()=>finish('saved'),fail:error=>finish(/cancel/i.test(error?.errMsg||'')?'cancelled':'failed',error)});}catch(error){finish('failed',error);}
+  },
   share(path,done){
    if(!files.has(path)||!path.endsWith('.livp')||typeof wxApi.shareFileMessage!=='function'){done({status:'unsupported'});return;}
    pinned.add(path);let settled=false;

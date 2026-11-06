@@ -12,8 +12,8 @@ test('whole-snapshot clothing search/date/version filters combine, without searc
  assert.equal(found.total,1);assert.equal(found.items[0].id,'a');assert.equal(browseSnapshot(records,0,{text:'PRIVATE'}).total,0);
  assert.equal(browseSnapshot(records,0,{text:'星光裙'}).total,2);assert.equal(browseSnapshot(records,0,{version:'unknown'}).total,1);
 });
-test('version sorting is numeric, paging stays stable and local-day filters respect timezone boundaries',async()=>{
- const {browseSnapshot}=await load();assert.deepEqual(browseSnapshot(records,0,{}).items.map(x=>x.id),['b','a','c','d']);
+test('version groups preserve newest-first first appearance, paging stays stable and local-day filters respect timezone boundaries',async()=>{
+ const {browseSnapshot}=await load();assert.deepEqual(browseSnapshot(records,0,{}).items.map(x=>x.id),['a','b','c','d']);
  const many=Array.from({length:25},(_,n)=>({...records[0],id:String(n),date:new Date(Date.UTC(2026,8,1,n)).toISOString()}));
  const first=browseSnapshot(many,0,{}),second=browseSnapshot(many,12,{});assert.equal(first.next,12);assert.equal(second.offset,12);assert.equal(second.items.length,12);
  const edge=[{...records[0],date:'2026-09-01T17:00:00.000Z'}];assert.equal(browseSnapshot(edge,0,{from:'2026-09-02',to:'2026-09-02',offsetMinutes:480}).total,1);

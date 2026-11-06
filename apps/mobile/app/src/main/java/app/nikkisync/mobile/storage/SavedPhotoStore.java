@@ -102,6 +102,10 @@ public final class SavedPhotoStore {
         records.sort(Comparator.comparingLong(Record::savedAt).reversed());return records;
     }
     public synchronized void removeUri(String uri){List<Record> next=load();next.removeIf(record->uri.equals(record.uri()));save(next,false);}
+    public synchronized void removeIfUnchanged(Record expected){
+        List<Record> next=load();
+        if(next.removeIf(record->record.uri().equals(expected.uri())&&record.assetId().equals(expected.assetId())&&record.savedAt()==expected.savedAt()))save(next,false);
+    }
     private void save(List<Record> records,boolean durable) {
         JSONArray rows=new JSONArray();
         for(Record record:records){JSONObject row=new JSONObject();try{

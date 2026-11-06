@@ -29,6 +29,7 @@ export interface DesktopControlServerConfig {
   createPairingUri(): string
   qrSvg(uri: string): Promise<string>
   brandImage?: Buffer
+  wechatEntryImage?: Buffer
   wechatGallery?: {
     start(): Promise<WeChatGalleryStatus & {qrSvg:string}>
     stop(): Promise<void>
@@ -213,6 +214,9 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
       const safe=text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
       response.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"})
       response.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>大喵相机助手 · 政策说明</title><style>body{background:#fff4f8;color:#59475e;font:16px/1.8 sans-serif;margin:32px auto;padding:24px;max-width:900px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}</style><pre>'+safe+'</pre></html>');return
+    }
+    if(requestUrl.pathname==='/wechat-entry.png' && request.method==='GET' && config.wechatGallery && config.wechatEntryImage){
+      response.writeHead(200,{'content-type':'image/png','cache-control':'no-store','x-content-type-options':'nosniff'});response.end(config.wechatEntryImage);return
     }
     if(requestUrl.pathname==='/brand.png' && request.method==='GET' && config.brandImage){
       response.writeHead(200,{'content-type':'image/png','cache-control':'no-store','x-content-type-options':'nosniff'});response.end(config.brandImage);return

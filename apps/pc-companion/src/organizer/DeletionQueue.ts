@@ -60,6 +60,7 @@ export class DeletionQueue {
     db.connection.prepare("UPDATE organizer_deletions SET state='failed',message='上次处理被中断，请检查回收站后重新选择',lease=0 WHERE state='executing'").run()
     db.connection.prepare("UPDATE organizer_deletions SET state='pending',approval='',message='电脑重启，请重新确认',lease=0 WHERE state IN ('confirming','queued','checking')").run()
     db.connection.prepare("UPDATE organizer_deletions SET lease=0 WHERE state='preparing'").run()
+    db.connection.prepare("UPDATE organizer_deletions SET state='cancelled',approval='',lease=0,message='小程序连接已结束，请重新选择' WHERE device LIKE 'wechat:%' AND state IN ('preparing','pending','confirming','queued','checking')").run()
   }
   private lock<T>(work:()=>Promise<T>):Promise<T>{const next=this.serial.then(work);this.serial=next.catch(()=>{});return next}
   activity(){return {...this.metrics,queued:this.jobs.size,active:this.inFlight.size}}
@@ -196,6 +197,13 @@ export class DeletionQueue {
     if(!Array.isArray(ids)||!ids.length||ids.length>500||ids.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9-]{16,64}$/.test(id)))throw new Error('invalid_ids')
     this.db.transaction(()=>{if(allFailures)this.db.connection.prepare("UPDATE organizer_deletions SET dismissed=1 WHERE state IN ('changed','failed')").run();else for(const id of new Set(ids))this.db.connection.prepare("UPDATE organizer_deletions SET dismissed=1 WHERE id=? AND state IN ('changed','failed','recycled','cancelled','rejected')").run(id)})
     return {items:this.list()}
+  })}
+  async cancelTransientSession(device:string){return this.lock(async()=>{
+    if(!/^wechat:[a-f0-9-]{36}$/.test(device))throw new Error('invalid_session')
+    for(const row of this.db.connection.prepare("SELECT id FROM organizer_deletions WHERE device=? AND state IN ('preparing','pending','confirming','queued','checking')").all(device)){
+      this.finish(String(row.id),'cancelled','小程序连接已结束，尚未执行的申请已取消');this.jobs.delete(String(row.id))
+    }
+    this.db.connection.prepare('UPDATE organizer_deletions SET lease=0 WHERE device=?').run(device)
   })}
   private pauseIfOffline(row:Row){
     const latest=this.row(row.id)

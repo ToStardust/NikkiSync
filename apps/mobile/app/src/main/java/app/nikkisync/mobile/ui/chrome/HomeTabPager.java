@@ -22,6 +22,8 @@ public final class HomeTabPager extends FrameLayout {
     private int selected,neighbor=-1;
     private float downX,downY,delta;
     private boolean dragging,blocked;
+    private boolean selectionActive;
+    public void setSelectionActive(boolean active) { selectionActive = active; }
     private VelocityTracker velocity;
     private ValueAnimator animation;
     public HomeTabPager(Context context,IntConsumer selectedTab,IntConsumer prepareTab){
@@ -56,7 +58,7 @@ public final class HomeTabPager extends FrameLayout {
     }
     private void begin(MotionEvent event){
         interrupt();downX=event.getX();downY=event.getY();delta=0;
-        blocked=downX<edge||downX>getWidth()-edge||event.getPointerCount()!=1;
+        blocked=selectionActive||downX<edge||downX>getWidth()-edge||event.getPointerCount()!=1;
         if(!blocked){velocity=VelocityTracker.obtain();velocity.addMovement(event);}
     }
     private boolean detect(MotionEvent event){

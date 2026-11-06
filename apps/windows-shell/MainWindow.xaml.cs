@@ -628,15 +628,20 @@ public partial class MainWindow : Window
         }
         var home=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>({
             guideVisible:document.querySelector('#first-use-title')?.getClientRects().length>0,
-            wechatHidden:!document.querySelector('#wechat-start')&&!document.querySelector('#wechat-modal'),
+            wechatReady:document.body.dataset.wechatEnabled==='true'
+                ? document.querySelector('#wechat-start')?.getClientRects().length>0&&document.querySelector('#wechat-modal')?.hidden===true&&typeof document.querySelector('#wechat-start')?.onclick==='function'
+                : !document.querySelector('#wechat-start')&&!document.querySelector('#wechat-modal'),
             installerVisible:!document.querySelector('#android-installer').hidden,
-            shortcutsInView:['#android-installer','#open-network-settings','#open-scan-settings'].every(selector=>{const rect=document.querySelector(selector).getBoundingClientRect();return rect.height>=40&&rect.top>=0&&rect.bottom<=window.innerHeight;}),
+            entryCodeReady:document.body.dataset.wechatEnabled!=='true'||(document.querySelector('#wechat-entry-code')?.open===true&&document.querySelector('#wechat-entry-image')?.naturalWidth===800),
+            helpCollapsed:document.querySelector('.first-use-guide')?.open===false,
             noHorizontalOverflow:document.documentElement.scrollWidth<=window.innerWidth
         }))()");
         using var homeState=JsonDocument.Parse(home);
         if(homeState.RootElement.EnumerateObject().Any(item=>item.Value.ValueKind!=JsonValueKind.True))return false;
         using(var image=File.Create(Path.Combine(_verificationDirectory,"first-use-home-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
         var shortcuts=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>{
+            document.querySelector('#first-use-title').click();
+            const helpExpanded=document.querySelector('.first-use-guide').open&&['#android-installer','#open-network-settings','#open-scan-settings'].every(selector=>document.querySelector(selector).getBoundingClientRect().height>=40);
             document.querySelector('#open-network-settings').click();
             const networkOpened=!document.querySelector('[data-page=settings]').hidden&&document.querySelector('#authorize-network').getClientRects().length>0;
             document.querySelector('[data-view=connect]').click();document.querySelector('#open-scan-settings').click();
@@ -644,7 +649,7 @@ public partial class MainWindow : Window
             document.querySelector('#scan-directory-help').click();const collapsed=document.querySelector('#scan-directory-guide').hidden;
             document.querySelector('#scan-directory-help').click();const expanded=!document.querySelector('#scan-directory-guide').hidden&&document.querySelector('#scan-directory-help').getAttribute('aria-expanded')==='true';
             document.querySelector('#extra-scan-section').scrollIntoView({block:'start'});
-            return {networkOpened,scanOpened,collapsed,expanded};
+            return {helpExpanded,networkOpened,scanOpened,collapsed,expanded};
         })()");
         File.WriteAllText(Path.Combine(_verificationDirectory,"first-use-guide-verification.json"),"{\"home\":"+home+",\"shortcuts\":"+shortcuts+"}");
         using(var image=File.Create(Path.Combine(_verificationDirectory,"directory-guide-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);

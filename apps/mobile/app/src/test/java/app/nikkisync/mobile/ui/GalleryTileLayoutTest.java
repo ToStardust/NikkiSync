@@ -1,6 +1,7 @@
 package app.nikkisync.mobile.ui;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
 import android.view.View;
@@ -19,11 +20,13 @@ public final class GalleryTileLayoutTest {
         var activity=Robolectric.buildActivity(Activity.class).setup().get();
         GalleryAdapter adapter=new GalleryAdapter(activity,null,()->null,null);
         ViewGroup tile=(ViewGroup)adapter.onCreateViewHolder(new FrameLayout(activity),1).itemView;
-        tile.getChildAt(1).setVisibility(View.VISIBLE);
+        ViewGroup photoFrame=(ViewGroup)tile.getChildAt(0);
+        photoFrame.getChildAt(1).setVisibility(View.VISIBLE);
         checkWidths(tile,true);
-        View image=tile.getChildAt(0),selection=tile.getChildAt(1);
+        View image=photoFrame.getChildAt(0),selection=photoFrame.getChildAt(1);
         android.graphics.Outline photo=new android.graphics.Outline(),selected=new android.graphics.Outline();
-        image.getBackground().getOutline(photo);selection.getBackground().getOutline(selected);
+        assertTrue(photoFrame.getClipToOutline());
+        photoFrame.getBackground().getOutline(photo);selection.getBackground().getOutline(selected);
         assertEquals(photo.getRadius(),selected.getRadius(),.01f);
         assertEquals(image.getLeft(),selection.getLeft());assertEquals(image.getRight(),selection.getRight());
         assertEquals(image.getTop(),selection.getTop());assertEquals(image.getBottom(),selection.getBottom());
@@ -57,8 +60,10 @@ public final class GalleryTileLayoutTest {
             View image = tile.getChildAt(0);
             assertEquals("photo stays square", image.getMeasuredWidth(), image.getMeasuredHeight());
             if (selection) {
-                View overlay = tile.getChildAt(1);
-                assertEquals("selection bounds follow photo", image.getLayoutParams().height, overlay.getLayoutParams().height);
+                ViewGroup frame = (ViewGroup) image;
+                View pixels = frame.getChildAt(0), overlay = frame.getChildAt(1);
+                assertEquals("photo pixels fill the clipped tile", image.getWidth(), pixels.getWidth());
+                assertEquals("selection bounds follow photo", pixels.getLayoutParams().height, overlay.getLayoutParams().height);
             }
         }
     }

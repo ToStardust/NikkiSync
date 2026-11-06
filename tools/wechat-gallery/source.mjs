@@ -12,8 +12,9 @@ import {exportJpeg,exportMetadata} from './photo-export.mjs';
 import {rotatePng as defaultRotatePng} from './png-export.mjs';
 import {outfitDescriptors} from './outfit.mjs';
 import {exportLive as defaultExportLive} from './live-export.mjs';
+import { MAX_MOTION, rotateMotionVideo } from './motion-rotation.mjs';
+import {mediaFingerprint} from '../../apps/pc-companion/dist/src/server/MediaFingerprint.js';
 const MAX_SOURCE = 16777216, MAX_PREVIEW = 524288;
-const MAX_MOTION=100663296;
 function contained(path, root) { const rel = relative(root, path); return rel !== '' && !isAbsolute(rel) && rel !== '..' && !rel.startsWith('..\\') && !rel.startsWith('../'); }
 export function resizePreview(bytes) {
   return new Promise((resolve, reject) => {
@@ -27,7 +28,7 @@ export function resizePreview(bytes) {
     child.on('close', code => finish(code !== 0 || size < 4)); child.stdin.end(bytes);
   });
 }
-export async function createPreviewSource(resources, photoRoots, { resize = resizePreview, refreshResources,rotatePng=defaultRotatePng,loadIcon,exportLive=defaultExportLive } = {}) {
+export async function createPreviewSource(resources, photoRoots, { resize = resizePreview, refreshResources,rotatePng=defaultRotatePng,loadIcon,exportLive=defaultExportLive, motionFfmpeg } = {}) {
   if (!photoRoots.length) throw new Error('Invalid photo scope');
   const roots = await Promise.all(photoRoots.map(root => realpath(root))), identityKey = randomBytes(32);
   let snapshot = [];
@@ -35,9 +36,10 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
    if (!Array.isArray(resources) || resources.length > 500) throw new Error('Invalid photo scope');
    const next = [];
    for (const resource of resources) {
+    const video=resource.mimeType==='video/mp4';
     const canonical = await realpath(resource.sourcePath);
     if (!roots.some(root => contained(canonical, root)) || !/^[a-f0-9]{64}$/.test(resource.sha256)
-      || !Number.isSafeInteger(resource.sizeBytes) || resource.sizeBytes < 4 || resource.sizeBytes > MAX_SOURCE) throw new Error('Photo outside scope');
+      || !Number.isSafeInteger(resource.sizeBytes) || resource.sizeBytes < 4 || resource.sizeBytes > (video?MAX_MOTION:MAX_SOURCE)) throw new Error('Photo outside scope');
     const date = Date.parse(resource.capturedAt || '');
     // Stable only inside this session, never an exposed resource id, path or content hash.
     const id = createHmac('sha256', identityKey).update(JSON.stringify([canonical,resource.sha256])).digest('hex').slice(0,32);
@@ -48,9 +50,9 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
       if(!roots.some(root=>contained(canonical,root))||value.mimeType!=='video/mp4'||resource.mimeType!=='image/jpeg'||!Number.isSafeInteger(value.sizeBytes)||value.sizeBytes<16||value.sizeBytes+resource.sizeBytes>MAX_MOTION-131072||!/^[a-f0-9]{64}$/.test(value.sha256))throw new Error('Motion outside scope');
       motion={canonical,source:value.sourcePath,hash:value.sha256,size:value.sizeBytes,presentationUs:value.presentationUs};
     }
-    next.push({ id, date: Number.isFinite(date) ? new Date(date).toISOString() : '',...(motion?{motion}:{}),
-      canonical, source: resource.sourcePath, hash: resource.sha256, size: resource.sizeBytes,
-      mime: resource.mimeType || 'image/jpeg', player: playerMetadata(resource.metadata), metadata: safeMetadata({...resource.metadata,capture:{...resource.metadata?.capture,capturedAt:resource.metadata?.capture?.capturedAt??resource.capturedAt}}),outfit:outfitDescriptors(resource.metadata,identityKey) });
+    next.push({ id, date: Number.isFinite(date) ? new Date(date).toISOString() : '',...(motion?{motion}:{}),...(video?{video:true}:{}),
+      canonical, source: resource.sourcePath, hash: resource.sha256, size: resource.sizeBytes, deletionTarget:resource.deletionTarget,sortAt:resource.sortAt||resource.capturedAt||'',orderKey:resource.orderKey||id,
+      mime: resource.mimeType || 'image/jpeg', player: playerMetadata(resource.metadata), metadata: safeMetadata({...resource.metadata,capture:{...resource.metadata?.capture,capturedAt:resource.capturedAt??resource.metadata?.capture?.capturedAt}}),outfit:outfitDescriptors(resource.metadata,identityKey) });
    }
    return next;
   }
@@ -74,6 +76,7 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
   }
   return {
     get count() { return snapshot.length; },
+    deletionTarget(id){const record=snapshot.find(x=>x.id===id);if(!record?.deletionTarget)throw Error('Deletion unavailable');return {...record.deletionTarget};},
     async refresh() {
       if (refreshResources) {
         const next = await buildSnapshot(await refreshResources());
@@ -82,13 +85,13 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
     },
     list(offset) {
       if (!Number.isInteger(offset) || offset < 0 || offset > snapshot.length) throw new Error('Offset');
-      const items = snapshot.slice(offset, offset + 12).map(({ id, date,motion }) => ({ id, date,...(motion?{live:true}:{}) }));
+      const items = snapshot.slice(offset, offset + 12).map(({ id, date,motion,video }) => ({ id, date,...(motion?{live:true}:{}),...(video?{video:true}:{}) }));
       return { total: snapshot.length, offset, items, next: offset + items.length < snapshot.length ? offset + items.length : null };
     },
     browse(offset,query) {return browseSnapshot(snapshot,offset,query);},
-    outfit(id,offset=0){
+    outfit(id,offset=0,cacheKeys=false){
       const record=snapshot.find(x=>x.id===id);if(!record||!Number.isInteger(offset)||offset<0||offset>100)throw new Error('Outfit unavailable');
-      const items=record.outfit.slice(offset,offset+6).map(({key,name,hasIcon})=>({key,name,hasIcon:hasIcon&&typeof loadIcon==='function'}));
+      const items=record.outfit.slice(offset,offset+6).map(({key,name,hasIcon,cacheKey})=>({key,name,hasIcon:hasIcon&&typeof loadIcon==='function',...(cacheKeys&&hasIcon?{cacheKey}:{})}));
       return {offset,total:record.outfit.length,items,next:offset+items.length<record.outfit.length?offset+items.length:null};
     },
     async icon(id,key){
@@ -108,16 +111,23 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
       if(!options || typeof options.exif!=='boolean' || ![0,90,180,270].includes(options.rotation) || Object.keys(options).some(x=>!['exif','rotation'].includes(x)))throw new Error('Export options');
       const {bytes,record}=await readSource(id);
       try {
-        if(record.motion)throw new Error('Use Live export, never save only a cover');
         if(record.mime==='image/jpeg')return {image:exportJpeg(bytes,record.metadata,options),mime:record.mime,exifApplied:options.exif,rotation:options.rotation};
         if(record.mime==='image/png' && options.rotation===0)return {image:Buffer.from(bytes),mime:record.mime,exifApplied:false,rotation:0};
         if(record.mime==='image/png')return {image:await rotatePng(bytes,options.rotation),mime:record.mime,exifApplied:false,rotation:options.rotation};
         throw new Error('Export type unsupported');
       } finally {bytes.fill(0);}
     },
-    async motion(id){
-      const record=snapshot.find(x=>x.id===id);if(!record?.motion)throw new Error('Live unavailable');
-      const bytes=await readRecord(record.motion,MAX_MOTION);return {image:bytes,mime:'video/mp4'};
+    motionRotation: Boolean(motionFfmpeg),
+    async motion(id, rotation = 0) {
+      const record=snapshot.find(x=>x.id===id);if(!record?.motion&&!record?.video)throw new Error('Video unavailable');
+      if (rotation !== 0 && !motionFfmpeg) throw new Error('Video rotation unavailable');
+      const bytes = await readRecord(record.motion || record, MAX_MOTION);
+      if (rotation === 0) return { image: bytes, mime: 'video/mp4' };
+      try {
+        return { image: await rotateMotionVideo(bytes, rotation, motionFfmpeg), mime: 'video/mp4' };
+      } finally {
+        bytes.fill(0);
+      }
     },
     async live(id,options){
       if(!options||typeof options.exif!=='boolean'||options.rotation!==0||Object.keys(options).some(x=>!['exif','rotation'].includes(x)))throw new Error('Live rotation requires synchronized video processing');
@@ -138,7 +148,8 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
 }
 function safeMetadata(metadata){
  const safe=exportMetadata(metadata);
- return {identity:{...(safe.version?{gameVersion:safe.version}:{})},capture:{...(safe.capturedAt?{capturedAt:safe.capturedAt}:{})},camera:safe.camera,
+ const explicit=metadata?.identity?.gameVersion;
+ return {identity:{...(typeof explicit==='string'&&/^\d{1,3}(\.\d{1,3}){1,2}$/.test(explicit.trim())?{gameVersion:explicit.trim()}:{})},capture:{...(safe.capturedAt?{capturedAt:safe.capturedAt}:{})},camera:safe.camera,
   dressing:safe.dressing,...(safe.poseParameters?{pose:safe.poseParameters}:{}),...(safe.actionParameters?{action:safe.actionParameters}:{}),...(safe.filter?{filter:{...safe.filterParameters,name:safe.filter}}:{}),...(safe.lighting?{lighting:{...safe.lightingParameters,name:safe.lighting}}:{}),...(safe.location?{location:{name:safe.location}}:{})};
 }
 export async function openLocalPreviewSource(databasePath, {discover=discoverInfinityNikkiInstallation} = {}) {
@@ -166,7 +177,8 @@ export async function createIndexedPreviewSource(database, photoRoots, options =
         try { const canonical = await realpath(resource.sourcePath); if (photoRoots.some(root => contained(canonical, root))) {
           const raw=reads.getAsset(resource.assetId)?.metadata_json;
           let metadata; try { if(typeof raw==='string' && raw.length<=1048576) metadata=JSON.parse(raw); } catch {}
-          resources.push({ ...resource, capturedAt: item.capturedAt, metadata });
+          const asset=reads.getAsset(resource.assetId);
+          resources.push({ ...resource, capturedAt: String(asset.captured_at??''),sortAt:String(asset.captured_at??asset.discovered_at),orderKey:String(asset.asset_id), metadata,deletionTarget:{assetId:resource.assetId,revision:Number(asset.revision),mediaFingerprint:mediaFingerprint(reads.listResources(resource.assetId))} });
         } }
         catch { /* deleted or unavailable files are not shared */ }
         if (resources.length >= 500) break;
@@ -178,19 +190,32 @@ export async function createIndexedPreviewSource(database, photoRoots, options =
       const page=reads.listAssets({limit:60,assetType:'motion_photo',...(motionCursor?{cursorTime:motionCursor.t,cursorAssetId:motionCursor.id}:{})});
       for(const asset of page){
         if(asset.asset_state!=='ready')continue;
-        const rows=reads.listResources(String(asset.asset_id)).filter(x=>x.stable_state==='stable');
+        const all=reads.listResources(String(asset.asset_id)),rows=all.filter(x=>x.stable_state==='stable');
         const still=rows.find(x=>x.role==='source_primary'&&x.mime_type==='image/jpeg'),motion=rows.find(x=>x.role==='source_motion'&&x.mime_type==='video/mp4');
         if(!still||!motion||Number(still.size_bytes)>MAX_SOURCE||Number(still.size_bytes)+Number(motion.size_bytes)>MAX_MOTION-131072)continue;
         try{
           for(const row of [still,motion]){const p=await realpath(String(row.source_path));if(!photoRoots.some(root=>contained(p,root)))throw new Error('Live out of scope');}
           let metadata;try{if(typeof asset.metadata_json==='string'&&asset.metadata_json.length<=1048576)metadata=JSON.parse(asset.metadata_json);}catch{}
           const map=row=>({sourcePath:String(row.source_path),mimeType:String(row.mime_type),sha256:String(row.sha256),sizeBytes:Number(row.size_bytes)});
-          resources.push({...map(still),capturedAt:String(asset.captured_at??asset.discovered_at),metadata,motion:{...map(motion),...(asset.motion_presentation_timestamp_us==null?{}:{presentationUs:Number(asset.motion_presentation_timestamp_us)})}});
+          resources.push({...map(still),deletionTarget:{assetId:String(asset.asset_id),revision:Number(asset.revision),mediaFingerprint:mediaFingerprint(all)},capturedAt:String(asset.captured_at??''),sortAt:String(asset.captured_at??asset.discovered_at),orderKey:String(asset.asset_id),metadata,motion:{...map(motion),...(asset.motion_presentation_timestamp_us==null?{}:{presentationUs:Number(asset.motion_presentation_timestamp_us)})}});
         }catch{/* Only complete, indexed and contained Live pairs are shared. */}
       }
       const last=page.at(-1);motionCursor=page.length===60&&last?{t:String(last.captured_at??last.discovered_at),id:String(last.asset_id)}:undefined;
     }while(motionCursor&&resources.length<1000);
-    resources.sort((a,b)=>(b.capturedAt||'').localeCompare(a.capturedAt||''));
+    let videoCursor;
+    do{
+      const page=reads.listAssets({limit:60,assetType:'video',...(videoCursor?{cursorTime:videoCursor.t,cursorAssetId:videoCursor.id}:{})});
+      for(const asset of page){
+        if(asset.asset_state!=='ready')continue;
+        const video=reads.listResources(String(asset.asset_id)).find(row=>row.stable_state==='stable'&&row.role==='source_motion'&&row.mime_type==='video/mp4');
+        if(!video||Number(video.size_bytes)<16||Number(video.size_bytes)>MAX_MOTION)continue;
+        try{const canonical=await realpath(String(video.source_path));if(!photoRoots.some(root=>contained(canonical,root)))continue;
+          resources.push({sourcePath:String(video.source_path),sha256:String(video.sha256),sizeBytes:Number(video.size_bytes),mimeType:'video/mp4',deletionTarget:{assetId:String(asset.asset_id),revision:Number(asset.revision),mediaFingerprint:mediaFingerprint(reads.listResources(String(asset.asset_id)))},capturedAt:String(asset.captured_at??''),sortAt:String(asset.captured_at??asset.discovered_at),orderKey:String(asset.asset_id)});
+        }catch{/* Unavailable sources are not shared. */}
+      }
+      const last=page.at(-1);videoCursor=page.length===60&&last?{t:String(last.captured_at??last.discovered_at),id:String(last.asset_id)}:undefined;
+    }while(videoCursor&&resources.length<1500);
+    resources.sort((a,b)=>(b.capturedAt||'').localeCompare(a.capturedAt||'')||(b.orderKey||'').localeCompare(a.orderKey||''));
     resources.length=Math.min(resources.length,500);
     return resources;
     }

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import {realpath} from 'node:fs/promises'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
@@ -19,7 +19,9 @@ import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
 import { WeChatGalleryService, resizeForWeChat } from './wechat/WeChatGalleryService.js'
+import {withWeChatDeletion} from './wechat/WeChatDeletion.js'
 import { createIndexedPreviewSource,rotatePng,exportLive } from './wechat/GalleryRuntime.mjs'
+import {withWeChatInspiration} from './wechat/WeChatInspiration.js'
 import {WeChatIconProvider,resizeWeChatIcon} from './wechat/WeChatIconProvider.js'
 import { startupFailureRecord } from './desktop/StartupFailure.js'
 import { GameVersionUpdateService } from './server/GameVersionUpdateService.js'
@@ -30,6 +32,10 @@ import {ExtraScanDirectories,loadExtraScanDirectories,loadRetiredExtraDirectorie
 import {scanDiagnosticSummary} from './scanner/ScanDiagnostics.js'
 
 let startupPhase: Parameters<typeof startupFailureRecord>[1] = 'configuration'
+
+// Fixed at packaging time; both editions use the same database and Android protocol.
+declare const NIKKISYNC_APP_ONLY: boolean
+const wechatEnabled = typeof NIKKISYNC_APP_ONLY === 'undefined' || !NIKKISYNC_APP_ONLY
 
 const APP_NAME = 'NikkiSync PC'
 const APP_DATA = chooseWritableDataDirectory([
@@ -194,22 +200,25 @@ async function main(): Promise<void> {
     try { writeFileSync(GAME_ROOT_CACHE_FILE, `${installRoot}\n`, 'utf8') } catch { /* best-effort startup cache */ }
   }
   const status = new DesktopStatusService(runtime.database)
-  const wechat = new WeChatGalleryService({
+  const bundledFfmpeg = path.join(path.dirname(process.execPath), 'wechat', 'media', 'ffmpeg.exe')
+  const wechat = wechatEnabled ? new WeChatGalleryService({
     onWorkSettled: () => memoryMaintenance.schedule(),
     host: currentPairingHost,
+    hosts: () => listLanIpv4(),
     qrSvg,
-    snapshot: async () => createIndexedPreviewSource(runtime.database, (await Promise.all(runtime.scanner.getScanRoots().map(async root=>{try{return await realpath(root)}catch{return undefined}}))).filter((root):root is string=>Boolean(root)), {
+    snapshot: async () => withWeChatDeletion(withWeChatInspiration(await createIndexedPreviewSource(runtime.database, (await Promise.all(runtime.scanner.getScanRoots().map(async root=>{try{return await realpath(root)}catch{return undefined}}))).filter((root):root is string=>Boolean(root)), {
       loadIcon:descriptor=>wechatIcons.get(descriptor),
+      ...(existsSync(bundledFfmpeg) ? { motionFfmpeg: bundledFfmpeg } : {}),
       exportLive:(jpeg,video,options)=>exportLive(jpeg,video,{...options,...(process.versions.bun?{ffmpeg:path.join(path.dirname(process.execPath),'wechat','media','ffmpeg.exe'),ffprobe:path.join(path.dirname(process.execPath),'wechat','media','ffprobe.exe')}:{})}),
       rotatePng:(bytes,rotation)=>rotatePng(bytes,rotation,process.versions.bun?path.join(path.dirname(process.execPath),'wechat','rotate-png.ps1'):path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','rotate-png.ps1')),
       resize: bytes => resizeForWeChat(bytes, process.versions.bun
         ? path.join(path.dirname(process.execPath), 'wechat', 'resize-preview.ps1')
         : path.join(import.meta.dirname, '..', '..', '..', '..', 'tools', 'wechat-gallery', 'resize-preview.ps1'))
-    })
-  })
+    }),runtime.server.inspirations,bytes=>resizeForWeChat(bytes,process.versions.bun?path.join(path.dirname(process.execPath),'wechat','resize-preview.ps1'):path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','resize-preview.ps1'))),runtime.deletions)
+  }) : undefined
   startupPhase = 'desktop-control'
   markStartup('desktop-control')
-  scanDirectories=new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,()=>wechat.stop(),()=>runtime.server.accounts.sourceDirectoriesChanged())
+  scanDirectories=new ExtraScanDirectories(EXTRA_SCAN_DIRECTORIES_FILE,runtime.scanner,async()=>{await wechat?.stop()},()=>runtime.server.accounts.sourceDirectoriesChanged())
   const dashboard = createDesktopControlServer({
     inspirations:runtime.server.inspirations,
     accounts:runtime.server.accounts,
@@ -230,11 +239,13 @@ async function main(): Promise<void> {
     brandImage: readFileSync(process.versions.bun
       ? path.join(path.dirname(process.execPath), 'branding', 'momo-camera.png')
       : path.join(import.meta.dirname, '..', '..', '..', '..', 'assets', 'branding', 'momo-camera.png')),
-    wechatGallery: {
+    ...(wechat ? {wechatEntryImage:readFileSync(process.versions.bun
+      ? path.join(path.dirname(process.execPath),'branding','wechat-mini-entry.png')
+      : path.join(import.meta.dirname,'..','..','..','..','assets','branding','wechat-mini-entry.png')),wechatGallery: {
       start: () => wechat.start(),
       stop: () => wechat.stop(),
       status: () => wechat.status()
-    }
+    }} : {})
   })
   await new Promise<void>((resolve, reject) => {
     dashboard.once('error', reject)
@@ -248,7 +259,7 @@ async function main(): Promise<void> {
     onlineConsent.abortPending()
     versionUpdates.stop()
     memoryMaintenance.stop()
-    await wechat.stop()
+    await wechat?.stop()
     await new Promise<void>((resolve) => dashboard.close(() => resolve()))
     await runtime.stop()
   }

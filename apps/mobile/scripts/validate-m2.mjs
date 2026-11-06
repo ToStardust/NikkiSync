@@ -134,7 +134,7 @@ expect(!galleryAdapter.includes('setAlpha(isSelected ? 0.72f'), 'M2.3.2 selectio
 const galleryUxStyle = text('app/src/main/java/app/nikkisync/mobile/ui/GalleryUxStyle.java')
 expect(galleryUxStyle.includes('bg_glass_card'), 'M2.3.2 shared sampled glass card is not wired')
 expect(galleryUxStyle.includes('bg_glass_chip'), 'M2.3.2 shared sampled glass chip is not wired')
-expect(galleryUxStyle.includes('bg_selected_glass'), 'M2.3.2 selected overlay resource is not wired')
+expect(galleryAdapter.includes('selectedOverlay.setBackgroundResource(R.drawable.bg_selected_glass)'), 'M2.3.2 selected overlay resource is not wired')
 
 const savedPhotoStore = text('app/src/main/java/app/nikkisync/mobile/storage/SavedPhotoStore.java')
 expect(savedPhotoStore.includes('assetId') && savedPhotoStore.includes('uri') && savedPhotoStore.includes('savedAt'), 'M2.4 saved provenance fields are missing')

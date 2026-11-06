@@ -44,10 +44,12 @@ public static class RuntimePayload
         foreach (var file in files)
         {
             ValidatePath(file.Path);
-            if (file.Length is < 0 or > 134217728 || !ValidHash(file.Sha256) || !expected.TryAdd(file.Path, file))
+            var fileLimit = IsMediaTool(file.Path) ? 268435456L : 134217728L;
+            if (file.Length < 0 || file.Length > fileLimit || !ValidHash(file.Sha256) || !expected.TryAdd(file.Path, file))
                 throw new InvalidDataException("Invalid payload file.");
         }
-        if (files.Sum(file => file.Length) > 268435456) throw new InvalidDataException("Payload exceeds size limit.");
+        if (files.Where(file => !IsMediaTool(file.Path)).Sum(file => file.Length) > 268435456
+            || files.Sum(file => file.Length) > 805306368) throw new InvalidDataException("Payload exceeds size limit.");
         var root = Path.GetFullPath(cacheRoot);
         step?.Invoke(PayloadPreparationStep.CreateCache);
         Directory.CreateDirectory(root);
@@ -178,6 +180,7 @@ public static class RuntimePayload
         catch (DirectoryNotFoundException) { return false; }
     }
 
+    private static bool IsMediaTool(string path) => path is "runtime/wechat/media/ffmpeg.exe" or "runtime/wechat/media/ffprobe.exe";
     private static bool ValidHash(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
     private static void ValidatePath(string path)
     {

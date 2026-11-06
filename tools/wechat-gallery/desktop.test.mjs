@@ -21,7 +21,7 @@ test('integrated desktop QR/status/close uses local token and never exposes QR s
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const base='http://127.0.0.1:'+server.address().port;
  try{
-  const html=await(await fetch(base)).text();assert.match(html,/首次使用引导/);assert.doesNotMatch(html,/id="wechat-start"|id="wechat-modal"|微信小程序/);assert.match(html,/Android App/);
+  const html=await(await fetch(base)).text();assert.match(html,/首次使用引导/);assert.match(html,/id="wechat-start"/);assert.match(html,/id="wechat-modal"/);assert.match(html,/Android App/);assert.equal(started,0,'rendering must not start sharing');
   const token=/name="nikkisync-desktop-token" content="([^"]+)"/.exec(html)?.[1];assert.ok(token);
   const headers={'X-NikkiSync-Desktop-Token':token};
   assert.equal((await fetch(base+'/api/wechat/session',{method:'POST'})).status,403);
@@ -30,6 +30,16 @@ test('integrated desktop QR/status/close uses local token and never exposes QR s
   const state=await(await fetch(base+'/api/wechat/status',{headers})).json();assert.doesNotMatch(JSON.stringify(state),/qrSvg|key|token/);
   assert.equal((await fetch(base+'/api/wechat/session',{method:'DELETE',headers})).status,200);assert.equal(closed,1);
  }finally{await new Promise(resolve=>server.close(resolve));}
+});
+test('PC advertises fresh bounded alternatives while status never exports connection secrets',async()=>{
+ const {WeChatGalleryService}=await import('../../apps/pc-companion/dist/src/wechat/WeChatGalleryService.js');
+ let alternatives=['192.168.1.8','10.1.2.3'],payload;
+ const service=new WeChatGalleryService({host:'192.168.1.8',hosts:()=>alternatives,reservePort:async()=>32123,snapshot:async()=>({count:0}),
+  qrSvg:async raw=>{payload=JSON.parse(raw);return '<svg/>';},listen:async()=>({port:32123,stop:async()=>{}})});
+ try{await service.start();assert.deepEqual(payload.hosts,alternatives);assert.doesNotMatch(JSON.stringify(service.status()),/hosts|key|qrSvg/);
+  alternatives=['192.168.1.8','10.2.3.4'];await service.start();assert.deepEqual(payload.hosts,alternatives);
+  alternatives=['8.8.8.8','10.2.3.4'];await service.start();assert.deepEqual(payload.hosts,['192.168.1.8','10.2.3.4']);
+ }finally{await service.stop();}
 });
 test('embedded gallery runtime works without reading MiniProgram source or loading node:sqlite in Bun', async()=>{
   const kit=await import('../../apps/pc-companion/dist/src/wechat/GalleryRuntime.mjs');
@@ -59,22 +69,51 @@ test('closing the embedded protocol runtime drops its module cache without mutat
  assert.equal(typeof fresh.frame,'function');
  kit.releaseProtocolRuntime();
 });
-test('closing integrated panel during first poll hides QR and cannot restart connection polling',async()=>{
+test('hiding the QR keeps the connection alive for PC approval; only explicit end disconnects',async()=>{
  const {wechatPanelScript}=await import('../../apps/pc-companion/dist/src/desktop/WeChatGalleryPanel.js');
  class Element{content='local-token';innerHTML='';hidden=true;disabled=false;textContent='';replaceChildren(){this.innerHTML='';}focus(){}}
  const elements=new Map(),el=selector=>{if(!elements.has(selector))elements.set(selector,new Element());return elements.get(selector);};
- let completePoll,connectionTimers=0,closed=0;
+ let completePoll,connectionTimers=0,closed=0,created=0;
  runInNewContext(wechatPanelScript,{document:{querySelector:el,addEventListener(){}},window:{addEventListener(){}},Date,
   setInterval:(callback,delay)=>{if(delay===1000)connectionTimers++;return 1;},clearInterval(){},
   fetch:async(url,{method}={})=>{
-   if(method==='POST')return {ok:true,json:async()=>({qrSvg:'<svg/>',expiresAt:new Date(Date.now()+600000).toISOString()})};
+   if(method==='POST'){created++;return {ok:true,json:async()=>({qrSvg:'<svg/>',expiresAt:new Date(Date.now()+600000).toISOString()})};}
    if(method==='DELETE'){closed++;return {ok:true,json:async()=>({state:'closed'})};}
    return new Promise(resolve=>{completePoll=value=>resolve({ok:true,json:async()=>value});});
   }});
  const opening=el('#wechat-start').onclick();for(let i=0;!completePoll&&i<20;i++)await Promise.resolve();assert.ok(completePoll);
  await el('#wechat-close').onclick();completePoll({state:'waiting',photoCount:3,originalsSent:0});await opening;
- assert.equal(closed,1);assert.equal(el('#wechat-modal').hidden,true);assert.equal(el('#wechat-qr').innerHTML,'');assert.equal(connectionTimers,0);
+ assert.equal(closed,0);assert.equal(el('#wechat-modal').hidden,true);assert.equal(el('#wechat-qr').innerHTML,'');assert.equal(connectionTimers,1);
+ await el('#wechat-start').onclick();assert.equal(created,1,'showing the active QR must not replace the Noise session');assert.equal(el('#wechat-qr').innerHTML,'<svg/>');
+ await el('#wechat-stop').onclick();assert.equal(closed,1);assert.equal(el('#wechat-modal').hidden,true);
 });
+test('an already claimed QR is hidden instead of inviting a second scan, without ending the active connection',async()=>{
+ const {wechatPanelScript}=await import('../../apps/pc-companion/dist/src/desktop/WeChatGalleryPanel.js');
+ class Element{content='local';innerHTML='';hidden=true;disabled=false;textContent='';replaceChildren(){this.innerHTML='';}focus(){}}
+ const nodes=new Map(),el=s=>{if(!nodes.has(s))nodes.set(s,new Element());return nodes.get(s)};let created=0,ended=0;
+ runInNewContext(wechatPanelScript,{document:{querySelector:el,addEventListener(){}},window:{addEventListener(){}},Date,setInterval:()=>1,clearInterval(){},fetch:async(_u,{method})=>({ok:true,json:async()=>{if(method==='POST'){created++;return{qrSvg:'<svg/>',expiresAt:new Date(Date.now()+600000).toISOString()}}if(method==='DELETE'){ended++;return{state:'closed'}}return{state:'connected',photoCount:1,originalsSent:0}}})});
+ await el('#wechat-start').onclick();assert.equal(el('#wechat-qr').innerHTML,'','the initial QR key is consumed after authentication');
+ await el('#wechat-close').onclick();await el('#wechat-start').onclick();assert.equal(created,1);assert.equal(ended,0);assert.equal(el('#wechat-qr').innerHTML,'');
+ await el('#wechat-renew').onclick();assert.equal(created,2,'explicit rescan always receives a fresh key');
+});
+test('mini-program entry code starts expanded, remembers dismissal, and collapses after connecting',async()=>{
+ const {wechatPanelScript,wechatPanelHtml}=await import('../../apps/pc-companion/dist/src/desktop/WeChatGalleryPanel.js');
+ assert.match(wechatPanelHtml,/id="wechat-entry-code"[^>]+open/);
+ const saved=new Map();
+ function mount(){
+  class Element{content='local';open=true;hidden=true;innerHTML='';textContent='';events={};addEventListener(name,fn){this.events[name]=fn}replaceChildren(){this.innerHTML=''}focus(){}}
+  const nodes=new Map(),el=s=>{if(!nodes.has(s))nodes.set(s,new Element());return nodes.get(s)};
+  runInNewContext(wechatPanelScript,{document:{querySelector:el,addEventListener(){}},window:{addEventListener(){}},localStorage:{getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v)},Date,setInterval:()=>1,clearInterval(){},fetch:async(_url,{method})=>({ok:true,json:async()=>method==='POST'?{qrSvg:'<svg/>',expiresAt:new Date(Date.now()+600000).toISOString()}:{state:'connected',photoCount:1,originalsSent:0}})});
+  return el;
+ }
+ let ui=mount();assert.equal(ui('#wechat-entry-code').open,true);
+ ui('#wechat-entry-code').open=false;ui('#wechat-entry-code').events.toggle();
+ assert.equal(mount()('#wechat-entry-code').open,false,'manual dismissal persists');
+ saved.clear();ui=mount();await ui('#wechat-start').onclick();
+ assert.equal(ui('#wechat-entry-code').open,false);assert.equal(mount()('#wechat-entry-code').open,false,'successful connection persists');
+ ui('#wechat-entry-code').open=true;assert.equal(ui('#wechat-entry-code').open,true,'code remains manually available');
+});
+
 test('desktop gallery is off until requested, renew stops old listener, close during snapshot cancels late start',async()=>{
   const {WeChatGalleryService}=await import('../../apps/pc-companion/dist/src/wechat/WeChatGalleryService.js');
   let built=0,stops=0,resolveSnapshot;
@@ -96,6 +135,6 @@ test('desktop gallery is off until requested, renew stops old listener, close du
 test('packaging integrates one gallery service with scanning/APK pairing, no separate node process',()=>{
   const app=readFileSync(new URL('../../apps/pc-companion/src/windows-app.ts',import.meta.url),'utf8');
   assert.match(app,/new WeChatGalleryService/);assert.match(app,/wechatGallery:/);
-  assert.match(app,/await wechat\.stop\(\)/);
+  assert.match(app,/await wechat\?\.stop\(\)/);
   assert.doesNotMatch(app,/spawn\([^\n]*node/);
 });

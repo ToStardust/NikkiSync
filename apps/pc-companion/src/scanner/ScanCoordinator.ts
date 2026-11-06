@@ -1,7 +1,7 @@
 import { readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { FileStabilityGuard } from './FileStabilityGuard.js'
-import { ResourceClassifier } from './ResourceClassifier.js'
+import { isPendingUploadPath, ResourceClassifier } from './ResourceClassifier.js'
 import type { DiscoveredResource, ExtraScanRoot } from './types.js'
 import type { ScanActivity } from './ScanProgressTracker.js'
 
@@ -22,7 +22,10 @@ export class ScanCoordinator {
       for (const entry of entries) {
         const target = path.join(directory, entry.name)
         if(entry.isSymbolicLink())continue
-        if (entry.isDirectory()) { await visit(target); continue }
+        if (entry.isDirectory()) {
+          if (!isPendingUploadPath(target)) await visit(target)
+          continue
+        }
         filesObserved += 1
         onActivity?.({ filesObserved: 1 })
         try {
