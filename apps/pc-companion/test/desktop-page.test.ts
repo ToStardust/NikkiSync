@@ -71,7 +71,7 @@ test('the home scan shortcut opens settings with folder guidance, without choosi
 test('desktop offers the verified APK direct link and two netdisk choices without an embedded installer', () => {
   const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false})
   assert.match(html,/id="android-direct-download"[^>]+data-project="androidDirect"/)
-  assert.match(html,/android-update-test\/MomoCamera-Android-1\.0\.36\.apk/)
+  assert.match(html,/android-update-test\/MomoCamera-Android-1\.0\.39\.apk/)
   assert.match(html,/夸克网盘 · 下载 App/)
   assert.match(html,/百度网盘 · 下载 App/)
   assert.doesNotMatch(html,/android-installer|导出安卓安装包/)

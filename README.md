@@ -12,7 +12,7 @@
 
 历史版本的部件小图标曾引用[暖暖共鸣录](https://gongeo.us/)维护的在线图床；已迁移为 NikkiSync 自行托管的本地图标包。感谢其开发者指出[图床使用与署名问题](https://github.com/ToStardust/NikkiSync/issues/14)，并提供迁移建议。NUAN5.PRO 的在线候补来源及接入修正见[相关 issue](https://github.com/ToStardust/NikkiSync/issues/13)。
 
-**下载 [1.0.39 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.39-public-beta.1)**：电脑端为单文件 EXE，安卓 APK 在 CNB 测试通道单独提供，也可在 App 内检查更新。**电脑端和安卓 App 请一起更新。** 本版新增电脑程序自动更新和安卓「最近拍摄」分组，继续提供本地图标与照片参数解码。[本版更新日志](docs/releases/v1.0.39-public-beta.1.md)
+**下载 [1.0.39 公测版](https://github.com/ToStardust/NikkiSync/releases/tag/v1.0.39-public-beta.2)**：电脑端为单文件 EXE，安卓 APK 在 CNB 测试通道单独提供，也可在 App 内检查更新。**电脑端和安卓 App 请一起更新。** 本版新增电脑程序自动更新和安卓「最近拍摄」分组，继续提供本地图标与照片参数解码。[本版更新日志](docs/releases/v1.0.39-public-beta.2.md)
 
 已开启 Windows 自启动时，更新或移动 EXE 后首次打开新版会自动同步启动路径，不需要重新切换开关；原本关闭的选择保留。
 
