@@ -63,5 +63,5 @@ test('platform chrome and Android primary/selected drawables follow the same the
 });
 test('Android Live format and playback actions use shared Nikki theme resources',async()=>{
  const controls=await read('apps/mobile/app/src/main/java/app/nikkisync/mobile/media/live/LivePhotoControls.java');
- assert.match(controls,/GalleryUxStyle\.glassButton/);assert.match(controls,/R\.color\.text_primary/);assert.match(controls,/R\.color\.text_secondary/);
+ assert.match(controls,/GalleryUxStyle\.glassButton/);assert.match(controls,/R\.color\.text_primary/);assert.match(controls,/R\.color\.photo_detail_text_secondary/);
 });
