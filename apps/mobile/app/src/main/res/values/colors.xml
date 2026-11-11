@@ -4,6 +4,9 @@
     <color name="card_background">#F2FFFFFF</color>
     <color name="text_primary">#262321</color>
     <color name="text_secondary">#716B66</color>
+    <color name="photo_detail_text">#FFF9FA</color>
+    <color name="photo_detail_text_secondary">#EEE4E9</color>
+    <color name="photo_detail_glass_ink">#151116</color>
     <color name="brand">#D780AA</color>
     <color name="accent">#7A6F91</color>
     <color name="primary_action">#F6BCC0</color>

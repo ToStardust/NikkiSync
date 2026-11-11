@@ -28,7 +28,7 @@ public sealed class IconPackUpdater
     private const int MaxIcon = 256 * 1024;
     private const int MaxDeltas = 512;
     private static readonly Regex IconPath = new(
-        @"^(icons/[1-9][0-9]{0,11}|fallbacks/[0-9a-f]{64}|effects/(pose|lighting)-[1-9][0-9]{0,11})\.webp\z",
+        @"^(icons/[1-9][0-9]{0,11}|fallbacks/[0-9a-f]{64}|effects/(pose|lighting|filter)-[1-9][0-9]{0,11})\.webp\z",
         RegexOptions.CultureInvariant);
     private readonly string _active;
     private readonly string _work;

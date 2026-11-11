@@ -5,7 +5,7 @@ const EFFECT_TEXT_X=EFFECT_ICON_X+EFFECT_ICON_SIZE+20, EFFECT_TEXT_WIDTH=510;
 const EFFECT_FONT='32px sans-serif', EFFECT_LINE_HEIGHT=40;
 const CAMERA=['焦距','镜头旋转','光圈','景深','晕影','柔光强度','柔光范围','曝光','亮度','对比度','饱和度','鲜艳度','自然饱和','高光','阴影','柔光'];
 const EFFECTS=['动作','光照','滤镜','地点'];
-const EFFECT_LABELS={pose:'动作',lighting:'光照'};
+const EFFECT_LABELS={pose:'动作',lighting:'光照',filter:'滤镜'};
 const PARAMETER_ORDER=['焦距','光圈','晕影','柔光','柔光范围','亮度','曝光','对比度','饱和度','自然饱和','高光','阴影'];
 let sequence=0;
 const clean=value=>typeof value==='string'?value.replace(/[\u0000-\u001f\u007f]/g,' ').trim():'';

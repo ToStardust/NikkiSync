@@ -21,7 +21,7 @@ function effectText(effect) {
 }
 
 export function displayedPose(metadata) {
-  return effectText(metadata?.pose) ? metadata.pose : metadata?.action;
+  return effectText(metadata?.pose) || displayText(metadata?.pose?.id) ? metadata.pose : metadata?.action;
 }
 
 export function playerMetadata(metadata, fullShare = false) {

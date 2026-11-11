@@ -152,16 +152,16 @@ test('share generation reuses cached icons, serially fetches missing ones and de
  f.exported.success({tempFilePath:'/cache/grid.png'});const value=await job.result;assert.equal(value.missingIcons,1);assert.equal(value.payload.outfit[0].value,'');
  job.dispose();assert.ok(f.deleted.some(x=>/nikkisync-share-icon-/.test(x)));assert.ok(!f.deleted.includes('/cache/borrowed.png'));
 });
-test('share draws exact effect artwork in the badge and keeps the other fallback glyph',async()=>{
- const f=api(),requests=[],drawn=[],labels=[],key='a'.repeat(32);
+test('share draws exact pose and filter artwork and keeps the fallback for an unavailable light',async()=>{
+ const f=api(),requests=[],drawn=[],labels=[],key='a'.repeat(32),filter='b'.repeat(32);
  f.canvas.getContext=()=>({...ctx,drawImage:(...args)=>drawn.push(args),fillText(text,x,y){labels.push({text,x,y,font:this.font});}});
- const channel={shareDetails:(_,done)=>done({status:'ok',rows:[{label:'动作',value:'浮荧共舞'},{label:'光照',value:'柔黄-右 · 89%'}],effectIcons:{pose:key}}),
+ const channel={shareDetails:(_,done)=>done({status:'ok',rows:[{label:'动作',value:'浮荧共舞'},{label:'光照',value:'柔黄-右 · 89%'},{label:'滤镜',value:'清新 · 31%'}],effectIcons:{pose:key,filter}}),
   outfit:(_,offset,done)=>done({status:'ok',offset,total:0,next:null,items:[]}),
   icon:(_,value,done)=>{requests.push(value);done({status:'ok',icon:true,mime:'image/png',source:'item',image:new Uint8Array([137,80,78,71,13,10,26,10])});}};
  const job=createShareCardJob(f.wx,{channel,id,canvas:f.canvas,originalPath:'/cache/original.jpg'});
  await new Promise(r=>setImmediate(r));
- assert.deepEqual(requests,[key]);
- assert.equal(drawn.length,2);
+ assert.deepEqual(requests,[key,filter]);
+ assert.equal(drawn.length,3);
  const [,x,y,width,height]=drawn[1];
  assert.equal(width,96);
  assert.equal(height,54);
@@ -175,6 +175,7 @@ test('share draws exact effect artwork in the badge and keeps the other fallback
  assert.equal(light.y-pose.y,124);
  assert.equal(labels.some(label=>label.text==='动'),false);
  assert.equal(labels.some(label=>label.text==='光'),true);
+ assert.equal(labels.some(label=>label.text==='滤'),false);
  f.exported.success({tempFilePath:'/cache/effects.png'});
  assert.equal((await job.result).missingIcons,0);
  job.dispose();

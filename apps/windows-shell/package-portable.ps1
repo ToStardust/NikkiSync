@@ -99,6 +99,18 @@ try {
   if ($LocalDecoderDll) {
     Copy-Item -LiteralPath $LocalDecoderDll -Destination (Join-Path $payload 'runtime\nuan5_decryption.dll')
   }
+  $filterPack = Join-Path $workspace 'assets\photo-filter-icons'
+  $filterManifest = Join-Path $filterPack 'manifest.json'
+  $filterEntries = (Get-Content -LiteralPath $filterManifest -Raw | ConvertFrom-Json).effectEntries
+  $filterDestination = Join-Path $payload 'runtime\photo-filter-icons'
+  New-Item -ItemType Directory -Force -Path (Join-Path $filterDestination 'effects') | Out-Null
+  foreach ($entry in $filterEntries) {
+    if ($entry.file -cnotmatch '^effects/filter-[1-9][0-9]{0,11}\.webp$') { throw 'Unexpected filter icon path.' }
+    $icon = Join-Path $filterPack $entry.file
+    if ((Get-FileHash -LiteralPath $icon -Algorithm SHA256).Hash -ne $entry.sha256) { throw 'Filter icon hash mismatch.' }
+    Copy-Item -LiteralPath $icon -Destination (Join-Path $filterDestination $entry.file)
+  }
+  Copy-Item -LiteralPath $filterManifest -Destination (Join-Path $filterDestination 'manifest.json')
   if ($ClientEdition -ne 'AppOnly') { Copy-Item -LiteralPath (Join-Path $workspace 'assets\branding\wechat-mini-entry.png') -Destination (Join-Path $payload 'runtime\branding\wechat-mini-entry.png') }
   if ($IncludeWeChatLiveTools -or $IncludeWeChatMotionTools) {
     $liveDirectory = Join-Path $payload 'runtime\wechat\media'

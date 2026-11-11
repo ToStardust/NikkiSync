@@ -21,8 +21,8 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 30
         targetSdk = 35
-        versionCode = 65
-        versionName = "1.0.39"
+        versionCode = 66
+        versionName = "1.0.40"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
         externalNativeBuild { cmake { targets += "momo_jpeg" } }
         buildConfigField("boolean", "STORE_SUBMISSION", storeSubmission)

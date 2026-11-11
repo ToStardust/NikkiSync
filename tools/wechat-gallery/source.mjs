@@ -38,13 +38,15 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
   function present(metadata, capturedAt) {
     const share = playerMetadata(metadata, true);
     const effects = [];
-    for (const [kind, entry] of [['pose', displayedPose(metadata)], ['lighting', metadata?.lighting]]) {
+    for (const [kind, label, entry] of [['pose', '动作', displayedPose(metadata)],
+      ['lighting', '光照', metadata?.lighting], ['filter', '滤镜', metadata?.filter]]) {
       const id = entry?.id;
       if (typeof id !== 'string' && typeof id !== 'number') continue;
       const digest = localClothingIcons?.effectSha256For(kind, String(id));
       if (digest) {
         const key = createHmac('sha256', identityKey).update(JSON.stringify(['effect', kind, id, digest])).digest('hex').slice(0,32);
         effects.push({ kind, id: String(id), key });
+        if (!share.rows.some(row => row.label === label)) share.rows.push({ label, value: '已使用' });
       }
     }
     return {
@@ -174,10 +176,11 @@ export async function createPreviewSource(resources, photoRoots, { resize = resi
       const record = snapshot.find(x => x.id === id); if (!record) throw new Error('Unavailable');
       return structuredClone(currentPresentation(record).player);
     },
-    shareDetails(id) {
+    shareDetails(id, includeFilter = false) {
       const record = snapshot.find(x => x.id === id); if (!record) throw new Error('Unavailable');
       const { share, effects } = currentPresentation(record);
-      return { ...structuredClone(share), effectIcons: Object.fromEntries(effects.map(effect => [effect.kind, effect.key])) };
+      return { ...structuredClone(share), effectIcons: Object.fromEntries(effects
+        .filter(effect => includeFilter || effect.kind !== 'filter').map(effect => [effect.kind, effect.key])) };
     },
     async original(id) {
       const {bytes,record}=await readSource(id);

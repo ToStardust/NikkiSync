@@ -188,15 +188,21 @@ function connectGallery(wxApi, config, hooks) {
   channel.icon=(id,key,done)=>{if(!canDownload||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id)||typeof key!=='string'||!/^[a-f0-9]{32}$/.test(key))throw new Error('Icon unavailable');start('icon',{id,key},done);};
   channel.shareDetails=(id,done)=>{
     if(!canDownload||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('Share details unavailable');
-    start('inspiration',{action:'galleryShareDetails',input:{id}},result=>{
+    const finish=result=>{
       if(result.status!=='ok'){done(result);return;}
       const value=result.value;
       try{
         fields(value,['rows','availability','effectIcons']);validateMetadata(value,24);
-        fields(value.effectIcons,['pose','lighting']);
+        fields(value.effectIcons,['pose','lighting','filter']);
         if(Object.values(value.effectIcons).some(key=>typeof key!=='string'||!/^[a-f0-9]{32}$/.test(key)))throw Error('Effect icon key');
       }catch(_){done({status:'failed'});return;}
       done({status:'ok',...value});
+    };
+    start('inspiration',{action:'galleryShareDetails',input:{id,filterIcons:true}},result=>{
+      if(result.status==='ok'){finish(result);return;}
+      // Older companions only accept the asset ID and can still provide pose and lighting.
+      if(!socket){done(result);return;}
+      start('inspiration',{action:'galleryShareDetails',input:{id}},finish);
     });
   };
   channel.suspend=suspend;

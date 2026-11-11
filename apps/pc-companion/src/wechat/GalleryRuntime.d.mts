@@ -17,7 +17,7 @@ export interface GallerySource {
   refreshIfIndexChanged?(): Promise<boolean>;
   previewCacheKeys?(ids:string[]): (string|null)[];
   cachedDetails?(id:string,version?:string): unknown;
-  shareDetails?(id:string): unknown;
+  shareDetails?(id:string,includeFilter?:boolean): unknown;
   list(offset:number,limit?:number): {total:number;offset:number;items:{id:string;date:string;live?:boolean}[];next:number|null};
   metadata(id:string): {availability:'available'|'partial'|'unavailable';rows:{label:string;value:string}[]};
   preview(id:string): Promise<Uint8Array>;

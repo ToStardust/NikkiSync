@@ -10,7 +10,7 @@ public final class LiquidGlassDockView extends View {
     private final View anchor;
     private final RenderNode frost=new RenderNode("NikkiSync dock frost");
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final boolean panel;
+    private final boolean panel, darkPanel;
     private final int[] origin=new int[2], position=new int[2];
     private final Rect visible=new Rect(),lastVisible=new Rect();
     private int lastX=Integer.MIN_VALUE,lastY=Integer.MIN_VALUE,lastWidth,lastHeight;
@@ -26,7 +26,10 @@ public final class LiquidGlassDockView extends View {
     }
     public LiquidGlassDockView(Context context,ContentBackdrop backdrop,View anchor){this(context,backdrop,anchor,false);}
     public LiquidGlassDockView(Context context,ContentBackdrop backdrop,View anchor,boolean panel){
-        super(context);this.backdrop=backdrop;this.anchor=anchor;this.panel=panel;
+        this(context,backdrop,anchor,panel,false);
+    }
+    LiquidGlassDockView(Context context,ContentBackdrop backdrop,View anchor,boolean panel,boolean darkPanel){
+        super(context);this.backdrop=backdrop;this.anchor=anchor;this.panel=panel;this.darkPanel=darkPanel;
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
     @Override protected void onDraw(Canvas canvas){
@@ -47,7 +50,8 @@ public final class LiquidGlassDockView extends View {
             frost.setRenderEffect(RenderEffect.createBlurEffect((panel?8.5f:9.1f)*d,(panel?8.5f:9.1f)*d,Shader.TileMode.CLAMP));
             canvas.drawRenderNode(frost);
         }
-        if(panel) paint.setShader(new LinearGradient(x,y,x,y+h,new int[]{0x9effffff,0x8affffff},null,Shader.TileMode.CLAMP));
+        if(panel) paint.setShader(new LinearGradient(x,y,x,y+h,
+            darkPanel?new int[]{0xb01d1920,0xd41d1920}:new int[]{0x9effffff,0x8affffff},null,Shader.TileMode.CLAMP));
         else paint.setColor(gpuFrost?0x80fffefb:0xdbfffefb);
         canvas.drawRoundRect(rect,r,r,paint);paint.setShader(null);
         paint.setStyle(Paint.Style.STROKE);

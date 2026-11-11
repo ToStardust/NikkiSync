@@ -1,0 +1,285 @@
+{
+  "schemaVersion": 2,
+  "version": "20261112-filter-webp85",
+  "source": "https://nikki.ranaxro.com/app_api/hot_update.json",
+  "imageFormat": "webp",
+  "entries": [],
+  "effectEntries": [
+    {
+      "kind": "filter",
+      "id": "1090020001",
+      "file": "effects/filter-1090020001.webp",
+      "aliases": [
+        "Fresh_001"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020001.webp",
+      "sha256": "5719cbd2d51f8a03acf9b375cd6bdde498f4f313d6104bbcbb74d81223ca9702",
+      "sizeBytes": 3946,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020002",
+      "file": "effects/filter-1090020002.webp",
+      "aliases": [
+        "Fresh_002"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020002.webp",
+      "sha256": "e7045134881a0d6b2eba471ef3ff7c6039ddf7a405008083ce01c466a9629913",
+      "sizeBytes": 3464,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020003",
+      "file": "effects/filter-1090020003.webp",
+      "aliases": [
+        "Fresh_003"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020003.webp",
+      "sha256": "726c1920b9accfe5aec3b02287d9ff17749846fa6e208fd53852eef506e2f88b",
+      "sizeBytes": 3400,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020004",
+      "file": "effects/filter-1090020004.webp",
+      "aliases": [
+        "Weather_001"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020004.webp",
+      "sha256": "45936376a74f16d1fe06938451c2ba98a67d655baf399a6fa09e9f3bf2328bf5",
+      "sizeBytes": 5146,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020005",
+      "file": "effects/filter-1090020005.webp",
+      "aliases": [
+        "Weather_002"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020005.webp",
+      "sha256": "54341a26486b54a32a61363dc3995f527ff0fed977798564316c3a327f1d61ab",
+      "sizeBytes": 5102,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020006",
+      "file": "effects/filter-1090020006.webp",
+      "aliases": [
+        "Weather_003"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020006.webp",
+      "sha256": "02453ef92ab58a660153afe9df60a626141ad291ba9b6e1b37702ff62571f32b",
+      "sizeBytes": 5402,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020007",
+      "file": "effects/filter-1090020007.webp",
+      "aliases": [
+        "Vibe_001"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020007.webp",
+      "sha256": "743dc190389641dda8341b0a4435553a6fbbfbb520ded5c104e819254bfc0a37",
+      "sizeBytes": 5380,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020008",
+      "file": "effects/filter-1090020008.webp",
+      "aliases": [
+        "Vibe_002"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020008.webp",
+      "sha256": "9e2d8041a413840bf77a63521193bb13ac36698bf876fce34773674a4c0ff574",
+      "sizeBytes": 4876,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020009",
+      "file": "effects/filter-1090020009.webp",
+      "aliases": [
+        "Fresh_004"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020009.webp",
+      "sha256": "6482ba8ea64e515c005b7a354dcd68e857f39daaa4a63c8e2fd7bb08c4470e21",
+      "sizeBytes": 3588,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020010",
+      "file": "effects/filter-1090020010.webp",
+      "aliases": [
+        "Fresh_005"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020010.webp",
+      "sha256": "010e49eb5ee05b721d5a1d912c0e7dc40946f6d833adeefa7d0b2320b2bad156",
+      "sizeBytes": 3872,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020011",
+      "file": "effects/filter-1090020011.webp",
+      "aliases": [
+        "Weather_004"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020011.webp",
+      "sha256": "1c83533f969c30ed3f10c2b24156deb6853d5fa6168e01ba0bb959ba99f550a0",
+      "sizeBytes": 4856,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020012",
+      "file": "effects/filter-1090020012.webp",
+      "aliases": [
+        "Vibe_003"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020012.webp",
+      "sha256": "810b96d2a090506d4d07b9743f25d3ca25c81be7eac3ecce1d72e22435c2c4b7",
+      "sizeBytes": 4110,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020013",
+      "file": "effects/filter-1090020013.webp",
+      "aliases": [
+        "Vibe_004"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020013.webp",
+      "sha256": "4fa75736c10a5528d1a1b1559f037fff632ebe9f267f74ac87e1d5753d6a9b8d",
+      "sizeBytes": 4438,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020014",
+      "file": "effects/filter-1090020014.webp",
+      "aliases": [
+        "Vibe_005"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020014.webp",
+      "sha256": "6e205a71cd35de2a76a80ed8ffbed6c8e90430c6c7836c4c6c5aff2a50280945",
+      "sizeBytes": 4744,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020015",
+      "file": "effects/filter-1090020015.webp",
+      "aliases": [
+        "Weather_005"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020015.webp",
+      "sha256": "4b8d980b7e9d34fa5f64a1f66626a5d49826866839ed940bbfa824e9a43f863b",
+      "sizeBytes": 5378,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020016",
+      "file": "effects/filter-1090020016.webp",
+      "aliases": [
+        "Vibe_007"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020016.webp",
+      "sha256": "808b5a764ffad5dc3a0d3a1808e3e77f5857362d30118184d34b9c5bccdaefc9",
+      "sizeBytes": 4384,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020017",
+      "file": "effects/filter-1090020017.webp",
+      "aliases": [
+        "Fresh_006",
+        "Vibe_008"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020017.webp",
+      "sha256": "9427b22279a12f1d9764bb43434c60dcef40309d889a52d14a3d2184760a3b00",
+      "sizeBytes": 3054,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020019",
+      "file": "effects/filter-1090020019.webp",
+      "aliases": [
+        "Vibe_010",
+        "Vibe_009"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020019.webp",
+      "sha256": "039a44b9c5c22752398907caed9405b56c0bc9929b7c587f499f9f15a86df779",
+      "sizeBytes": 4602,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020020",
+      "file": "effects/filter-1090020020.webp",
+      "aliases": [
+        "Weather_006",
+        "Vibe_011"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020020.webp",
+      "sha256": "a5509a3554ef77af1a77906b6bcdbcf2232ebc7204672e410a9b5e9fd7ac483a",
+      "sizeBytes": 5002,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020021",
+      "file": "effects/filter-1090020021.webp",
+      "aliases": [
+        "Vibe_012"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020021.webp",
+      "sha256": "ce2667fd5b4e4738ad409e64b421aa8e4f357a62487763b3b1c72ace42df1c16",
+      "sizeBytes": 5090,
+      "width": 128,
+      "height": 128
+    },
+    {
+      "kind": "filter",
+      "id": "1090020022",
+      "file": "effects/filter-1090020022.webp",
+      "aliases": [
+        "Vibe_013"
+      ],
+      "source": "https://cdn.nikkialbums.com/filter/1090020022.webp",
+      "sha256": "df18788d138109bf5a19335fdb129d17f107312869896aead09812c73b5691b2",
+      "sizeBytes": 3000,
+      "width": 128,
+      "height": 128
+    }
+  ]
+}

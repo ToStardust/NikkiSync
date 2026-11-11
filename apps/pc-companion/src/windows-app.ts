@@ -19,7 +19,7 @@ import { createLocalPhotoMetadataResolver } from './metadata/LocalPhotoMetadataR
 import { nuan5QueueStatus } from './metadata/Nuan5CompatibleResolver.js'
 import { orderedMetadataProviderConfigs } from './metadata/MetadataResolverConfigFile.js'
 import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
-import { loadLocalClothingIconPack } from './metadata/LocalClothingIconPack.js'
+import { loadLocalClothingIconPack, withLocalPhotoEffectIcons } from './metadata/LocalClothingIconPack.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
@@ -103,7 +103,13 @@ async function main(): Promise<void> {
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
   const metadataDictionaryRemote = composeMetadataDictionaryProvider(metadataDictionaryRemoteConfig)
   const metadataDictionarySupplementRemote = composeMetadataDictionarySupplementProvider(metadataDictionaryRemoteConfig)
-  const localClothingIcons = await loadLocalClothingIconPack(path.join(APP_DATA, 'clothing-icons'))
+  const [installedIcons, filterIcons] = await Promise.all([
+    loadLocalClothingIconPack(path.join(APP_DATA, 'clothing-icons')),
+    loadLocalClothingIconPack(process.versions.bun
+      ? path.join(path.dirname(process.execPath), 'photo-filter-icons')
+      : path.join(import.meta.dirname, '..', '..', '..', '..', 'assets', 'photo-filter-icons'))
+  ])
+  const localClothingIcons = installedIcons && withLocalPhotoEffectIcons(installedIcons, filterIcons)
   if (localClothingIcons && !localClothingIcons.valid) {
     console.warn('[NikkiSync] 本地服装图标清单不可用，将显示占位图。')
   }

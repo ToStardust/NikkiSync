@@ -293,7 +293,7 @@ export class LocalSyncServer {
           decodeURIComponent(clothingThumbnailMatch[2]!)
         )
       }
-      const effectThumbnail = /^\/v1\/assets\/([^/]+)\/effects\/(pose|lighting)\/([^/]+)\/thumbnail$/.exec(url.pathname)
+      const effectThumbnail = /^\/v1\/assets\/([^/]+)\/effects\/(pose|lighting|filter)\/([^/]+)\/thumbnail$/.exec(url.pathname)
       if ((req.method === 'GET' || req.method === 'HEAD') && effectThumbnail) {
         return void await this.streamEffectThumbnail(req, res, decodeURIComponent(effectThumbnail[1]!),
           effectThumbnail[2] as PhotoEffectKind, decodeURIComponent(effectThumbnail[3]!))
@@ -569,7 +569,7 @@ export class LocalSyncServer {
     if (asset?.metadata_json && asset.asset_state !== 'deleted') {
       try {
         const metadata = objectOf(JSON.parse(String(asset.metadata_json)))
-        const entries = kind === 'pose' ? [metadata?.pose, metadata?.action] : [metadata?.lighting]
+        const entries = kind === 'pose' ? [metadata?.pose, metadata?.action] : [metadata?.[kind]]
         matching = entries.some(entry => {
           const value = objectOf(entry)?.id
           return (typeof value === 'string' || typeof value === 'number') && String(value) === id

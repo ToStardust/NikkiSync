@@ -70,10 +70,11 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
                   ||version!==undefined&&(typeof version!=='string'||!/^[a-f0-9]{64}$/.test(version)))throw Error('Details cache request');
                 value=source.cachedDetails(id,version);
               } else if (request.kind === 'inspiration' && request.action === 'galleryShareDetails') {
-                api.fields(request.input,['id']);
-                const {id}=request.input;
+                api.fields(request.input,['id','filterIcons']);
+                const {id,filterIcons}=request.input;
+                if(filterIcons!==undefined&&filterIcons!==true)throw Error('Share icon version');
                 if(!source.shareDetails||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('Share details request');
-                value=source.shareDetails(id);
+                value=source.shareDetails(id,filterIcons===true);
               } else if (request.kind === 'inspiration' && request.action === 'gallerySessionLifetime') {
                 api.fields(request.input, []);
                 if (!liveProfile || checked.resume !== 1 || !resumeKey || !authenticated) throw Error('capability');

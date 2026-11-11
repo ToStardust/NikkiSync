@@ -235,14 +235,12 @@ public final class PhotoViewerPage extends FrameLayout implements ChromeNavigati
         if(details.getParent() instanceof android.view.ViewGroup parent)parent.removeView(details);
         ScrollView scroller=new ScrollView(getContext());scroller.addView(details);
         LinearLayout heading=new LinearLayout(getContext());heading.setGravity(Gravity.CENTER_VERTICAL);heading.setPadding(dp(8),0,0,dp(12));
-        TextView title=new TextView(getContext());title.setText("照片详情");title.setTextSize(20);title.setTextColor(0xff30282c);
+        TextView title=new TextView(getContext());title.setText("照片详情");title.setTextSize(20);title.setTextColor(getContext().getColor(R.color.photo_detail_text));
         heading.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        Button done=new Button(getContext());done.setText("完成");done.setTextColor(0xff30282c);
-        GradientDrawable doneSurface=new GradientDrawable();doneSurface.setColor(0xfff5e6e8);doneSurface.setCornerRadius(dp(24));doneSurface.setStroke(dp(1),0xffe7cbd0);done.setBackground(doneSurface);
+        Button done=new Button(getContext());done.setText("完成");
         heading.addView(done,new LinearLayout.LayoutParams(dp(72),dp(48)));
         ChromeSheetLayout opened=new ChromeSheetLayout(getContext(),heading,scroller,new FrameLayout(getContext()));
-        GradientDrawable detailSurface=new GradientDrawable();detailSurface.setColor(0xfffffbf8);detailSurface.setCornerRadii(new float[]{dp(28),dp(28),dp(28),dp(28),0,0,0,0});
-        opened.setBackground(detailSurface);opened.setDragHandleColor(0xffa88991);sheet=opened;updateLivePhoto();
+        sheet=opened;updateLivePhoto();
         done.setOnClickListener(v->navigation.dismiss(opened));
         navigation.showPhotoDetails(opened,()->{
             if(sheet==opened){sheet=null;detailsBottom=Float.NaN;refreshImageTransform();}

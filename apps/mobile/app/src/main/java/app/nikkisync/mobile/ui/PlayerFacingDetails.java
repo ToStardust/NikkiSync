@@ -60,6 +60,10 @@ public final class PlayerFacingDetails {
 
     /** Describe the observed result; do not present a list of unrelated guesses. */
     public static String metadataNotice(String metadataJson) {
+        return metadataNotice(metadataJson, "", false);
+    }
+
+    private static String metadataNotice(String metadataJson, String sourceReason, boolean gameOriginal) {
         try {
             JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
             JSONObject dressing = metadata.optJSONObject("dressing"), camera = metadata.optJSONObject("camera");
@@ -86,69 +90,65 @@ public final class PlayerFacingDetails {
             }
             if (!"resolved".equals(status) && (embedded || "failed".equals(status)))
                 return "检测到游戏参数，但" + missing + "尚未解码成功。请在电脑端重新扫描并检查参数解析状态。";
-            if ("resolved".equals(status)) return missing + "未能完整读取，当前仅展示已读取的信息。";
+            if ("resolved".equals(status) || hasClothes || hasCamera)
+                return missing + "未能完整读取，当前仅展示已读取的信息。";
+            if (!sourceReason.isEmpty()) return sourceReason;
             if (raw != null && raw.optBoolean("sourceParametersChecked", false) && !raw.optBoolean("sourceParametersPresent"))
-                return "电脑已检查这张照片，未检测到可读取的游戏参数。请使用游戏内相机原图。";
-            if (hasClothes || hasCamera) return missing + "未能完整读取，当前仅展示已读取的信息。";
-            return "当前未读到穿搭和拍摄参数。请查看照片来源并尝试使用游戏内相机原图。";
+                return gameOriginal
+                        ? "这张游戏相机原图没有可用的穿搭和拍摄参数。"
+                        : "这张照片没有可用的穿搭和拍摄参数。请使用游戏内相机原图。";
+            if (gameOriginal) return "这张游戏相机原图的参数暂不可用，请在电脑重新扫描原图。";
+            return "这张照片没有可显示的穿搭和拍摄参数。请使用游戏内相机原图。";
         } catch (Exception ignored) {
             return "照片参数暂不可用，请连接电脑重新同步。";
         }
     }
 
     public static String metadataNotice(String metadataJson, String sourcePath) {
-        String notice = metadataNotice(metadataJson);
-        if (notice.isEmpty() || !isScreenShotPath(sourcePath)) return notice;
-        try {
-            JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
-            JSONObject raw = metadata.optJSONObject("raw");
-            JSONObject resolver = raw == null ? null : raw.optJSONObject("resolver");
-            boolean hasOriginalParameters = raw != null && (raw.optBoolean("sourceParametersPresent", false)
-                    || !raw.optString("nativeParamToken", "").isBlank()
-                    || !raw.optString("nativeParamPayload", "").isBlank());
-            if (hasOriginalParameters || resolver != null && ("failed".equals(resolver.optString("status"))
-                    || "resolved".equals(resolver.optString("status")))) return notice;
-            if (raw != null && raw.optBoolean("sourceParametersChecked", false))
-                return "这张照片来自 ScreenShot，电脑已检查但未检测到游戏参数。请使用游戏内相机原图。";
-        } catch (Exception ignored) { return notice; }
-        return "这张照片来自 ScreenShot，当前未读到游戏参数。请使用游戏内相机原图。";
+        return metadataNotice(metadataJson, missingParameterReason(sourcePath, false),
+                hasFolder(sourcePath, "GamePlayPhotos"));
     }
 
     /** Asset type and indexed source are available for both online and saved photo viewers. */
     public static String metadataNoticeForAsset(AssetSummary asset, String metadataJson) {
-        if (asset == null) return metadataNotice(metadataJson);
-        String notice = metadataNotice(metadataJson, asset.sourcePath());
-        if (notice.isEmpty()) return notice;
-        try {
-            JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
-            JSONObject raw = metadata.optJSONObject("raw");
-            JSONObject resolver = raw == null ? null : raw.optJSONObject("resolver");
-            boolean sourcePresent = raw != null && (raw.optBoolean("sourceParametersPresent", false)
-                    || !raw.optString("nativeParamToken", "").isBlank()
-                    || !raw.optString("nativeParamPayload", "").isBlank());
-            boolean checkedMissing = raw != null && raw.optBoolean("sourceParametersChecked", false) && !sourcePresent;
-            JSONObject camera = metadata.optJSONObject("camera"), dressing = metadata.optJSONObject("dressing");
-            JSONArray clothes = dressing == null ? null : dressing.optJSONArray("clothes");
-            boolean partial = camera != null && camera.length() > 0 || clothes != null && clothes.length() > 0;
-            if (!sourcePresent && !partial && (resolver == null || !"failed".equals(resolver.optString("status", "")))
-                    && (checkedMissing || !asset.hasMetadata())) {
-                if (asset.hasMotion()) return "这张 LIVE 照片未读到游戏参数，因此无法显示穿搭和拍摄设置。";
-                if (isScreenShotPath(asset.sourcePath()))
-                    return "这张照片来自 ScreenShot，未读到游戏参数；请使用游戏内相机原图。";
-                if (isGamePlayPhotosPath(asset.sourcePath()))
-                    return "这张游戏内相机照片未读到参数。请在电脑重新扫描这张原图。";
-                return "这张照片未读到游戏参数，因此无法显示穿搭和拍摄设置。";
-            }
-        } catch (Exception ignored) { return notice; }
-        return notice;
+        return metadataNoticeForAsset(asset, metadataJson, false);
+    }
+
+    public static String metadataNoticeForAsset(AssetSummary asset, String metadataJson, boolean savedLive) {
+        String folders = asset == null ? null : asset.sourceFolder();
+        if ((folders == null || folders.isBlank()) && asset != null && asset.sourcePath() != null) {
+            String path = asset.sourcePath().replace('\\', '/');
+            int separator = path.lastIndexOf('/');
+            if (separator >= 0) folders = path.substring(0, separator);
+        }
+        return metadataNotice(metadataJson, missingParameterReason(folders, savedLive || asset != null && asset.hasMotion()),
+                hasFolder(folders, "GamePlayPhotos"));
+    }
+
+    private static String missingParameterReason(String folders, boolean live) {
+        if (live) return "这张是 LIVE 照片，不带穿搭和拍摄参数。";
+        if (hasFolder(folders, "贴图", "贴纸", "StickerPhoto", "StickerPhotos"))
+            return "这张是贴图，不带穿搭和拍摄参数。";
+        if (hasFolder(folders, "双人", "双人照片", "合照", "合影", "GroupPhoto", "GroupPhotos", "MultiPlayerPhoto", "MultiPlayerPhotos"))
+            return "这张是双人合照，不带穿搭和拍摄参数。";
+        if (hasFolder(folders, "Collage", "拼图"))
+            return "这张是拼图，不带穿搭和拍摄参数。";
+        if (hasFolder(folders, "EditorPhoto"))
+            return "这张是编辑后导出的图片，不带穿搭和拍摄参数。";
+        if (isScreenShotPath(folders))
+            return "这张照片来自 ScreenShot 截图目录，不带穿搭和拍摄参数。请使用游戏内相机原图。";
+        return "";
     }
 
     public static boolean isScreenShotPath(String sourcePath) {
-        return sourcePath != null && ("/" + sourcePath.replace('\\', '/') + "/").matches("(?is).*/ScreenShot(?:/.*)?");
+        return hasFolder(sourcePath, "ScreenShot");
     }
 
-    private static boolean isGamePlayPhotosPath(String sourcePath) {
-        return sourcePath != null && ("/" + sourcePath.replace('\\', '/') + "/").matches("(?is).*/GamePlayPhotos(?:/.*)?");
+    private static boolean hasFolder(String path, String... names) {
+        if (path == null) return false;
+        for (String segment : path.replace('\\', '/').split("/"))
+            for (String name : names) if (name.equalsIgnoreCase(segment)) return true;
+        return false;
     }
 
     private static String date(String capturedAt) {

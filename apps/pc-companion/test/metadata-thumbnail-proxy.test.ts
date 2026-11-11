@@ -295,7 +295,7 @@ test('the WebP pack prioritizes item art and exposes category fallback from the 
   }
 })
 
-test('signed effect icons use the exact pose and lighting attached to the photo', async () => {
+test('signed effect icons use only the exact pose, lighting and filter attached to the photo', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-effect-icons-'))
   const db = new DatabaseManager()
   let server: LocalSyncServer | undefined
@@ -304,9 +304,11 @@ test('signed effect icons use the exact pose and lighting attached to the photo'
     await mkdir(path.join(directory, 'effects'))
     const image = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v4G0AA=', 'base64')
     const digest = sha256(image), pose = '1090012102', light = '1090030001', alias = 'HueEdgeLight_001_R'
+    const filter = '1090020001', filterAlias = 'Fresh_001'
     const effectEntries = [
       { kind: 'pose', id: pose, file: `effects/pose-${pose}.webp` },
-      { kind: 'lighting', id: light, file: `effects/lighting-${light}.webp`, aliases: [alias] }
+      { kind: 'lighting', id: light, file: `effects/lighting-${light}.webp`, aliases: [alias] },
+      { kind: 'filter', id: filter, file: `effects/filter-${filter}.webp`, aliases: [filterAlias] }
     ].map(entry => ({ ...entry, sha256: digest, sizeBytes: image.length, width: 1, height: 1 }))
     for (const entry of effectEntries) await writeFile(path.join(directory, entry.file), image)
     await writeFile(path.join(directory, 'manifest.json'), JSON.stringify({
@@ -317,7 +319,7 @@ test('signed effect icons use the exact pose and lighting attached to the photo'
     db.initialize()
     new AssetRepository(db).create({
       assetId: 'asset_effects', assetType: 'photo', uid: '10001', discoveredAt: '2026-11-10T00:00:00.000Z',
-      metadata: { pose: { id: pose }, lighting: { id: alias } }
+      metadata: { pose: { id: pose }, lighting: { id: alias }, filter: { id: filterAlias } }
     })
     server = new LocalSyncServer(db, { host: '127.0.0.1', port: 0, mdns: false, localClothingIcons: pack })
     const address = await server.start(), base = 'http://127.0.0.1:' + address.port, device = 'phone_effects'
@@ -325,7 +327,7 @@ test('signed effect icons use the exact pose and lighting attached to the photo'
     const route = (kind: string, id: string) => `/v1/assets/asset_effects/effects/${kind}/${id}/thumbnail`
     const get = (pathname: string) => fetch(base + pathname, { headers: signedHeaders(keys.privateKey, device, 'GET', pathname) })
     assert.equal((await fetch(base + route('pose', pose))).status, 401)
-    for (const [kind, id] of [['pose', pose], ['lighting', alias]]) {
+    for (const [kind, id] of [['pose', pose], ['lighting', alias], ['filter', filterAlias]]) {
       const response = await get(route(kind!, id!))
       assert.equal(response.status, 200)
       assert.equal(response.headers.get('content-type'), 'image/webp')
@@ -333,6 +335,7 @@ test('signed effect icons use the exact pose and lighting attached to the photo'
       assert.deepEqual(Buffer.from(await response.arrayBuffer()), image)
     }
     assert.equal((await get(route('lighting', light))).status, 404)
+    assert.equal((await get(route('filter', filter))).status, 404)
     assert.equal((await get(route('lighting', pose))).status, 404)
     assert.equal((await get('/v1/assets/asset_effects/clothing/' + pose + '/thumbnail')).status, 404)
   } finally {

@@ -1431,20 +1431,20 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(dp(14), dp(14), dp(14), dp(14));
-        info.setBackgroundResource(R.drawable.bg_glass_card);
+        info.setBackgroundResource(R.drawable.bg_photo_detail_glass_card);
         LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         infoLp.topMargin = dp(10);
         body.addView(info, infoLp);
 
         String detail = PlayerFacingDetails.savedPhoto(record, missing);
-        info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
+        info.addView(text(detail, 13, false, getColor(R.color.photo_detail_text_secondary)));
         addSourceDetails(info,savedSource(record.assetId()));
         LivePhotoControls.attachSaved(this, info, record, healthEntry);
 
         SavedMetadataSnapshotStore.Snapshot savedSnapshot = savedMetadataSnapshotStore == null
                 ? null : savedMetadataSnapshotStore.get(record.assetId());
         LinearLayout savedOutfit=new LinearLayout(this);savedOutfit.setOrientation(LinearLayout.VERTICAL);info.addView(savedOutfit);
-        showSavedMetadata(savedOutfit,record.assetId(),savedSnapshot);
+        showSavedMetadata(savedOutfit,record.assetId(),savedSnapshot,record.hasMotion());
 
         Button openSystem = button(unavailable ? "系统相册文件不可访问" : "在系统相册打开");
         openSystem.setEnabled(!unavailable);
@@ -1482,7 +1482,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             String gameVersion = snapshot != null && snapshot.gameVersion() != null
                     ? snapshot.gameVersion()
                     : record.gameVersion();
-            String notice=savedShareMetadataNotice(record.assetId(),metadataJson,snapshot==null);
+            String notice=savedShareMetadataNotice(record.assetId(),metadataJson,snapshot==null,record.hasMotion());
             confirmShareMetadata(notice,()->exportLocalShareCard(
                     shareSaved,record.mediaUri(),record.assetId(),capturedAt,gameVersion,
                     metadataJson,!notice.isBlank()));
@@ -1508,7 +1508,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             LinearLayout.LayoutParams restoreLp=new LinearLayout.LayoutParams(-1,-2);restoreLp.topMargin=dp(6);
             restore.setOnClickListener(v->{if(source!=null&&connectionState.isReachable()){dialog.dismiss();requestPhotoSave(List.of(source),false);}});
             info.addView(restore,restoreLp);dialog.addAction("保存",source!=null&&connectionState.isReachable(),restore::performClick);
-            if(!restore.isEnabled())info.addView(text("连接原电脑后可重新保存。",12,false,getColor(R.color.text_secondary)));
+            if(!restore.isEnabled())info.addView(text("连接原电脑后可重新保存。",12,false,getColor(R.color.photo_detail_text_secondary)));
         }
         if (source != null) {
             Button sourceButton = button("查看源照片");
@@ -1593,7 +1593,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(dp(14), dp(14), dp(14), dp(14));
-        info.setBackgroundResource(R.drawable.bg_glass_card);
+        info.setBackgroundResource(R.drawable.bg_photo_detail_glass_card);
         LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1604,7 +1604,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         SavedPhotoHealthStore.Entry healthEntry = savedHealth.get(variant.uri());
         boolean missing = healthEntry != null && healthEntry.isMissing();
         String detail = PlayerFacingDetails.editedPhoto(variant, missing);
-        info.addView(text(detail, 13, false, getColor(R.color.text_secondary)));
+        info.addView(text(detail, 13, false, getColor(R.color.photo_detail_text_secondary)));
         addSourceDetails(info,savedSource(variant.assetId()));
 
         LinearLayout params = new LinearLayout(this);
@@ -1683,7 +1683,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
                     ? snapshot.gameVersion()
                     : originalForShare == null ? null : originalForShare.gameVersion();
             String metadataJson=snapshot==null?null:snapshot.metadataJson();
-            String notice=savedShareMetadataNotice(variant.assetId(),metadataJson,snapshot==null);
+            String notice=savedShareMetadataNotice(variant.assetId(),metadataJson,snapshot==null,original!=null&&original.hasMotion());
             confirmShareMetadata(notice,()->exportLocalShareCard(
                     shareEdited,Uri.parse(variant.uri()),variant.assetId(),capturedAt,gameVersion,
                     metadataJson,!notice.isBlank()));
@@ -1775,16 +1775,16 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         );
     }
 
-    private String savedShareMetadataNotice(String assetId,String metadataJson,boolean snapshotMissing){
+    private String savedShareMetadataNotice(String assetId,String metadataJson,boolean snapshotMissing,boolean savedLive){
         AssetSummary source=savedSource(assetId);
-        if(snapshotMissing&&(source==null||source.hasMetadata()))
+        if(snapshotMissing&&(source==null?!savedLive:source.hasMetadata()))
             return "这张照片尚未缓存参数，当前分享图只能包含已有信息。连接电脑后再生成可显示完整穿搭。";
-        return PlayerFacingDetails.metadataNoticeForAsset(source,metadataJson);
+        return PlayerFacingDetails.metadataNoticeForAsset(source,metadataJson,savedLive);
     }
 
     private void confirmShareMetadata(String notice,Runnable export){
         if(notice==null||notice.isBlank()){export.run();return;}
-        AdviceDialog.show(this,"分享图缺少参数",notice+"\n继续生成将只显示已读取的信息。",
+        AdviceDialog.show(this,"分享图缺少参数",notice+"\n继续生成将显示已有信息。",
                 "继续生成",export,"取消",null);
     }
 
@@ -1862,18 +1862,26 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void showSavedOutfit(LinearLayout target, String assetId, String metadataJson) {
-        renderClothingSection(assetId,metadataJson,target);
+        showSavedOutfit(target,assetId,metadataJson,false);
+    }
+
+    private void showSavedOutfit(LinearLayout target, String assetId, String metadataJson,boolean savedLive) {
+        renderClothingSection(assetId,metadataJson,target,savedSource(assetId),savedLive);
         String summary=SavedMetadataText.summary(metadataJson);
         if(target.getVisibility()==View.GONE&&!summary.isBlank()){
-            TextView details=text(summary,13,false,getColor(R.color.text_secondary));
+            TextView details=text(summary,13,false,getColor(R.color.photo_detail_text_secondary));
             details.setPadding(0,dp(12),0,dp(8));target.addView(details,0);target.setVisibility(View.VISIBLE);
         }
     }
 
     private void showSavedMetadata(LinearLayout target,String assetId,SavedMetadataSnapshotStore.Snapshot snapshot) {
-        if(snapshot!=null){showSavedOutfit(target,assetId,snapshot.metadataJson());return;}
+        showSavedMetadata(target,assetId,snapshot,false);
+    }
+
+    private void showSavedMetadata(LinearLayout target,String assetId,SavedMetadataSnapshotStore.Snapshot snapshot,boolean savedLive) {
+        if(snapshot!=null){showSavedOutfit(target,assetId,snapshot.metadataJson(),savedLive);return;}
         AssetSummary source=savedSource(assetId);
-        if(source!=null&&!source.hasMetadata())showSavedOutfit(target,assetId,null);
+        if(source==null?savedLive:!source.hasMetadata())showSavedOutfit(target,assetId,null,savedLive);
         else showMetadataNotice(target,"尚未缓存这张照片的参数，连接电脑后可读取。");
     }
 
@@ -2532,7 +2540,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             rotationControls.setPadding(0, dp(10), 0, dp(8));
             Button rotateLeft = button("左转 90°");
             Button rotateRight = button("右转 90°");
-            TextView rotationLabel = text(rotationLabel(rotationHolder[0]), 12, true, getColor(R.color.text_secondary));
+            TextView rotationLabel = text(rotationLabel(rotationHolder[0]), 12, true, getColor(R.color.photo_detail_text));
             rotationLabel.setGravity(Gravity.CENTER);
             rotateLeft.setOnClickListener(v -> {
                 rotationHolder[0] = normalizeRotation(rotationHolder[0] - 90);
@@ -2564,14 +2572,14 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
         LinearLayout infoSheet = new LinearLayout(this);
         infoSheet.setOrientation(LinearLayout.VERTICAL);
         infoSheet.setPadding(dp(14), dp(14), dp(14), dp(14));
-        infoSheet.setBackgroundResource(R.drawable.bg_glass_card);
+        infoSheet.setBackgroundResource(R.drawable.bg_photo_detail_glass_card);
         LinearLayout.LayoutParams sheetLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         sheetLp.topMargin = dp(4);
         body.addView(infoSheet, sheetLp);
 
         String description = PlayerFacingDetails.sourcePhoto(asset);
         String offlineDescription="离线预览 · 当前为已缓存图片，保存、分享及 LIVE 播放需要连接电脑。\n"+description;
-        TextView info = text(online?description:offlineDescription, 13, false, getColor(R.color.text_secondary));
+        TextView info = text(online?description:offlineDescription, 13, false, getColor(R.color.photo_detail_text_secondary));
         info.setPadding(dp(2), 0, dp(2), dp(10));
         info.setVisibility(online&&description.isEmpty() ? View.GONE : View.VISIBLE);
         infoSheet.addView(info);
@@ -2708,15 +2716,16 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private AssetSummary savedSource(String id){AssetSummary source=findAsset(id);return source==null&&savedSourceStore!=null?savedSourceStore.get(id):source;}
     private void addSourceDetails(LinearLayout target,AssetSummary asset){
         if(asset==null)return;
-        target.addView(text("所属 UID："+(asset.uid()==null||asset.uid().isBlank()?"未识别":asset.uid()),13,false,getColor(R.color.text_secondary)));
+        int ink=getColor(R.color.photo_detail_text_secondary);
+        target.addView(text("所属 UID："+(asset.uid()==null||asset.uid().isBlank()?"未识别":asset.uid()),13,false,ink));
         if(asset.sourcePath()!=null&&!asset.sourcePath().isBlank()){
-            TextView path=text("文件路径："+app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath()),13,false,getColor(R.color.text_secondary));path.setBackground(roundRect(0x88FFFFFF,14));path.setPadding(dp(10),dp(8),dp(10),dp(8));path.setContentDescription("点击展开并复制文件路径");
+            TextView path=text("文件路径："+app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath()),13,false,ink);path.setBackground(roundRect(0x401d1920,14));path.setPadding(dp(10),dp(8),dp(10),dp(8));path.setContentDescription("点击展开并复制文件路径");
             boolean[] expanded={false};path.setOnClickListener(v->{expanded[0]=!expanded[0];path.setText("文件路径："+(expanded[0]?asset.sourcePath():app.nikkisync.mobile.ui.PhotoScopeFilter.tail(asset.sourcePath())));copyText("照片文件路径",asset.sourcePath());toast("已复制文件路径");});
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);lp.bottomMargin=dp(6);target.addView(path,lp);
-        }else target.addView(text("文件路径：暂未记录，连接新版电脑端后更新",12,false,getColor(R.color.text_secondary)));
+        }else target.addView(text("文件路径：暂未记录，连接新版电脑端后更新",12,false,ink));
         String pixels=asset.width()!=null&&asset.height()!=null?asset.width()+" × "+asset.height():"";
         String size=asset.sizeBytes()==null?"":String.format(java.util.Locale.ROOT,"%.2f MB",asset.sizeBytes()/1000000d);
-        if(!pixels.isEmpty()||!size.isEmpty())target.addView(text("图片大小："+pixels+(pixels.isEmpty()||size.isEmpty()?"":" · ")+size,13,false,getColor(R.color.text_secondary)));
+        if(!pixels.isEmpty()||!size.isEmpty())target.addView(text("图片大小："+pixels+(pixels.isEmpty()||size.isEmpty()?"":" · ")+size,13,false,ink));
     }
     private ImageView preloadRemotePhoto(AssetSummary asset){
         ImageView photo=new ImageView(this);photo.setRotation(rotationByAssetId.getOrDefault(asset.assetId(),0));loadViewerPhoto(asset,photo,connectionState.isReachable());return photo;
@@ -2774,8 +2783,8 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     private void showMetadataNotice(LinearLayout section,String message) {
         section.removeAllViews();section.setVisibility(message.isBlank()?View.GONE:View.VISIBLE);
         if(message.isBlank())return;
-        TextView notice=text(message,13,false,getColor(R.color.text_primary));
-        notice.setPadding(dp(12),dp(11),dp(12),dp(11));notice.setBackground(roundRect(0xfff7eef0,14));
+        TextView notice=text(message,13,false,getColor(R.color.photo_detail_text));
+        notice.setPadding(dp(12),dp(11),dp(12),dp(11));notice.setBackground(roundRect(0x501d1920,14));
         section.addView(notice,new LinearLayout.LayoutParams(-1,-2));
     }
 
@@ -2784,7 +2793,11 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
     }
 
     private void renderClothingSection(String assetId, String metadataJson, LinearLayout section,AssetSummary source) {
-        String notice=PlayerFacingDetails.metadataNoticeForAsset(source,metadataJson);
+        renderClothingSection(assetId,metadataJson,section,source,false);
+    }
+
+    private void renderClothingSection(String assetId, String metadataJson, LinearLayout section,AssetSummary source,boolean savedLive) {
+        String notice=PlayerFacingDetails.metadataNoticeForAsset(source,metadataJson,savedLive);
         showMetadataNotice(section,notice);
         if (metadataJson == null) return;
         try {
@@ -2803,7 +2816,7 @@ public final class MainActivity extends ComponentActivity implements NsdDiscover
             }
             if (displayCount == 0) return;
 
-            TextView heading = text("穿搭 · " + displayCount + " 件", 16, true, getColor(R.color.text_primary));
+            TextView heading = text("穿搭 · " + displayCount + " 件", 16, true, getColor(R.color.photo_detail_text));
             heading.setPadding(dp(4), dp(6), dp(4), dp(8)); section.addView(heading);
 
             for (int i = 0; i < clothes.length(); i++) {

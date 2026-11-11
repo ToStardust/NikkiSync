@@ -57,10 +57,10 @@ public final class PlayerFacingDetailsTest {
 
     @Test public void checkedIndexWithoutParameterMarkerExplainsEvidenceAndNextStep() {
         String notice=PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false,\"sourceParametersComplete\":false}}");
-        assertTrue(notice.contains("未检测到"));
+        assertTrue(notice.contains("没有可用的穿搭和拍摄参数"));
         assertTrue(notice.contains("原图"));
         assertFalse(notice.contains("一定"));
-        assertFalse(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":false}}").contains("未检测到"));
+        assertTrue(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":false}}").contains("没有可显示的"));
     }
 
     @Test public void screenshotPathGetsSpecificHintButEmbeddedParametersStillUseResolverGuidance() {
@@ -69,7 +69,7 @@ public final class PlayerFacingDetailsTest {
         String screenshot=PlayerFacingDetails.metadataNotice(null,"D:\\Game\\ScreenShot\\photo.jpg");
         assertTrue(screenshot.contains("来自 ScreenShot"));
         assertTrue(screenshot.contains("游戏内相机原图"));
-        assertTrue(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false}}", "D:/Game/ScreenShot/photo.jpg").contains("已检查但未检测到"));
+        assertEquals(screenshot, PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false}}", "D:/Game/ScreenShot/photo.jpg"));
         String embedded=PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":true,\"resolver\":{\"status\":\"failed\"}}}", "D:/Game/ScreenShot/photo.jpg");
         assertTrue(embedded.contains("尚未解码成功"));
         assertFalse(embedded.contains("来自 ScreenShot"));
@@ -108,8 +108,21 @@ public final class PlayerFacingDetailsTest {
     @Test public void indexedLiveWithoutParametersHasOneDirectReason() {
         AssetSummary live=new AssetSummary("live","photo","ready",null,null,1,100,100,true,false,null,null,null,null);
         String notice=PlayerFacingDetails.metadataNoticeForAsset(live,null);
-        assertTrue(notice.contains("LIVE 照片未读到游戏参数"));
+        assertEquals("这张是 LIVE 照片，不带穿搭和拍摄参数。", notice);
+        assertEquals(notice, PlayerFacingDetails.metadataNoticeForAsset(null, null, true));
         assertFalse(notice.contains("普通截图"));assertFalse(notice.contains("可能"));
+    }
+
+    @Test public void explicitCollageStickerAndGroupSourcesExplainTheTypeUnlessActualParametersExist() {
+        AssetSummary original=new AssetSummary("special","photo","ready",null,null,1,100,100,false,true,null,null,null,null);
+        String checked="{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false}}";
+        for (String[] pair : new String[][]{{"Collage/HighQuality", "拼图"}, {"贴图", "贴图"}, {"GroupPhotos", "双人合照"}}) {
+            String folder="D:/Game/ScreenShot/"+pair[0];
+            AssetSummary asset=original.withSource(folder+"/photo.jpg",folder,null);
+            assertEquals("这张是"+pair[1]+"，不带穿搭和拍摄参数。", PlayerFacingDetails.metadataNoticeForAsset(asset,checked));
+            assertEquals("", PlayerFacingDetails.metadataNoticeForAsset(asset,
+                    "{\"camera\":{\"exposure\":0},\"dressing\":{\"clothes\":[{\"id\":\"123\"}]}}"));
+        }
     }
 
     @Test public void screenshotFolderAndNativeResolverEvidenceTakeDifferentPaths() {

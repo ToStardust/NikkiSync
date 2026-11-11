@@ -98,11 +98,10 @@ public final class ChromeNavigationHost extends FrameLayout {
             @Override protected void dispatchDraw(android.graphics.Canvas c){if(c.isHardwareAccelerated())source.record(getWidth(),getHeight());super.dispatchDraw(c);}
         };
         layer.addView(recording,new LayoutParams(-1,-1));
-        LiquidGlassDockView glass=new LiquidGlassDockView(getContext(),source,sheet,true);
+        LiquidGlassDockView glass=new LiquidGlassDockView(getContext(),source,sheet,true,dismissOutside);
         recording.addView(glass,new LayoutParams(-1,-1));
         ArrayList<LiquidGlassDockView> controlGlass=new ArrayList<>();
-        // A solid detail surface owns its buttons and text colors; glass tinting would erase them.
-        if(glassControls&&sheet.getBackground()==null)addSheetControlGlass(sheet,source,recording,controlGlass);
+        if(glassControls&&sheet.getBackground()==null)addSheetControlGlass(sheet,source,recording,controlGlass,dismissOutside);
         Runnable updateGeometry=()->{
             glass.invalidate();
             for(View control:controlGlass)control.invalidate();
@@ -140,22 +139,24 @@ public final class ChromeNavigationHost extends FrameLayout {
         while(top()!=found)remove(top());
         commit(true);
     }
-    private void addSheetControlGlass(View view,ContentBackdrop source,FrameLayout recording,ArrayList<LiquidGlassDockView> controls){
+    private void addSheetControlGlass(View view,ContentBackdrop source,FrameLayout recording,ArrayList<LiquidGlassDockView> controls,boolean photoDetails){
         if(view instanceof android.widget.Button || view instanceof android.widget.EditText){
-            ((android.widget.TextView)view).setTextColor(getContext().getColor(app.nikkisync.mobile.R.color.text_primary));
+            ((android.widget.TextView)view).setTextColor(getContext().getColor(photoDetails
+                ? app.nikkisync.mobile.R.color.photo_detail_glass_ink : app.nikkisync.mobile.R.color.text_primary));
             // Scrolling controls must own their material: an independently rendered
             // overlay can lag or remain visible during overscroll on real devices.
             boolean scrolling=false;
             for(android.view.ViewParent p=view.getParent();p instanceof View;p=p.getParent())
                 if(p instanceof android.widget.ScrollView){scrolling=true;break;}
-            if(scrolling)view.setBackgroundResource(app.nikkisync.mobile.R.drawable.bg_glass_chip);
+            if(scrolling)view.setBackgroundResource(photoDetails
+                ? app.nikkisync.mobile.R.drawable.bg_photo_detail_glass_chip : app.nikkisync.mobile.R.drawable.bg_glass_chip);
             else {
                 view.setBackgroundColor(android.graphics.Color.TRANSPARENT);
                 LiquidGlassDockView effect=new LiquidGlassDockView(getContext(),source,view);
                 recording.addView(effect,new LayoutParams(-1,-1));controls.add(effect);
             }
         }
-        if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++)addSheetControlGlass(group.getChildAt(i),source,recording,controls);
+        if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++)addSheetControlGlass(group.getChildAt(i),source,recording,controls,photoDetails);
     }
     private boolean userCanDismiss(){return !(top().moving() instanceof ChromeSheetLayout sheet)||sheet.isUserDismissible();}
     public void progress(float p){

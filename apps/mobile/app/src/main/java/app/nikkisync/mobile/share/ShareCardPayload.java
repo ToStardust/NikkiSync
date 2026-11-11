@@ -25,6 +25,7 @@ public record ShareCardPayload(
         return switch (label) {
             case "动作" -> "pose";
             case "光照" -> "lighting";
+            case "滤镜" -> "filter";
             default -> "";
         };
     }

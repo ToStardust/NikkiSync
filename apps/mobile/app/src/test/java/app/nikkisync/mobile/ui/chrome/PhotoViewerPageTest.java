@@ -11,15 +11,19 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class PhotoViewerPageTest {
-    @Test public void photoDetailsUseAnOpaqueReadableSurface() throws Exception {
+    @Test public void photoDetailsKeepTheGlassBackdropAndReadableText() throws Exception {
         Fixture f=fixture();try{
             f.page.openDetails();idle();
             var field=PhotoViewerPage.class.getDeclaredField("sheet");field.setAccessible(true);
             ChromeSheetLayout sheet=(ChromeSheetLayout)field.get(f.page);
-            var background=(android.graphics.drawable.GradientDrawable)sheet.getBackground();
-            assertEquals(0xfffffbf8,background.getColor().getDefaultColor());
-            assertEquals(0xff30282c,((TextView)findText(sheet,"照片详情")).getCurrentTextColor());
-            assertEquals(0xff30282c,((TextView)findText(sheet,"完成")).getCurrentTextColor());
+            assertNull("An opaque sheet would cover the glass", sheet.getBackground());
+            FrameLayout layer=(FrameLayout)sheet.getParent();
+            FrameLayout recording=(FrameLayout)layer.getChildAt(0);
+            assertTrue(recording.getChildAt(0) instanceof LiquidGlassDockView);
+            assertEquals(f.activity.getColor(app.nikkisync.mobile.R.color.photo_detail_text),
+                    ((TextView)findText(sheet,"照片详情")).getCurrentTextColor());
+            assertEquals(f.activity.getColor(app.nikkisync.mobile.R.color.photo_detail_glass_ink),
+                    ((TextView)findText(sheet,"完成")).getCurrentTextColor());
         }finally{f.activity.nav.close();f.activity.finish();}
     }
     @Test public void selectionCircleBackgroundSurvivesViewerHeaderTint(){

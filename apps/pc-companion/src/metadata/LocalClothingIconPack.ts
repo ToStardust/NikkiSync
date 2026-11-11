@@ -13,7 +13,8 @@ const validSide = (value: unknown): value is number =>
 
 type IconFile = { sha256: string; file: string; webp?: { width: number; height: number; sizeBytes: number } }
 type PackImage = { image: Buffer; sha256: string; mime: 'image/png' | 'image/webp'; source: 'item' | 'category' }
-export type PhotoEffectKind = 'pose' | 'lighting'
+const PHOTO_EFFECT_KINDS = ['pose', 'lighting', 'filter'] as const
+export type PhotoEffectKind = typeof PHOTO_EFFECT_KINDS[number]
 
 export interface LocalClothingIconPack {
   readonly valid: boolean
@@ -22,6 +23,17 @@ export interface LocalClothingIconPack {
   read(id: string): Promise<PackImage | undefined>
   effectSha256For(kind: PhotoEffectKind, id: string): string | undefined
   readEffect(kind: PhotoEffectKind, id: string): Promise<PackImage | undefined>
+}
+
+/** Extra effects shipped with the application also work for previously installed icon packs. */
+export function withLocalPhotoEffectIcons(pack: LocalClothingIconPack, supplement: LocalClothingIconPack | undefined): LocalClothingIconPack {
+  if (!supplement?.valid) return pack
+  return {
+    ...pack,
+    cacheVersion: sha256(pack.cacheVersion + supplement.cacheVersion),
+    effectSha256For: (kind, id) => pack.effectSha256For(kind, id) ?? supplement.effectSha256For(kind, id),
+    readEffect: async (kind, id) => await pack.readEffect(kind, id) ?? supplement.readEffect(kind, id)
+  }
 }
 
 function webpFile(entry: Record<string, unknown>, file: string): NonNullable<IconFile['webp']> {
@@ -129,7 +141,7 @@ export async function loadLocalClothingIconPack(directory: string): Promise<Loca
     const effectEntries = webp ? manifest.effectEntries ?? [] : []
     if (!Array.isArray(effectEntries) || effectEntries.length > 5000) throw new Error('Invalid photo effect entries')
     for (const entry of effectEntries) {
-      if (!['pose', 'lighting'].includes(entry?.kind) || typeof entry.id !== 'string' || !/^[1-9]\d{0,11}$/.test(entry.id)
+      if (!PHOTO_EFFECT_KINDS.includes(entry?.kind) || typeof entry.id !== 'string' || !/^[1-9]\d{0,11}$/.test(entry.id)
         || typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Invalid photo effect entry')
       const aliases = entry.aliases ?? []
       if (!Array.isArray(aliases) || aliases.length > 8
