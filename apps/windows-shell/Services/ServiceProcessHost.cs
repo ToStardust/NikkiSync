@@ -156,6 +156,7 @@ public sealed class ProcessServiceFactory : IServiceProcessFactory
         };
         foreach (var (key, value) in environment) info.Environment[key] = value;
         info.Environment["NIKKISYNC_RECYCLE_HELPER"] = Environment.ProcessPath;
+        info.Environment["NIKKISYNC_DESKTOP_VERSION"] = DesktopRelease.Version;
         return new ProcessChild(Process.Start(info) ?? throw new ServiceStartException(StartupFailure.Create("SERVICE_EXIT")));
     }
 

@@ -59,7 +59,7 @@ test('page wires explicit selection to original-save and keeps failures selected
   let page,write,album,authorize;const requests=[];
   const root=new URL('../../apps/wechat-mini-program/miniprogram/',import.meta.url),module={exports:{}};
   runInNewContext(await readFile(new URL('lib/original-save.js',root),'utf8'),{module,Date,Uint8Array});
-  const wx={env:{USER_DATA_PATH:'/cache'},authorize:o=>authorize=o,saveImageToPhotosAlbum:o=>album=o,getFileSystemManager:()=>({writeFile:o=>write=o,unlink(){}})};
+  const wx={env:{USER_DATA_PATH:'/cache'},getDeviceInfo:()=>({platform:'ios'}),authorize:o=>authorize=o,saveImageToPhotosAlbum:o=>album=o,getFileSystemManager:()=>({writeFile:o=>write=o,unlink(){}})};
   runInNewContext(await readFile(new URL('pages/local-gallery/index.js',root),'utf8'),{Date,Uint8Array,Page:p=>page=p,wx,require:path=>path.includes('original-save')?module.exports:{}});
   page.setData=(x,done)=>{Object.assign(page.data,x);if(done)done();};page.onLoad();page.onShow();
   page.setData({connected:true,downloadEnabled:true,photos:[{id:'a'.repeat(32),path:'/cache/preview-a.jpg',selected:true},{id:'b'.repeat(32),path:'/cache/preview-b.jpg',selected:true}],selectedCount:2});
@@ -67,6 +67,7 @@ test('page wires explicit selection to original-save and keeps failures selected
   page.saveSelected();assert.equal(page.data.saving,true);assert.equal(requests.length,0);authorize.success();
   assert.match(write.filePath,/nikkisync-original-/);assert.notEqual(write.filePath,page.data.photos[0].path);write.success();
   assert.equal(page.data.saving,true);album.success();assert.equal(page.data.saving,false);
+  assert.match(page.data.saveMessage,/按最近添加排序.*最近保存/);
   assert.equal(page.data.photos[0].saveState,'saved');assert.equal(page.data.photos[0].selected,false);
   assert.equal(page.data.photos[1].saveState,'failed');assert.equal(page.data.photos[1].selected,true);assert.equal(page.data.selectedCount,1);
 });
@@ -107,6 +108,22 @@ test('compact date summary and photo atmosphere are derived locally from the cur
   page.updatePhoto(0,{path:''}); assert.equal(page.data.ambientPath,'/cache/verified-b.jpg');
   page.setData({busy:false}); page.loadPage(24);
   assert.equal(page.data.ambientPath,''); assert.equal(page.data.loaded,0);
+});
+
+test('clear filters resets the offline query and resume page, and an outdated offset returns to page one',async()=>{
+ let page,request;
+ const root=new URL('../../apps/wechat-mini-program/miniprogram/pages/local-gallery/',import.meta.url);
+ runInNewContext(await readFile(new URL('index.js',root),'utf8'),{Date,Uint8Array,Page:p=>page=p,require:()=>({}),wx:{}});
+ page.setData=(x,done)=>{Object.assign(page.data,x);done?.();};page.onLoad();page.onShow();
+ page.setData({filterActive:true,filterVersion:'2.10',searchText:'裙',connected:false});
+ page._query={version:'2.10',text:'裙'};page._resumeOffset=24;
+ page.clearFilters();
+ assert.equal(page.data.filterActive,false);assert.deepEqual(Object.keys(page._query),[]);assert.equal(page._resumeOffset,0);
+ page.setData({connected:true,browseEnabled:true});
+ page._channel={browse:(offset,query,done)=>request={offset,query,done},preview(){}};
+ page.loadPage(24);
+ request.done({status:'ok',total:8,items:[],next:null});
+ assert.equal(request.offset,0);
 });
 test('connection failure remains visible after page generation changes and late writes never reappear after exit', async () => {
   let page,hooks,listed,previewed,write;const removed=[];

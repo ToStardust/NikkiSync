@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.IO;
+using System.Net.Http;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _startupTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Stopwatch _startupWatch = new();
     private readonly string? _verificationDirectory;
+    private readonly bool _autoProgramUpdates;
     private readonly TaskCompletionSource<bool> _startupCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<bool> StartupCompleted => _startupCompleted.Task;
     public Dictionary<string, double> StartupTimings { get; } = new();
@@ -40,16 +42,19 @@ public partial class MainWindow : Window
     private int _networkAuthorizationRevision;
     private bool _extraFolderPickerOpen;
     private bool _diagnosticExportBusy;
+    private bool _supportSubmitBusy;
     private bool _serviceRestartBusy;
     private bool _startupInProgress=true;
     private string? _autostartMessage;
     private int? _lastNetworkRepairCode;
     private string? _lastNetworkRepairOperation;
     private string? _lastNetworkRepairState;
+    private const string IconFeedUrl = "https://cnb.cool/nikkisync/icon-packs/-/releases/download/icons-update/MomoCamera-Icons-catalog.json";
 
-    public MainWindow(int desktopPort = 28950, string? verificationDirectory = null)
+    public MainWindow(int desktopPort = 28950, string? verificationDirectory = null, bool autoProgramUpdates = true)
     {
         _desktopPort = desktopPort;
+        _autoProgramUpdates = autoProgramUpdates;
         _service = new(new ProcessServiceFactory(), _health, desktopPort: desktopPort);
         _verificationDirectory = verificationDirectory;
         InitializeComponent();
@@ -125,6 +130,29 @@ public partial class MainWindow : Window
             _startupCancellation.Token.ThrowIfCancellationRequested();
             StartupTimings["browserReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             StartupText.Text = "3 / 4 · 正在同步相册并启动连接服务…";
+            if (_verificationDirectory is null)
+            {
+                try
+                {
+                    using var http = new UpdateHttp();
+                    var icons = new IconPackUpdater(RuntimePayload.UserDirectory, DesktopRelease.ReadPublicKey(),
+                        (url, limit, token) => http.GetBytesAsync(new Uri(url), limit, token));
+                    bool activated = await Task.Run(() => icons.ActivatePrepared(), _startupCancellation.Token);
+                    if (activated) _tray.Notify("素材更新完成", "本地素材已更新。");
+                    using var embeddedIcons = typeof(IconPackUpdater).Assembly.GetManifestResourceStream(
+                        IconPackUpdater.InitialPackResource);
+                    bool installed = await Task.Run(() => embeddedIcons is null
+                        ? icons.InstallInitialPack(Path.Combine(AppContext.BaseDirectory,
+                            IconPackUpdater.InitialPackFileName), _startupCancellation.Token)
+                        : icons.InstallInitialPack(embeddedIcons, _startupCancellation.Token), _startupCancellation.Token);
+                    if (installed) _tray.Notify("本地图标安装完成", "完整素材包已就绪，以后有新部件会自动更新。");
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine("Icon update activation failed: " + error.GetType().Name);
+                    _tray.Notify("本地图标暂不可用", "请重新下载电脑助手，或稍后再试。");
+                }
+            }
             _startupPhase = "service";
             RecordStartupTimings("starting");
             if (_verificationDirectory is not null)
@@ -171,7 +199,12 @@ public partial class MainWindow : Window
             StartupTimings["dashboardReadyMs"] = _startupWatch.Elapsed.TotalMilliseconds;
             RecordStartupTimings("ready");
             _startupCompleted.TrySetResult(true);
-            if (_verificationDirectory is null) _ = CheckForUpdatesQuietlyAsync();
+            if (_verificationDirectory is null)
+            {
+                _ = Task.Run(() => { try { UpdateInstaller.CleanupCompletedJobs(); } catch (IOException) { } catch (InvalidDataException) { } });
+                _ = CheckForUpdatesQuietlyAsync();
+                _ = CheckIconUpdatesQuietlyAsync();
+            }
         }
         catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
         { _startupTimer.Stop(); RecordStartupTimings("cancelled"); _startupCompleted.TrySetResult(false); }
@@ -307,6 +340,7 @@ public partial class MainWindow : Window
         if(type.GetString() is "authorizeNetwork" or "revokeNetwork") _=AuthorizeNetworkAsync(type.GetString()=="revokeNetwork");
         if(type.GetString()=="checkNetworkConflicts")_=RefreshNetworkConflictsAsync();
         if(type.GetString()=="exportConnectionDiagnostics")_=ExportConnectionDiagnosticsAsync();
+        if(type.GetString()=="sendSupportDiagnostics")_=SendSupportDiagnosticsAsync();
         if(type.GetString()=="restartSyncService")_=RestartSyncServiceAsync();
         if(type.GetString() is "repairNetworkConflicts" or "restoreNetworkConflicts")_=RepairNetworkConflictsAsync(type.GetString()=="restoreNetworkConflicts");
         if(type.GetString() is "chooseExtraScanDirectory" or "chooseSpinningMomoDirectory")ChooseExtraScanDirectory(type.GetString()=="chooseSpinningMomoDirectory");
@@ -317,7 +351,6 @@ public partial class MainWindow : Window
             catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
             { System.Windows.MessageBox.Show(this, "请在浏览器中打开：\n" + projectUrl, "项目仓库"); }
         }
-        if (type.GetString() == "saveAndroidInstaller") SaveAndroidInstaller();
         if (type.GetString() == "setAutostart" && message.RootElement.TryGetProperty("enabled", out var enabled) && (enabled.ValueKind is JsonValueKind.True or JsonValueKind.False))
         {
             try
@@ -350,13 +383,32 @@ public partial class MainWindow : Window
         var failure=await _service.ReadExitedFailureAsync(_startupCancellation.Token);
         if(failure is not null)StartupDiagnostics.Write(_verificationDirectory is null?RuntimePayload.UserDirectory:Path.Combine(_verificationDirectory,"localdata","NikkiSync"),"service",failure);
     }
-    private async Task RestartSyncServiceAsync()
+    private async Task RestartSyncServiceAsync(IconPackUpdater? iconUpdater = null)
     {
         if(_serviceRestartBusy||_diagnosticExportBusy||_startupCancellation.IsCancellationRequested)return;
         if(_startupInProgress)return;
         _serviceRestartBusy=true;
-        NativeRecoveryStatus.Text="正在重启同步服务…";UpdateNativeRecoveryActions();
-        try{await CaptureStoppedServiceAsync();_viewPower?.Stop();await _service.StopAsync();RetryStartup();}
+        NativeRecoveryStatus.Text=iconUpdater is null?"正在重启同步服务…":"正在安装新图标并刷新同步服务…";UpdateNativeRecoveryActions();
+        try
+        {
+            if(iconUpdater is null)await CaptureStoppedServiceAsync();
+            _viewPower?.Stop();
+            await _service.StopAsync();
+            if(iconUpdater is not null)
+            {
+                try
+                {
+                    bool activated=await Task.Run(() => iconUpdater.ActivatePrepared(),_startupCancellation.Token);
+                    if(activated)_tray.Notify("素材更新完成","新图标已经安装，正在刷新相册。");
+                }
+                catch(Exception error) when(error is not OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine("Icon update activation failed: "+error.GetType().Name);
+                    _tray.Notify("图标更新暂未完成","旧图标仍可使用，下一次启动会自动重试。");
+                }
+            }
+            RetryStartup();
+        }
         catch(Exception){
             _serviceRestartBusy=false;UpdateNativeRecoveryActions();NativeRecoveryStatus.Text="服务重启未完成，请导出诊断包反馈。";
             if(!_startupCancellation.IsCancellationRequested)try{ControlPage.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="syncServiceRestart",busy=false,message=NativeRecoveryStatus.Text}));}catch(InvalidOperationException){}
@@ -393,6 +445,57 @@ public partial class MainWindow : Window
         catch(Exception error) when(error is IOException or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Security.SecurityException){Reply(false,"诊断包未能保存，请换一个可写文件夹重试（DIAG-EXPORT）。");}
         finally{_diagnosticExportBusy=false;UpdateNativeRecoveryActions();}
     }
+    private async Task SendSupportDiagnosticsAsync()
+    {
+        if(_supportSubmitBusy||_startupCancellation.IsCancellationRequested)return;
+        void Reply(bool busy,string message)
+        {
+            if(_startupCancellation.IsCancellationRequested)return;
+            try{ControlPage.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="supportDiagnostics",busy,message}));}
+            catch(InvalidOperationException){}
+        }
+        if(_verificationDirectory is not null||SupportGatewayClient.ConfiguredEndpoint() is not { } endpoint)
+        {
+            Reply(false,"在线反馈暂未开通，可以先导出日志。");
+            return;
+        }
+        _supportSubmitBusy=true;
+        Reply(true,"正在整理诊断摘要…");
+        try
+        {
+            var stopped=_service.IsChildRunning==false;
+            var report=await Task.Run(()=>ConnectionDiagnosticsPackage.SupportReport(
+                RuntimePayload.UserDirectory,DesktopRelease.Version,DesktopRelease.Build,stopped),_startupCancellation.Token);
+            if(_startupCancellation.IsCancellationRequested)return;
+            string preview=JsonSerializer.Serialize(report,SupportGatewayClient.JsonOptions);
+            if(System.Windows.MessageBox.Show(this,"以下内容将发送到项目的私有 CNB 工单。\n\n"+preview+"\n确认发送？",
+                "预览诊断日志",MessageBoxButton.YesNo,MessageBoxImage.None,MessageBoxResult.No)!=MessageBoxResult.Yes)
+            {
+                Reply(false,"已取消发送。");
+                return;
+            }
+            Reply(true,"正在提交诊断…");
+            var (issue,receipt)=await SupportGatewayClient.SubmitAsync(endpoint,report,_startupCancellation.Token);
+            if(_startupCancellation.IsCancellationRequested)return;
+            Reply(false,"已提交工单 #"+issue+"。可在手机上绑定回执码。");
+            if(System.Windows.MessageBox.Show(this,"工单 #"+issue+" 已提交。\n\n"+receipt+
+                "\n\n复制回执码后，在手机「诊断与反馈 → 绑定电脑反馈」中粘贴。现在复制？",
+                "反馈回执",MessageBoxButton.YesNo,MessageBoxImage.None,MessageBoxResult.Yes)==MessageBoxResult.Yes)
+            {
+                try{System.Windows.Clipboard.SetText(receipt);}
+                catch(System.Runtime.InteropServices.ExternalException)
+                {
+                    System.Windows.MessageBox.Show(this,"请记录回执码：\n"+receipt,"反馈回执");
+                }
+            }
+        }
+        catch(Exception error) when(error is IOException or System.Net.Http.HttpRequestException or JsonException or OperationCanceledException)
+        {
+            Reply(false,"暂时无法发送诊断，可以先导出日志。");
+        }
+        finally{_supportSubmitBusy=false;}
+    }
+
     private async Task ChangeHotspotAsync(bool stop)
     {
         if(_verificationDirectory is not null){ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new{type="temporaryNetwork",busy=false,message="测试验收模式：不会改变网络。"}));return;}
@@ -523,19 +626,8 @@ public partial class MainWindow : Window
     }
     private void ReplyPackageInfo() => ControlPage.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new {
         type = "packageInfo", version = DesktopRelease.Version, build = DesktopRelease.Build,
-        hasAndroidInstaller = AndroidInstallerPath is { } path && File.Exists(path), availableUpdateVersion = _availableUpdate?.Manifest.Version, availableUpdateBuild = _availableUpdate?.Manifest.Build
+        availableUpdateVersion = _availableUpdate?.Manifest.Version, availableUpdateBuild = _availableUpdate?.Manifest.Build
     }));
-
-    private string? AndroidInstallerPath => _runtimeDirectory is null ? null : Path.Combine(_runtimeDirectory, "runtime", "NikkiSync-Android.apk");
-    private void SaveAndroidInstaller()
-    {
-        if (AndroidInstallerPath is not { } source || !File.Exists(source)) return;
-        var dialog = new Microsoft.Win32.SaveFileDialog { FileName = "NikkiSync-Android.apk", Filter = "安卓安装包 (*.apk)|*.apk", Title = "导出安卓安装包" };
-        if (dialog.ShowDialog(this) != true) return;
-        try { File.Copy(source, dialog.FileName, true); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        { System.Windows.MessageBox.Show(this, "无法保存安装包：" + error.Message, "NikkiSync"); }
-    }
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
@@ -565,17 +657,70 @@ public partial class MainWindow : Window
         _updateWindow.Show();
     }
 
-    private async Task CheckForUpdatesQuietlyAsync()
+    internal string? UpdatePatchTool => _runtimeDirectory is null ? null : Path.Combine(_runtimeDirectory, "runtime", "tools", "xdelta3.exe");
+
+    private async Task CheckIconUpdatesQuietlyAsync()
     {
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_startupCancellation.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(35));
             using var http = new UpdateHttp();
-            _availableUpdate = await new DesktopUpdateSource(http, DesktopRelease.CreateVerifier(), DesktopRelease.Build).CheckAsync(UpdateWindow.ReadSource(), timeout.Token);
-            if (!_startupCancellation.IsCancellationRequested) ReplyPackageInfo();
+            var updater = new IconPackUpdater(RuntimePayload.UserDirectory, DesktopRelease.ReadPublicKey(),
+                (url, limit, token) => http.GetBytesAsync(new Uri(url), limit, token));
+            bool ready = await Task.Run(() => updater.CheckWithRetryAsync(IconFeedUrl, _startupCancellation.Token), _startupCancellation.Token);
+            if (ready && !_startupCancellation.IsCancellationRequested)
+            {
+                while ((_serviceRestartBusy || _diagnosticExportBusy || _startupInProgress)
+                    && !_startupCancellation.IsCancellationRequested)
+                    await Task.Delay(500, _startupCancellation.Token);
+                if (!_startupCancellation.IsCancellationRequested)
+                    await RestartSyncServiceAsync(updater);
+            }
         }
-        catch { /* Offline startup remains usable; manual update check displays feedback. */ }
+        catch (Exception error) { System.Diagnostics.Debug.WriteLine("Icon update check failed: " + error.GetType().Name); }
+    }
+
+    private async Task CheckForUpdatesQuietlyAsync()
+    {
+        for (var attempt = 0; attempt < 3 && !_startupCancellation.IsCancellationRequested; attempt++)
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_startupCancellation.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(35));
+                using var http = new UpdateHttp();
+                _availableUpdate = await new DesktopUpdateSource(http, DesktopRelease.CreateVerifier(), DesktopRelease.Build)
+                    .CheckAsync(UpdateWindow.ReadSource() ?? DesktopRelease.DefaultManifestUrl, timeout.Token);
+                if (!_startupCancellation.IsCancellationRequested) ReplyPackageInfo();
+                if (!_autoProgramUpdates || _availableUpdate is null || UpdateInstaller.HasFailedAutomaticBuild(_availableUpdate.Manifest.Build)) return;
+                string candidate;
+                using (var downloadTimeout = CancellationTokenSource.CreateLinkedTokenSource(_startupCancellation.Token))
+                {
+                    downloadTimeout.CancelAfter(TimeSpan.FromMinutes(30));
+                    candidate = await new UpdateDownloader(http, DesktopRelease.UpdateRoot, patchTool: UpdatePatchTool)
+                        .DownloadAsync(_availableUpdate, null, downloadTimeout.Token);
+                }
+                while ((_startupInProgress || _serviceRestartBusy || _diagnosticExportBusy || _supportSubmitBusy || _updateWindow is not null)
+                    && !_startupCancellation.IsCancellationRequested)
+                    await Task.Delay(500, _startupCancellation.Token);
+                _startupCancellation.Token.ThrowIfCancellationRequested();
+                using var helper = UpdateInstaller.LaunchHelper(candidate, automatic: true);
+                await ExitAsync();
+                return;
+            }
+            catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested) { return; }
+            catch (Exception error) when (error is HttpRequestException or IOException or TaskCanceledException)
+            {
+                System.Diagnostics.Debug.WriteLine("Desktop update retry: " + error.GetType().Name);
+                if (attempt == 2) return;
+                try { await Task.Delay(TimeSpan.FromSeconds(attempt == 0 ? 5 : 20), _startupCancellation.Token); }
+                catch (OperationCanceledException) { return; }
+            }
+            catch (Exception error)
+            {
+                System.Diagnostics.Debug.WriteLine("Desktop update check failed: " + error.GetType().Name);
+                return;
+            }
+        }
     }
 
     private Task UpdateViewPowerAsync() => _viewPower?.SetActiveAsync(IsVisible && WindowState != WindowState.Minimized) ?? Task.CompletedTask;
@@ -594,6 +739,8 @@ public partial class MainWindow : Window
                     visible:document.querySelector('[data-page=about]')?.hidden===false,
                     version:document.querySelector('#desktop-version')?.textContent,
                     updateEnabled:document.querySelector('#check-updates')?.disabled===false,
+                    diagnosticsEnabled:document.querySelector('#about-export-diagnostics')?.disabled===false,
+                    feedbackEnabled:document.querySelector('#send-support-diagnostics')?.disabled===false,
                     repositories:[...document.querySelectorAll('[data-project]')].map(link=>link.href)};
             })()");
             using var state = JsonDocument.Parse(json);
@@ -605,7 +752,8 @@ public partial class MainWindow : Window
                 var links = value.GetProperty("repositories").EnumerateArray().Select(link => link.GetString()).ToHashSet();
                 var ok = value.GetProperty("title").GetString() == "关于" && value.GetProperty("visible").GetBoolean()
                     && value.GetProperty("updateEnabled").GetBoolean()
-                    && new[] { "momo", "nikkiGallery", "releases", "downloads" }.All(name => links.Contains(DesktopProjectLinks.Resolve(name)));
+                    && value.GetProperty("diagnosticsEnabled").GetBoolean() && value.GetProperty("feedbackEnabled").GetBoolean()
+                    && new[] { "momo", "nikkiGallery", "nikkiAlbums", "meowStarMap", "nuan5", "gongeo", "releases", "downloads", "quark", "androidDirect" }.All(name => links.Contains(DesktopProjectLinks.Resolve(name)));
                 await Task.Delay(150);
                 using var image = File.Create(Path.Combine(_verificationDirectory, "about-screen.png"));
                 await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, image);
@@ -620,18 +768,12 @@ public partial class MainWindow : Window
     {
         if(_verificationDirectory is null)return false;
         await ControlPage.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-view=connect]').click();document.querySelector('#android-first-pairing')?.setAttribute('hidden','');document.querySelector('#android-paired').hidden=false;window.scrollTo(0,0);");
-        for(var attempt=0;attempt<60;attempt++)
-        {
-            var ready=await ControlPage.CoreWebView2.ExecuteScriptAsync("!document.querySelector('#android-installer').hidden");
-            if(ready=="true")break;
-            await Task.Delay(50);
-        }
         var home=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>({
             guideVisible:document.querySelector('#first-use-title')?.getClientRects().length>0,
             wechatReady:document.body.dataset.wechatEnabled==='true'
                 ? document.querySelector('#wechat-start')?.getClientRects().length>0&&document.querySelector('#wechat-modal')?.hidden===true&&typeof document.querySelector('#wechat-start')?.onclick==='function'
                 : !document.querySelector('#wechat-start')&&!document.querySelector('#wechat-modal'),
-            installerVisible:!document.querySelector('#android-installer').hidden,
+            downloadVisible:document.querySelector('#android-direct-download')?.getClientRects().length>0,
             entryCodeReady:document.body.dataset.wechatEnabled!=='true'||(document.querySelector('#wechat-entry-code')?.open===true&&document.querySelector('#wechat-entry-image')?.naturalWidth===800),
             helpCollapsed:document.querySelector('.first-use-guide')?.open===false,
             noHorizontalOverflow:document.documentElement.scrollWidth<=window.innerWidth
@@ -641,7 +783,7 @@ public partial class MainWindow : Window
         using(var image=File.Create(Path.Combine(_verificationDirectory,"first-use-home-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
         var shortcuts=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(()=>{
             document.querySelector('#first-use-title').click();
-            const helpExpanded=document.querySelector('.first-use-guide').open&&['#android-installer','#open-network-settings','#open-scan-settings'].every(selector=>document.querySelector(selector).getBoundingClientRect().height>=40);
+            const helpExpanded=document.querySelector('.first-use-guide').open&&['#open-network-settings','#open-scan-settings'].every(selector=>document.querySelector(selector).getBoundingClientRect().height>=40);
             document.querySelector('#open-network-settings').click();
             const networkOpened=!document.querySelector('[data-page=settings]').hidden&&document.querySelector('#authorize-network').getClientRects().length>0;
             document.querySelector('[data-view=connect]').click();document.querySelector('#open-scan-settings').click();
@@ -654,7 +796,19 @@ public partial class MainWindow : Window
         File.WriteAllText(Path.Combine(_verificationDirectory,"first-use-guide-verification.json"),"{\"home\":"+home+",\"shortcuts\":"+shortcuts+"}");
         using(var image=File.Create(Path.Combine(_verificationDirectory,"directory-guide-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
         using var shortcutState=JsonDocument.Parse(shortcuts);
-        return shortcutState.RootElement.EnumerateObject().All(item=>item.Value.ValueKind==JsonValueKind.True);
+        if(!shortcutState.RootElement.EnumerateObject().All(item=>item.Value.ValueKind==JsonValueKind.True))return false;
+        var selfCheck=await ControlPage.CoreWebView2.ExecuteScriptAsync(@"(() => {
+            document.querySelector('[data-view=connect]').click();
+            const panel=document.querySelector('.self-check');panel.open=true;panel.scrollIntoView({block:'start'});
+            return {expanded:panel.open,network:document.querySelector('#connection-self-check')?.textContent.length>0,
+                metadata:document.querySelector('#metadata-self-check')?.textContent.length>0,
+                actions:['#self-check-network-settings','#self-check-scan-settings'].every(id=>document.querySelector(id)?.getClientRects().length>0),
+                noHorizontalOverflow:document.documentElement.scrollWidth<=window.innerWidth};
+        })()");
+        File.WriteAllText(Path.Combine(_verificationDirectory,"self-check-verification.json"),selfCheck);
+        using(var image=File.Create(Path.Combine(_verificationDirectory,"self-check-screen.png")))await ControlPage.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+        using var selfCheckState=JsonDocument.Parse(selfCheck);
+        return selfCheckState.RootElement.EnumerateObject().All(item=>item.Value.ValueKind==JsonValueKind.True);
     }
 
     public async Task<bool> VerifyNetworkAuthorizationAsync()

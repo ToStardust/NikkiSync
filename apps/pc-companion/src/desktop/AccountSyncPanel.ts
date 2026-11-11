@@ -16,5 +16,15 @@ export const accountSyncScript=`
   }
   accountToggle.onclick=()=>{accountContent.hidden=!accountContent.hidden;accountToggle.setAttribute('aria-expanded',String(!accountContent.hidden));accountToggle.textContent='同步账号设置 · '+(accountContent.hidden?'展开':'收起');if(!accountContent.hidden)void loadSyncAccounts();};
   accountAll.onchange=()=>{for(const check of accountList.querySelectorAll('input')){check.disabled=accountAll.checked;if(accountAll.checked)check.checked=true;}};
-  accountSave.onclick=async()=>{if(!accountLoaded)return;accountSave.disabled=true;try{const uids=accountAll.checked?null:[...accountList.querySelectorAll('input:checked')].map(input=>input.dataset.uid);const response=await fetch('/api/sync-accounts',{method:'POST',headers:{...accountHeaders,'content-type':'application/json'},body:JSON.stringify({uids})});if(!response.ok)throw Error();accountNote.textContent='已保存，手机连接后会自动同步账号范围。';}catch{accountNote.textContent='未能保存，请重试。';}finally{accountSave.disabled=false;}};
+  accountSave.onclick=async()=>{
+    if(!accountLoaded)return;
+    accountSave.disabled=true;
+    try{
+      const uids=accountAll.checked?null:[...accountList.querySelectorAll('input:checked')].map(input=>input.dataset.uid);
+      const response=await fetch('/api/sync-accounts',{method:'POST',headers:{...accountHeaders,'content-type':'application/json'},body:JSON.stringify({uids})});
+      if(!response.ok)throw Error();
+      const state=await response.json();
+      accountNote.textContent=state.wechatReconnect?'已保存。请为小程序生成新的连接码。':'已保存，手机连接后会自动同步账号范围。';
+    }catch{accountNote.textContent='未能保存，请重试。';}finally{accountSave.disabled=false;}
+  };
 `

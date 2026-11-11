@@ -1,4 +1,6 @@
 import {inferInfinityNikkiGameVersion} from '../../apps/pc-companion/dist/src/server/GameVersionCalendar.js';
+import {clientApi} from '../wechat-crypto-spike/client-api.mjs';
+export const {MAX_GALLERY_ITEMS}=clientApi('gallery-channel');
 export function validateQuery(query={}){
  if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(x=>!['text','version','from','to','offsetMinutes'].includes(x)))throw new Error('Query fields');
  const out={};for(const key of ['text','version','from','to'])if(query[key]!==undefined){if(typeof query[key]!=='string')throw new Error('Query type');const value=query[key].trim();if(value)out[key]=value;}
@@ -16,7 +18,7 @@ export function projectPhoto(record){
 }
 const compareVersion=(a,b)=>{if(!a)return b?1:0;if(!b)return -1;const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let n=0;n<3;n++){const diff=(y[n]||0)-(x[n]||0);if(diff)return diff;}return 0;};
 export function browseSnapshot(records,offset,rawQuery){
- if(!Number.isInteger(offset)||offset<0||offset>500||!Array.isArray(records)||records.length>500)throw new Error('Browse bounds');const query=validateQuery(rawQuery),text=query.text?.normalize('NFKC').toLocaleLowerCase();
+ if(!Number.isInteger(offset)||offset<0||offset>MAX_GALLERY_ITEMS||!Array.isArray(records)||records.length>MAX_GALLERY_ITEMS)throw new Error('Browse bounds');const query=validateQuery(rawQuery),text=query.text?.normalize('NFKC').toLocaleLowerCase();
  const all=records.map(record=>({record,item:projectPhoto(record)})).sort((a,b)=>b.item.date.localeCompare(a.item.date)||(b.record.orderKey||b.item.id).localeCompare(a.record.orderKey||a.item.id)),counts=new Map();
  for(const {item} of all){const key=item.version;const value=counts.get(key)||{version:key,count:0,inferred:false};value.count++;if(item.versionSource==='inferred')value.inferred=true;counts.set(key,value);}
  const matches=all.filter(({record,item})=>{

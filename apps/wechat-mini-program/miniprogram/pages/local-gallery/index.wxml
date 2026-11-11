@@ -34,8 +34,8 @@
   </view>
   <view wx:if="{{!photos.length}}" class="empty-card glass-surface">
     <view class="empty-camera" aria-hidden="{{true}}"><view></view></view>
-    <view class="empty-title">{{busy ? '正在连接电脑' : filterActive ? '没有符合条件的照片' : connected ? '还没有照片' : '连接你的电脑'}}</view>
-    <view class="empty-copy">{{busy ? '连接后照片会显示在这里' : filterActive ? '换个服装名称或日期试试' : connected ? '在无限暖暖里拍下第一张照片吧。' : '在电脑端点击「微信下载照片」，然后扫码连接。'}}</view>
+    <view class="empty-title">{{busy ? (connected ? '正在读取电脑照片' : '正在连接电脑') : !connected ? '连接你的电脑' : filterActive ? '没有符合条件的照片' : '还没有照片'}}</view>
+    <view class="empty-copy">{{busy ? '照片加载后会显示在这里' : !connected ? '在电脑端点击「微信下载照片」，然后扫码连接。' : filterActive ? '换个服装名称或日期试试' : '在无限暖暖里拍下第一张照片吧。'}}</view>
     <button wx:if="{{filterActive && !busy}}" class="secondary-action" bindtap="clearFilters">清除筛选</button>
     <button wx:if="{{!connected}}" class="primary-action" bindtap="scanPc" loading="{{busy}}" disabled="{{busy}}">扫码连接电脑</button>
   </view>
@@ -159,8 +159,8 @@
         <button bindtap="generateShareCard" disabled="{{viewerVideo || busy || saving || infoLoading || hdLoading || !downloadEnabled || !connected}}">分享</button>
         <button bindtap="showPhotoInfo" disabled="{{viewerVideo || infoLoading || hdLoading}}">详情</button>
       </view>
-      <button wx:if="{{deletionEnabled}}" class="delete-action" bindtap="requestViewedDeletion" disabled="{{busy || saving || infoLoading || hdLoading || !connected}}">申请删除</button>
-      <button wx:if="{{deletionItems.length && connected}}" bindtap="cancelAllDeletions" disabled="{{saving}}">取消待处理申请</button>
+      <button wx:if="{{deletionEnabled && !viewerDeletionId}}" class="delete-action" bindtap="requestViewedDeletion" disabled="{{busy || saving || infoLoading || hdLoading || !connected}}">申请删除</button>
+      <button wx:if="{{viewerDeletionId && connected}}" data-id="{{viewerDeletionId}}" bindtap="cancelDeletion" disabled="{{busy || saving}}">取消这张的删除申请</button>
       <text wx:if="{{deletionMessage}}" class="viewer-deletion-note" aria-live="polite">{{deletionMessage}}</text>
       <button wx:if="{{viewerRotation}}" bindtap="restoreRotation" disabled="{{busy || saving || infoLoading || hdLoading || infoOpen}}">还原</button>
       <button wx:if="{{saving}}" bindtap="stopSaving" disabled="{{saveStopping}}">{{saveStopping ? '正在停止…' : '停止保存'}}</button>

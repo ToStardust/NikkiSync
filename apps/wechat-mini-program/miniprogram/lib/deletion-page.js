@@ -1,6 +1,6 @@
 const active=new Set(['preparing','pending','confirming','queued','checking','executing']);
 const names={preparing:'核对关联文件',pending:'等待电脑确认',confirming:'电脑已确认，正在核对',queued:'等待处理',checking:'检查原文件',executing:'正在移入回收站',recycled:'已移入电脑回收站',cancelled:'申请已取消',rejected:'电脑已取消',changed:'原文件已变化，未删除',failed:'未全部完成，请检查电脑'};
-const deletionData={deletionEnabled:false,deletionItems:[],deletionMessage:'',deletionOpen:false};
+const deletionData={deletionEnabled:false,deletionItems:[],viewerDeletionId:'',deletionMessage:'',deletionOpen:false};
 function checkedItems(value){
  if(!value||!Array.isArray(value.items)||value.items.length>20)throw Error('items');
  return value.items.map(item=>{
@@ -18,12 +18,14 @@ const deletionPage={
  toggleDeletionList(){this.setData({deletionOpen:!this.data.deletionOpen});},
  requestViewedDeletion(){if(this.data.selectedId)this.requestDeletion([this.data.selectedId]);},
  requestSelectedDeletion(){this.adoptSelection();this.requestDeletion(Array.from(this._selected));},
- cancelAllDeletions(){this._deletionCancel=this._deletionCancel||new Set();for(const item of this.data.deletionItems)if(active.has(item.state)&&item.state!=='executing')this._deletionCancel.add(item.id);this.pollDeletions();},
+ deletionIdForPhoto(photoId,items=this.data.deletionItems){
+  return items.find(item=>item.photoId===photoId&&item.canCancel)?.id||'';
+ },
  requestDeletion(ids){
   if(!this._alive||!this._active||!this.data.connected||!this.data.deletionEnabled||this.data.busy||this.data.saving||this.data.infoLoading||this.data.hdLoading||this.data.inspirationBusy)return;
   if(!ids.length||ids.length>20){this.setData({deletionMessage:'每次可申请 1–20 项，请缩小选择范围。',deletionOpen:true});return;}
   const epoch=this._connectionEpoch;
-  wx.showModal({title:'申请删除电脑原文件？',content:'这 '+ids.length+' 项的照片、关联视频和同张照片的其他画质版本，会在电脑确认后移入 Windows 回收站。手机已保存的副本保留。请保持小程序在前台；断线后未开始的申请会取消。',confirmText:'发送申请',confirmColor:'#B65F78',success:r=>{
+  wx.showModal({title:'申请删除电脑原文件？',content:'电脑会列出这 '+ids.length+' 项涉及的原图、画质副本、相同内容的导出图和关联视频。请核对文件清单后再确认移入回收站，并保持小程序在前台。断线后未开始的申请会取消。',confirmText:'发送申请',confirmColor:'#B65F78',success:r=>{
    if(!r.confirm||!this._active||!this.data.connected||epoch!==this._connectionEpoch||this.data.busy||this.data.saving)return;
    this._deletionPolls=0;
    this.deletionCall('request',{ids},'申请已发送，请到电脑的“最近删除”确认。确认后自动处理，无需在手机再次点击。');
@@ -45,7 +47,8 @@ const deletionPage={
    this._deletionBusy=false;this.setData({busy:false});
    if(result.status!=='ok'){this.setData({deletionMessage:'申请未完成，请检查连接并到电脑核对结果。'});this.scheduleDeletionPolling(5000);return;}
    try{const items=checkedItems(result.value);this._deletionCancel=new Set(Array.from(this._deletionCancel||[]).filter(id=>items.some(i=>i.id===id&&i.canCancel)));
-    this.setData({deletionItems:items,deletionMessage:message||'电脑确认后自动处理，无需在手机再次点击。'});
+    this.setData({deletionItems:items,viewerDeletionId:this.deletionIdForPhoto(this.data.selectedId,items),
+     deletionMessage:message||'电脑确认后自动处理，无需在手机再次点击。'});
     const fresh=items.some(item=>item.state==='confirming'&&item.approval&&!this._deletionCancel.has(item.id)&&!this._deletionEchoed?.has(item.id+':'+item.approval));
     this.scheduleDeletionPolling(fresh?0:undefined);
    }catch(_){this.setData({deletionMessage:'电脑返回的状态无效，未继续确认删除。'});}

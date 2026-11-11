@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import {randomBytes} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {createHash,randomBytes} from 'node:crypto';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {runInNewContext} from 'node:vm';
 import {clientApi} from '../wechat-crypto-spike/client-api.mjs';
 import {createGalleryServer} from './server.mjs';
@@ -17,8 +19,67 @@ function adapter(server){
  }};
 }
 async function fixture(s=source(),options={},patch={}){const config={...qr(),...patch},service=createGalleryServer(config,s,options);await new Promise(r=>service.server.listen(0,'127.0.0.1',r));return {...service,config,wx:adapter(service.server)};}
-function connect(f){let ready,failed,disconnected;const events=[];const c=g.connectGallery(f.wx,f.config,{ready:v=>{events.push(v);ready?.(v);},failed:m=>failed?.(m),disconnected:()=>disconnected?.()});
+function connect(f,api=g){let ready,failed,disconnected;const events=[];const c=api.connectGallery(f.wx,f.config,{ready:v=>{events.push(v);ready?.(v);},failed:m=>failed?.(m),disconnected:()=>disconnected?.()});
  return {c,events,ready:()=>new Promise((r,j)=>{ready=r;failed=j;}),disconnected:()=>new Promise(r=>disconnected=r)};}
+test('the first authenticated browse includes photos indexed after QR creation',async()=>{
+ const {DatabaseManager,AssetRepository}=await import('../../packages/database/dist/src/index.js');
+ const {toPathKey}=await import('../../packages/core/dist/src/index.js');
+ const {createIndexedPreviewSource}=await import('./source.mjs');
+ const db=new DatabaseManager(),root=await mkdtemp(join(tmpdir(),'nikki-first-browse-'));
+ db.initialize();
+ const add=async(name,capturedAt,gameVersion)=>{
+  const fileName=name+'.jpg',sourcePath=join(root,fileName),bytes=Buffer.from([255,216,255,217]),assetId='asset_'+name;
+  await writeFile(sourcePath,bytes);
+  new AssetRepository(db).reconcile({assetId,assetType:'photo',assetState:'ready',discoveredAt:capturedAt,capturedAt,metadata:{identity:{gameVersion}},
+   resources:[{assetId,resourceId:'resource_'+name,role:'source_primary',sourcePath,pathKey:toPathKey(sourcePath),fileName,
+    mimeType:'image/jpeg',fileExt:'.jpg',sizeBytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),stableState:'stable',isDerived:false}]});
+ };
+ let f,conn;
+ try {
+  await add('old','2026-10-24T00:00:00.000Z','2.10');
+  const indexed=await createIndexedPreviewSource(db,[root]);
+  f=await fixture(indexed,{},{type:'NikkiSyncLocalGalleryLive'});
+  assert.equal(indexed.count,1);
+  await add('new','2026-11-03T00:00:00.000Z','2.11');
+  conn=connect(f);await conn.ready();
+  const browse=()=>new Promise(resolve=>conn.c.browse(0,{},resolve));
+  const first=await browse();
+  assert.equal(first.status,'ok');
+  assert.deepEqual(Array.from(first.items,item=>item.version),['2.11','2.10']);
+  await add('later','2026-11-04T00:00:00.000Z','2.11');
+  assert.equal((await browse()).total,2,'subsequent browsing keeps one snapshot until refresh');
+  assert.equal((await new Promise(resolve=>conn.c.refresh(resolve))).total,3);
+ } finally {conn?.c.close();await f?.stop();db.close();await rm(root,{recursive:true,force:true});}
+});
+test('rescans use the same computer cache keys without reusing gallery access ids',async()=>{
+ const {createPreviewSource}=await import('./source.mjs');
+ const root=await mkdtemp(join(tmpdir(),'nikki-gallery-cache-')),path=join(root,'photo.jpg');
+ const secret='a'.repeat(64);
+ async function visit(cacheSecret,byte,focalLength,version){
+  const image=Buffer.from([255,216,byte,255,217]);await writeFile(path,image);
+  const source=await createPreviewSource([{sourcePath:path,sha256:createHash('sha256').update(image).digest('hex'),sizeBytes:image.length,
+   metadata:{camera:{focalLength},dressing:{clothes:[{name:'裙子'}]}}}],[root],{cacheSecret});
+  const f=await fixture(source,{},{type:'NikkiSyncLocalGalleryLive'}),conn=connect(f);
+  try{
+   await conn.ready();
+   const list=await new Promise(r=>conn.c.list(0,r)),id=list.items[0].id;
+   const keys=await new Promise(r=>conn.c.previewCacheKeys([id],r));
+   const detail=await new Promise(r=>conn.c.cachedDetails(id,version,r));
+   return {id,key:keys[0],detail};
+  }finally{conn.c.close();await f.stop();}
+ }
+ try{
+  const first=await visit(secret,1,50);
+  assert.equal(first.detail.rows.find(row=>row.label==='焦距').value,'50');
+  assert.equal(first.detail.items[0].name,'裙子');
+  const again=await visit(secret,1,50,first.detail.version);
+  assert.notEqual(again.id,first.id);assert.equal(again.key,first.key);assert.equal(again.detail.unchanged,true);assert.equal(again.detail.rows,undefined);
+  const changed=await visit(secret,1,60,first.detail.version);
+  assert.equal(changed.key,first.key);assert.equal(changed.detail.rows.find(row=>row.label==='焦距').value,'60');
+  assert.notEqual((await visit(secret,2,50,first.detail.version)).key,first.key);
+  assert.notEqual((await visit('b'.repeat(64),1,50,first.detail.version)).key,first.key);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 test('resume QR is explicitly bounded and capability is bound to the handshake context',()=>{
  const config=qr();assert.equal(g.parseGalleryQr(JSON.stringify(config)).resume,1);
  for(const patch of [{resume:0},{resume:true},{resume:2},{path:'private'}])assert.throws(()=>g.parseGalleryQr(JSON.stringify({...config,...patch})));
@@ -95,6 +156,67 @@ test('resuming never resets the logical request quota',async()=>{
   assert.throws(()=>conn.c.metadata(id,()=>{}),/quota|unavailable/i);assert.equal(conn.c.resume(),false);
  }finally{conn?.c.close();await f.stop();}
 });
+test('a compatible live session can browse all 500 photos without exhausting the action allowance',async()=>{
+ const records=Array.from({length:500},(_,n)=>({id:n.toString(16).padStart(32,'0'),date:'',version:'',versionSource:'unknown'}));
+ const s=source();
+ s.browse=offset=>{
+  const items=records.slice(offset,offset+12),end=offset+items.length;
+  return {offset,total:records.length,items,next:end<records.length?end:null,
+   versions:[{version:'',count:records.length,inferred:false}],libraryTotal:records.length};
+ };
+ const f=await fixture(s,{},{type:'NikkiSyncLocalGalleryLive'});let conn;
+ try {
+  conn=connect(f);await conn.ready();
+  let count=0,offset=0;
+  while(offset!==null){
+   const page=await new Promise(r=>conn.c.browse(offset,{},r));assert.equal(page.status,'ok');
+   for(const item of page.items){
+    assert.equal((await new Promise(r=>conn.c.preview(item.id,r))).status,'ok');count++;
+   }
+   offset=page.next;
+  }
+  assert.equal(count,500);
+  assert.equal((await new Promise(r=>conn.c.metadata(id,r))).status,'ok');
+ } finally {conn?.c.close();await f.stop();}
+});
+test('extended library negotiates paging and previews across 1548 items in one session',async()=>{
+ const records=Array.from({length:1548},(_,n)=>({id:n.toString(16).padStart(32,'0'),date:'',version:'',versionSource:'unknown'}));
+ const counts=[];
+ const s={...source(),count:records.length,galleryItemLimit:2048};
+ s.list=(offset,limit)=>{
+  const total=Math.min(records.length,limit),items=records.slice(offset,Math.min(offset+12,total)).map(({id,date})=>({id,date}));
+  return {offset,total,items,next:offset+items.length<total?offset+items.length:null};
+ };
+ s.browse=(offset,_query,limit)=>{
+  const {total,items,next}=s.list(offset,limit);
+  return {offset,total,items:items.map(item=>({...item,version:'',versionSource:'unknown'})),next,
+   versions:[{version:'',count:total,inferred:false}],libraryTotal:total};
+ };
+ const f=await fixture(s,{events:{refreshed:n=>counts.push(n)}},{type:'NikkiSyncLocalGalleryLive'});let conn;
+ try{
+  conn=connect(f);await conn.ready();
+  assert.deepEqual(counts,[500,1548]);
+  const tail=await new Promise(r=>conn.c.list(1536,r));
+  assert.equal(tail.total,1548);
+  assert.equal(tail.items.length,12);
+  assert.equal(tail.next,null);
+  let count=0,offset=0;
+  while(offset!==null){
+   const page=await new Promise(r=>conn.c.browse(offset,{},r));
+   assert.equal(page.status,'ok');
+   assert.equal(page.libraryTotal,1548);
+   for(const item of page.items){
+    assert.equal((await new Promise(r=>conn.c.preview(item.id,r))).status,'ok');count++;
+   }
+   offset=page.next;
+  }
+  assert.equal(count,1548);
+  conn.c.suspend();await new Promise(r=>setImmediate(r));const ready=conn.ready();assert.equal(conn.c.resume(),true);await ready;
+  assert.equal((await new Promise(r=>conn.c.list(1536,r))).total,1548);
+  assert.equal((await new Promise(r=>conn.c.metadata(tail.items.at(-1).id,r))).status,'ok');
+ }finally{conn?.c.close();await f.stop();}
+});
+
 test('ending PC session rejects cached recovery credentials',async()=>{
  const f=await fixture();let conn;
  try{conn=connect(f);await conn.ready();conn.c.suspend();await f.stop();const result=new Promise(r=>{conn.c.resume();setTimeout(r,30);});await result;assert.equal(f.wx.sockets.at(-1).destroyed,true);
@@ -120,6 +242,43 @@ test('expiry is unchanged by reconnect and stops recovery even while suspended',
  try{const f={...service,config,wx:adapter(service.server)};conn=connect(f);await conn.ready();conn.c.suspend();await new Promise(r=>setTimeout(r,1450));assert.equal(conn.c.resume(),false);}
  finally{conn?.c.close();await service.stop();}
 });
+test('the authenticated connection stays usable past QR expiry and resumes only within its fixed one-hour window',async()=>{
+ let serverShift=0,phoneShift=0,connectedAt;const deadlines=[];
+ const baseTime=Date.now();
+ const now=()=>baseTime+serverShift;
+ const f=await fixture(source(),{now,events:{authenticated:()=>{connectedAt??=now();},expiryChanged:date=>deadlines.push(Date.parse(date))}},{type:'NikkiSyncLocalGalleryLive'});
+ const module={exports:{}};
+ class PhoneDate extends Date{static now(){return Date.now()+phoneShift;}}
+ runInNewContext(await readFile(new URL('../../apps/wechat-mini-program/miniprogram/lib/gallery-channel.js',import.meta.url),'utf8'),{
+  module,Uint8Array,ArrayBuffer,Date:PhoneDate,require:name=>clientApi(name.slice(2,-3)),setTimeout,clearTimeout
+ });
+ let conn;
+ try {
+  conn=connect(f,module.exports);await conn.ready();
+  assert.deepEqual(deadlines,[connectedAt+60*60*1000]);
+  phoneShift=serverShift=11*60*1000;
+  assert.equal((await new Promise(r=>conn.c.list(0,r))).status,'ok');
+  assert.equal(conn.c.suspend(),true);
+  const ready=conn.ready();assert.equal(conn.c.resume(),true);await ready;
+  assert.equal((await new Promise(r=>conn.c.list(0,r))).status,'ok');
+  assert.equal(deadlines.length,1,'reconnecting cannot renew the deadline');
+  const rejected=await new Promise(r=>g.connectGallery(adapter(f.server),f.config,{ready:()=>r(false),failed:()=>r(true)}));
+  assert.equal(rejected,true,'the consumed QR credential does not authorize reconnect');
+  serverShift=61*60*1000;
+  const disconnected=conn.disconnected(),request=new Promise(r=>conn.c.list(0,r));
+  await disconnected;assert.equal((await request).status,'failed');
+  phoneShift=serverShift;assert.equal(conn.c.resume(),false);
+ } finally {conn?.c.close();await f.stop();}
+});
+test('an unused QR cannot claim a longer session after its scan deadline',async()=>{
+ let elapsed=0;
+ const f=await fixture(source(),{now:()=>Date.now()+elapsed},{type:'NikkiSyncLocalGalleryLive'});
+ let conn;
+ try {
+  elapsed=11*60*1000;
+  conn=connect(f);await assert.rejects(conn.ready());
+ } finally {conn?.c.close();await f.stop();}
+});
 async function pageFixture(){
  let page,hooks,saveHooks,closed=0,suspended=0,resumed=0,loads=[];const wx={getFileSystemManager:()=>({unlink(){}})};
  const channel={close(){closed++;},suspend(){suspended++;return true;},resume(){resumed++;hooks.ready({download:true,resume:true});return true;}};
@@ -130,6 +289,18 @@ async function pageFixture(){
 test('background stops timers and media; foreground restores same page and selection without scanning or storing credentials',async()=>{
  const f=await pageFixture(),p=f.page;p._previewCache.set(id,'/cache/thumb.jpg');p._files.add('/cache/thumb.jpg');p.onHide();assert.equal(f.closed,0);assert.equal(f.suspended,1);assert.equal(p.data.connected,false);assert.equal(p._refreshTimer,null);assert.equal(p._previewCache.size,1);
  assert.equal(f.resumed,0);p.onShow();assert.equal(f.resumed,1);assert.equal(p.data.connected,true);assert.equal(f.loads.at(-1),12);assert.ok(p._selected.has(id));p.onUnload();assert.equal(f.closed,1);assert.equal(p._resumable,false);assert.equal(p._previewCache.size,0);
+});
+test('reloading a page in the same session renders cached thumbnails together without new transfers',async()=>{
+ const {page:p}=await pageFixture();
+ const items=[{id,date:''},{id:'b'.repeat(32),date:''},{id:'c'.repeat(32),date:'',video:true}];
+ p._previewCache.set(items[0].id,'/cache/one.jpg');p._previewCache.set(items[1].id,'/cache/two.jpg');
+ p._channel.preview=()=>assert.fail('cached images must not request bytes again');
+ let draws=0;const setData=p.setData;
+ p.setData=(data,done)=>{if(data.photos)draws++;setData(data,done);};
+ p.applyPage({items,total:3,next:null},0,p._generation);
+ assert.equal(draws,1);assert.equal(p.data.loaded,2);assert.equal(p.data.ambientPath,'/cache/one.jpg');
+ assert.equal(p.data.photos[2].state,'▶ 视频');
+ p.onUnload();
 });
 test('canceled share transfer preserves resumable channel',async()=>{
  const f=await pageFixture(),p=f.page;p.data.shareBusy=true;p._shareJob={cancel(){p._channel.interrupt?.();return true;}};p.onHide();p.onShow();assert.equal(f.closed,0);assert.equal(f.resumed,1);assert.equal(p.data.shareOpen,false);p.onUnload();

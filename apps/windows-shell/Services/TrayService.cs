@@ -18,5 +18,8 @@ public sealed class TrayService : IDisposable
         _icon.DoubleClick += (_, _) => ShowRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    public void Notify(string title, string message) =>
+        _icon.ShowBalloonTip(5000, title, message, Forms.ToolTipIcon.Info);
+
     public void Dispose() { _icon.Visible = false; _icon.Dispose(); }
 }

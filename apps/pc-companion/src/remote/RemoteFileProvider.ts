@@ -21,9 +21,9 @@ export class RemoteFileProvider {
   private readonly resources: ResourceRepository
   private readonly reads: SyncReadRepository
 
-  constructor(database: DatabaseManager) {
+  constructor(database: DatabaseManager, reads = new SyncReadRepository(database)) {
     this.resources = new ResourceRepository(database)
-    this.reads = new SyncReadRepository(database)
+    this.reads = reads
   }
 
   getPhoto(resourceId: string): LocalRemotePhotoResource | undefined {

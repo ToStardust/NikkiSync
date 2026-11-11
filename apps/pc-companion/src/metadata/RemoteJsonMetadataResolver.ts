@@ -35,11 +35,15 @@ export class RemoteJsonMetadataResolver implements PhotoMetadataResolver {
 
   async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
     request.signal?.throwIfAborted()
+    const host = new URL(this.config.endpoint).hostname.replace(/\.$/, '')
+    if (host === 'nuan5.pro' || host.endsWith('.nuan5.pro')) {
+      throw new Error('NUAN5.PRO must use the local-first NUAN5 batch resolver')
+    }
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 12_000)
     try {
       const response = await fetch(this.config.endpoint, {
-        method: 'POST',
+        method: 'POST', redirect: 'manual',
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',

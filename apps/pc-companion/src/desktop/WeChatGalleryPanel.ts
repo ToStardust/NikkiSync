@@ -5,7 +5,7 @@ export const wechatPanelHtml = `<section class="connection-card glass" aria-labe
  <h2 id="wechat-entry-title">微信小程序</h2><p class="channel-description">微信扫码，浏览相册，保存照片与视频。</p>
  <details id="wechat-entry-code" class="wechat-entry-code" open><summary>首次使用？微信扫码打开小程序</summary><img id="wechat-entry-image" src="/wechat-entry.png" alt="大喵相机助手微信小程序码" width="220" height="220"><p class="channel-note">先用微信扫一扫打开小程序，再扫描下方按钮生成的电脑连接码。<br>下次可从微信“最近使用的小程序”进入。</p></details>
  <ol class="connection-steps"><li><span class="step-number">1</span>用微信扫描上方小程序码</li><li><span class="step-number">2</span>在小程序内扫码连接电脑</li><li><span class="step-number">3</span>挑选照片，保存原图到手机</li></ol>
- <button id="wechat-start" class="primary channel-action" aria-haspopup="dialog">微信下载照片 ${icon('arrow')}</button><p id="wechat-summary" class="channel-note" aria-live="polite">照片与视频分别保存 · 连接有效 10 分钟</p>
+ <button id="wechat-start" class="primary channel-action" aria-haspopup="dialog">微信下载照片 ${icon('arrow')}</button><p id="wechat-summary" class="channel-note" aria-live="polite">照片与视频分别保存 · 连接码 10 分钟内有效</p>
  </section>`
 export const wechatDialogHtml = `<div id="wechat-modal" class="modal" hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="wechat-title" aria-describedby="wechat-description"><div class="dialog-header"><h2 id="wechat-title">连接微信小程序</h2><button id="wechat-close" class="icon-button" aria-label="收起二维码，保持连接">${icon('close')}</button></div><p id="wechat-description" class="dialog-description">先打开「大喵相机助手」小程序，<br>在小程序内扫描下方连接码。手机和电脑需在同一局域网。</p><div id="wechat-qr" class="qr"></div><p id="wechat-state" class="dialog-status" role="status"></p><p id="wechat-expiry" class="dialog-meta"></p><button id="wechat-renew" class="primary dialog-action">生成新连接二维码</button><button id="wechat-organizer" class="secondary dialog-action">收起二维码，前往最近删除</button><button id="wechat-stop" class="secondary dialog-action">结束微信连接</button><p class="dialog-note">收起二维码后仍保持连接，可以进入“最近删除”确认手机申请。<br>重新生成、结束连接或到期后需重新扫码。请勿转发二维码。</p></section></div>`
 export const wechatPanelScript=`(()=>{
@@ -27,8 +27,9 @@ export const wechatPanelScript=`(()=>{
     if(['connected','disconnected'].includes(value.state)){if(value.state==='connected')rememberEntry();qr.replaceChildren();state.textContent+='。如需重新扫码，请生成新连接码。';renew.textContent='重新扫码：生成新连接码';}
     else renew.textContent='生成新连接二维码';
     document.querySelector('#wechat-summary').textContent=state.textContent;start.textContent='显示微信连接二维码';
-    const seconds=Math.max(0,Math.ceil((Date.parse(until)-Date.now())/1000));expiry.textContent=value.photoCount+' 项 · 已发送 '+value.originalsSent+' 份照片/视频 · 剩余 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
-    if(seconds===0||['closed','expired','error'].includes(value.state)){svg='';qr.replaceChildren();clearInterval(timer);start.textContent='微信下载照片';}
+    until=value.expiresAt||until;
+    const seconds=Math.max(0,Math.ceil((Date.parse(until)-Date.now())/1000));expiry.textContent=value.photoCount+' 项 · 已发送 '+value.originalsSent+' 份照片/视频 · '+(value.state==='waiting'?'扫码剩余 ':'连接剩余 ')+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
+    if(['closed','expired','error'].includes(value.state)){svg='';qr.replaceChildren();clearInterval(timer);start.textContent='微信下载照片';}
    }catch(e){if(current===generation){release();state.textContent=e.message}}finally{polling=false}};
    await update();if(current===generation&&svg)timer=setInterval(update,1000);
   }catch(e){if(current===generation)state.textContent=e.message}finally{creating=false;if(current===generation)start.disabled=renew.disabled=false}}

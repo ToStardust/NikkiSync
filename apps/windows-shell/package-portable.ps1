@@ -1,9 +1,46 @@
-param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$AndroidApk = 'release\NikkiSync\NikkiSync-Android.apk', [string]$BunExecutable = 'bun', [string]$DesktopVersion = '1.0.1', [long]$DesktopBuild = 2026101801, [switch]$IncludeWeChatLiveTools, [switch]$IncludeWeChatMotionTools, [ValidateSet('AppOnly', 'AppAndMiniProgram')][string]$ClientEdition = 'AppAndMiniProgram')
+param([string]$OutputDirectory = 'release\NikkiSync-Portable', [string]$BunExecutable = 'bun', [string]$DesktopVersion = '1.0.39', [long]$DesktopBuild = 2026111107, [switch]$IncludeWeChatLiveTools, [switch]$IncludeWeChatMotionTools, [ValidateSet('AppOnly', 'AppAndMiniProgram')][string]$ClientEdition = 'AppAndMiniProgram', [scriptblock]$WindowsSigner, [string]$LocalDecoderDll, [string]$FullIconPack)
 
 $ErrorActionPreference = 'Stop'
+
+# The caller supplies a certificate-store, hardware-token or managed signing command.
+# Require an embedded, trusted and timestamped signature on each staged executable.
+function Invoke-WindowsSigning([string]$Path) {
+  $previousExitCode = $global:LASTEXITCODE
+  try {
+    $global:LASTEXITCODE = 0
+    & $WindowsSigner $Path | Out-Host
+    if ($global:LASTEXITCODE -ne 0) {
+      throw "Signing command failed for $(Split-Path -Leaf $Path): $global:LASTEXITCODE"
+    }
+  } finally {
+    $global:LASTEXITCODE = $previousExitCode
+  }
+  $signature = Get-AuthenticodeSignature -LiteralPath $Path
+  if ($signature.Status -ne 'Valid' -or $signature.SignatureType -ne 'Authenticode' -or $null -eq $signature.TimeStamperCertificate) {
+    throw "Missing valid embedded, timestamped Authenticode signature for $(Split-Path -Leaf $Path) ($($signature.Status))."
+  }
+}
 if ($ClientEdition -eq 'AppOnly' -and ($IncludeWeChatLiveTools -or $IncludeWeChatMotionTools)) { throw 'App-only edition must not contain WeChat media tools.' }
 $appOnlyDefine = if ($ClientEdition -eq 'AppOnly') { 'true' } else { 'false' }
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$xdeltaTool = Join-Path $workspace 'assets\tools\xdelta3\xdelta3.exe'
+if ((Get-FileHash -LiteralPath $xdeltaTool -Algorithm SHA256).Hash -ne '732980D52F9220DC81817CCDD0C295EADCE8A0048A24C2A771A73F791AC824E9') {
+  throw 'The bundled xdelta3 tool differs from the reviewed 3.2.2 Windows x64 release.'
+}
+if ($LocalDecoderDll) {
+  $LocalDecoderDll = (Resolve-Path -LiteralPath $LocalDecoderDll).Path
+  if ((Get-FileHash -LiteralPath $LocalDecoderDll -Algorithm SHA256).Hash -ne '91A9AFFE5295524AE99CEE1174270C0FADC202B138F45F3B6C9EC36754191514') {
+    throw 'The local decoder DLL does not match the approved Nikki Albums v3.012.02 artifact.'
+  }
+}
+if ($FullIconPack) {
+  $FullIconPack = (Resolve-Path -LiteralPath $FullIconPack).Path
+  $fullHash = (Get-FileHash -LiteralPath $FullIconPack -Algorithm SHA256).Hash
+  if ((Get-Item -LiteralPath $FullIconPack).Length -ne 77678905 -or
+      $fullHash -ne 'DDD70FBF87EBEB9722E37365A76A5D159951F1104C2E378578316E884E840B4F') {
+    throw 'Full icon pack does not match the approved r3 snapshot.'
+  }
+}
 $pinnedBun = Join-Path $workspace 'out\bun-baseline-1.4.1\bun-windows-x64-baseline\bun.exe'
 if ($BunExecutable -eq 'bun' -and (Test-Path -LiteralPath $pinnedBun)) { $BunExecutable = $pinnedBun }
 if ($BunExecutable -ne 'bun') { $BunExecutable = (Resolve-Path -LiteralPath $BunExecutable).Path }
@@ -13,8 +50,6 @@ $releaseRoot = [IO.Path]::GetFullPath((Join-Path $workspace 'release'))
 $release = [IO.Path]::GetFullPath((Join-Path $workspace $OutputDirectory))
 if (-not $release.StartsWith($releaseRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be inside workspace/release.' }
 if ((Test-Path -LiteralPath $release) -and @(Get-ChildItem -LiteralPath $release -Force).Count -gt 0) { throw 'Choose a new empty output directory; used releases can contain private browser data.' }
-$apk = [IO.Path]::GetFullPath((Join-Path $workspace $AndroidApk))
-if (-not $apk.StartsWith($releaseRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw 'An existing signed release APK is required.' }
 # Clean allowlisted staging only. Never copy a release tree, AppData, browser profile or game data.
 $build = Join-Path $workspace ('out\portable-build-' + [Guid]::NewGuid().ToString('N'))
 $payload = Join-Path $build 'payload'
@@ -25,7 +60,7 @@ Push-Location $workspace
 try {
   npm run build
   if ($LASTEXITCODE -ne 0) { throw 'Project build failed.' }
-  dotnet restore (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') -r win-x64 -p:SelfContained=true -p:PublishSingleFile=true
+  dotnet restore (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') -r win-x64 -p:SelfContained=true -p:PublishSingleFile=true -p:NuGetAudit=false
   if ($LASTEXITCODE -ne 0) { throw 'Runtime dependency restore failed.' }
   & (Join-Path $workspace 'scripts\build-service-icon.ps1')
   Push-Location (Join-Path $workspace 'apps\pc-companion')
@@ -35,6 +70,7 @@ try {
     & $BunExecutable build --compile --compile-exec-argv="--smol" --target=bun-windows-x64-baseline "--define=NIKKISYNC_APP_ONLY=$appOnlyDefine" @compilerRuntime --windows-hide-console --windows-icon (Join-Path $PSScriptRoot 'Assets\service.ico') --windows-title=NikkiSyncPCService --windows-description=InfinityNikkiPhotoSyncBackgroundService --outfile (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') src/windows-app.ts
     if ($LASTEXITCODE -ne 0) { throw 'Service compilation failed.' }
   } finally { Pop-Location }
+  if ($WindowsSigner) { Invoke-WindowsSigning (Join-Path $payload 'runtime\NikkiSync-PC-service.exe') }
   $sources = [ordered]@{
     'runtime/migrations/0001_initial.sql' = 'packages\database\migrations\0001_initial.sql'
     'runtime/wechat/resize-preview.ps1' = 'tools\wechat-gallery\resize-preview.ps1'
@@ -52,13 +88,17 @@ try {
     'runtime/licenses/qrcode-LICENSE' = 'node_modules\qrcode\license'
     'runtime/licenses/dijkstrajs-LICENSE' = 'node_modules\dijkstrajs\LICENSE.md'
     'runtime/licenses/pngjs-LICENSE' = 'node_modules\pngjs\LICENSE'
+    'runtime/tools/xdelta3.exe' = 'assets\tools\xdelta3\xdelta3.exe'
+    'runtime/licenses/xdelta3-LICENSE' = 'assets\tools\xdelta3\LICENSE'
   }
   foreach ($entry in $sources.GetEnumerator()) {
     $destination = Join-Path $payload $entry.Key
     New-Item -ItemType Directory -Force (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath (Join-Path $workspace $entry.Value) -Destination $destination
   }
-  Copy-Item -LiteralPath $apk -Destination (Join-Path $payload 'runtime\NikkiSync-Android.apk')
+  if ($LocalDecoderDll) {
+    Copy-Item -LiteralPath $LocalDecoderDll -Destination (Join-Path $payload 'runtime\nuan5_decryption.dll')
+  }
   if ($ClientEdition -ne 'AppOnly') { Copy-Item -LiteralPath (Join-Path $workspace 'assets\branding\wechat-mini-entry.png') -Destination (Join-Path $payload 'runtime\branding\wechat-mini-entry.png') }
   if ($IncludeWeChatLiveTools -or $IncludeWeChatMotionTools) {
     $liveDirectory = Join-Path $payload 'runtime\wechat\media'
@@ -110,17 +150,21 @@ try {
   } finally { $zip.Dispose(); $zipStream.Dispose() }
   $manifest = @{ ArchiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash; Files = $manifestFiles }
   [IO.File]::WriteAllText((Join-Path $payload 'runtime.json'), ($manifest | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
-  dotnet publish (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') --no-restore -c Release -r win-x64 --self-contained true -o $published -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false "-p:Version=$DesktopVersion" "-p:DesktopBuild=$DesktopBuild" "-p:PortablePayloadDirectory=$payload"
+  $iconResourceOption = @()
+  if ($FullIconPack) { $iconResourceOption += "-p:PortableIconPackPath=$FullIconPack" }
+  dotnet publish (Join-Path $PSScriptRoot 'NikkiSync.WindowsShell.csproj') --no-restore -c Release -r win-x64 --self-contained true -o $published -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false "-p:Version=$DesktopVersion" "-p:DesktopBuild=$DesktopBuild" "-p:PortablePayloadDirectory=$payload" @iconResourceOption
   if ($LASTEXITCODE -ne 0) { throw 'Self-contained host publish failed.' }
   $hostExe = Join-Path $published 'NikkiSync.WindowsShell.exe'
   if (-not (Test-Path -LiteralPath $hostExe -PathType Leaf)) { throw 'Missing published host.' }
   $looseFiles = @(Get-ChildItem -LiteralPath $published -File -Recurse | Where-Object { $_.FullName -ne $hostExe -and $_.Extension -ne '.xml' })
   if ($looseFiles.Count) { throw ('Unbundled dependency: ' + ($looseFiles.Name -join ', ')) }
+  if ($WindowsSigner) { Invoke-WindowsSigning $hostExe }
   New-Item -ItemType Directory -Force $release | Out-Null
   $final = Join-Path $release 'NikkiSync-PC.exe'
   Copy-Item -LiteralPath $hostExe -Destination $final
   if (@(Get-ChildItem -LiteralPath $release -Force).Count -ne 1) { throw 'Portable output must contain exactly one file.' }
-  [IO.File]::WriteAllText((Join-Path $build 'build-report.json'), (@{ executable = $final; bytes = (Get-Item -LiteralPath $final).Length; sha256 = (Get-FileHash -LiteralPath $final).Hash; androidSha256 = (Get-FileHash -LiteralPath $apk).Hash; manifest = $manifest } | ConvertTo-Json -Depth 8))
+  [IO.File]::WriteAllText((Join-Path $build 'build-report.json'), (@{ executable = $final; bytes = (Get-Item -LiteralPath $final).Length; sha256 = (Get-FileHash -LiteralPath $final).Hash; embeddedIconPack = [bool]$FullIconPack; manifest = $manifest } | ConvertTo-Json -Depth 8))
   Write-Output "Portable executable: $final"
+  if ($FullIconPack) { Write-Output 'Initial r3 icon pack is embedded in the single EXE.' }
   Write-Output "Build report: $build\build-report.json"
 } finally { Pop-Location }

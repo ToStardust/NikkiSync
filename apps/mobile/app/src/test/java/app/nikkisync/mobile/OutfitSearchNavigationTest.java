@@ -26,17 +26,17 @@ public class OutfitSearchNavigationTest {
         try{
             LinearLayout section=new LinearLayout(activity);
             invoke(activity,"renderClothingSection",new Class[]{String.class,String.class,LinearLayout.class},"screenshot",null,section);
-            assertEquals(View.VISIBLE,section.getVisibility());assertTrue(copy(section).contains("普通截图或搬迁后的相册可能"));
+            assertEquals(View.VISIBLE,section.getVisibility());assertTrue(copy(section).contains("当前未读到穿搭和拍摄参数"));
             invoke(activity,"renderClothingSection",new Class[]{String.class,String.class,LinearLayout.class},"pending","{\"raw\":{\"sourceParametersPresent\":true}}",section);
-            assertTrue(copy(section).contains("尚未解析完整"));assertFalse(copy(section).contains("缺少原始数据"));
+            assertTrue(copy(section).contains("尚未解码成功"));assertFalse(copy(section).contains("缺少原始数据"));
             invoke(activity,"showMetadataNotice",new Class[]{LinearLayout.class,String.class},section,"尚未缓存这张照片的参数，连接电脑后可读取。");
-            assertEquals(1,section.getChildCount());assertFalse(copy(section).contains("原始数据"));
+            assertEquals(1,section.getChildCount());assertFalse(copy(section).contains("查看参数自查方法"));assertFalse(copy(section).contains("原始数据"));
             invoke(activity,"showSavedMetadata",new Class[]{LinearLayout.class,String.class,app.nikkisync.mobile.storage.SavedMetadataSnapshotStore.Snapshot.class},section,"unseen",null);
             assertTrue(copy(section).contains("尚未缓存"));
             @SuppressWarnings("unchecked") var assets=(java.util.List<app.nikkisync.mobile.model.Models.AssetSummary>)field("assets").get(activity);
             assets.add(new app.nikkisync.mobile.model.Models.AssetSummary("screenshot","photo","ready",null,null,1,1000,1000,false,false,null,null,null,"unknown"));
             invoke(activity,"showSavedMetadata",new Class[]{LinearLayout.class,String.class,app.nikkisync.mobile.storage.SavedMetadataSnapshotStore.Snapshot.class},section,"screenshot",null);
-            assertTrue(copy(section).contains("普通截图或搬迁后的相册可能"));assertFalse(copy(section).contains("尚未缓存"));
+            assertTrue(copy(section).contains("这张照片未读到游戏参数"));assertFalse(copy(section).contains("尚未缓存"));
         }finally{((ExecutorService)field("io").get(activity)).shutdownNow();}
     }
     @Test public void savedOutfitRendersIconRowsEvenWhenOffline() throws Exception {

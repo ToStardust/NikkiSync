@@ -153,22 +153,59 @@ public sealed class RuntimePayloadTests : IDisposable
     }
 
     [Fact]
-    public void Persistent_publication_denial_preserves_the_original_error_and_other_user_data()
+    public void Persistent_publication_denial_uses_and_reuses_a_verified_recovery_cache()
     {
-        Directory.CreateDirectory(_root);var marker=Path.Combine(_root,"pairing-retention-fixture.txt");System.IO.File.WriteAllText(marker,"keep");
-        var zip=Archive((File.Path,Content));FileStream? held=null;var elapsed=System.Diagnostics.Stopwatch.StartNew();
+        Directory.CreateDirectory(_root);
+        var marker = Path.Combine(_root, "pairing-retention-fixture.txt");
+        System.IO.File.WriteAllText(marker, "keep");
+        var zip = Archive((File.Path, Content));
+        var target = Path.Combine(_root, Hash(zip));
+        var steps = new List<PayloadPreparationStep>();
+        FileStream? held = null;
         try
         {
-            var error=Assert.ThrowsAny<IOException>(()=>RuntimePayload.Deploy(new MemoryStream(zip),Hash(zip),_root,[File],step:step=>
+            var path = RuntimePayload.Deploy(new MemoryStream(zip), Hash(zip), _root, [File], step: step =>
             {
-                if(step==PayloadPreparationStep.PublishCache)held=new FileStream(Path.Combine(Assert.Single(Directory.GetDirectories(_root,"*.tmp-*")),File.Path),FileMode.Open,FileAccess.Read,FileShare.None);
-            }));
-            Assert.Equal(unchecked((int)0x80070005),error.HResult);
-            Assert.Equal("FILE_ACCESS",StartupFailure.FromException(error).Code);
-            Assert.True(elapsed.Elapsed<TimeSpan.FromSeconds(10));Assert.Equal("keep",System.IO.File.ReadAllText(marker));
-            Assert.False(Directory.Exists(Path.Combine(_root,Hash(zip))));
+                steps.Add(step);
+                if (step == PayloadPreparationStep.PublishCache)
+                {
+                    var staging = Assert.Single(Directory.GetDirectories(_root, "*.tmp-*"));
+                    held = new FileStream(Path.Combine(staging, File.Path), FileMode.Open, FileAccess.Read, FileShare.None);
+                }
+            });
+            Assert.Equal(target + ".recovery", path);
+            Assert.Contains(PayloadPreparationStep.VerifyRecoveryCache, steps);
+            Assert.False(Directory.Exists(target));
+            Assert.Equal(Content, System.IO.File.ReadAllBytes(Path.Combine(path, File.Path)));
+            Assert.Equal("keep", System.IO.File.ReadAllText(marker));
+            steps.Clear();
+            Assert.Equal(path, RuntimePayload.Deploy(new MemoryStream(zip), Hash(zip), _root, [File], step: steps.Add));
+            Assert.DoesNotContain(PayloadPreparationStep.ValidateArchive, steps);
         }
-        finally{held?.Dispose();}
+        finally { held?.Dispose(); }
+    }
+
+    [Fact]
+    public void Changed_recovery_files_are_rejected_before_startup()
+    {
+        var zip = Archive((File.Path, Content));
+        var recovery = Path.Combine(_root, Hash(zip) + ".recovery");
+        FileStream? held = null;
+        try
+        {
+            Assert.Throws<InvalidDataException>(() => RuntimePayload.Deploy(new MemoryStream(zip), Hash(zip), _root, [File], step: step =>
+            {
+                if (step == PayloadPreparationStep.PublishCache)
+                {
+                    var staging = Assert.Single(Directory.GetDirectories(_root, "*.tmp-*"));
+                    held = new FileStream(Path.Combine(staging, File.Path), FileMode.Open, FileAccess.Read, FileShare.None);
+                }
+                if (step == PayloadPreparationStep.VerifyRecoveryCache)
+                    System.IO.File.WriteAllBytes(Path.Combine(recovery, File.Path), new byte[Content.Length]);
+            }));
+            Assert.False(Directory.Exists(recovery));
+        }
+        finally { held?.Dispose(); }
     }
 
     [Fact]

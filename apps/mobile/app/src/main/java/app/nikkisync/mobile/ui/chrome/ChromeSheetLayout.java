@@ -13,8 +13,10 @@ import android.view.accessibility.AccessibilityNodeInfo;
 public final class ChromeSheetLayout extends ViewGroup {
     private final View title,form,footer;
     private View dragHandle;
+    private int dragHandleColor=0xffFFFFFF;
     private boolean expanded;
     private boolean wrapForm;
+    private int maximumFormDp=400;
     private int draggedFormHeight=-1;
     private Runnable dismissPhotoDetails;
     private Runnable geometryChanged=()->{};
@@ -34,6 +36,8 @@ public final class ChromeSheetLayout extends ViewGroup {
     }
     /** Short forms size to their content; long photo/editor sheets keep their existing scroll geometry. */
     public ChromeSheetLayout wrapContentForm(){wrapForm=true;requestLayout();return this;}
+    public ChromeSheetLayout wrapContentForm(int maximumDp){maximumFormDp=maximumDp;return wrapContentForm();}
+    public ChromeSheetLayout setDragHandleColor(int color){dragHandleColor=color;if(dragHandle!=null)dragHandle.invalidate();return this;}
     /** Opts this sheet into photo-detail gestures; the form remains the owner of its scroll events. */
     public void enablePhotoDetailDragging(Runnable dismiss){
         dismissPhotoDetails=dismiss;
@@ -44,7 +48,7 @@ public final class ChromeSheetLayout extends ViewGroup {
             @Override protected void onDraw(Canvas canvas){
                 float w=dp(36),h=dp(4);
                 pill.set((getWidth()-w)/2f,dp(8),(getWidth()+w)/2f,dp(8)+h);
-                paint.setColor(0xffFFFFFF);canvas.drawRoundRect(pill,h/2,h/2,paint);
+                paint.setColor(dragHandleColor);canvas.drawRoundRect(pill,h/2,h/2,paint);
             }
             @Override public boolean onTouchEvent(MotionEvent event){return handleDrag(event);}
             @Override public boolean performAccessibilityAction(int action,Bundle args){
@@ -103,7 +107,7 @@ public final class ChromeSheetLayout extends ViewGroup {
         if(dragHandle!=null){dragHandle.measure(childWidth,MeasureSpec.makeMeasureSpec(dp(24),MeasureSpec.EXACTLY));available=Math.max(0,available-dragHandle.getMeasuredHeight());}
         footer.measure(childWidth,MeasureSpec.makeMeasureSpec(available,MeasureSpec.AT_MOST));available-=footer.getMeasuredHeight();
         title.measure(childWidth,MeasureSpec.makeMeasureSpec(available,MeasureSpec.AT_MOST));available-=title.getMeasuredHeight();
-        int formHeight=Math.min(Math.max(0,available),draggedFormHeight>=0?draggedFormHeight:expanded?available:dp(400));
+        int formHeight=Math.min(Math.max(0,available),draggedFormHeight>=0?draggedFormHeight:expanded?available:dp(maximumFormDp));
         form.measure(childWidth,MeasureSpec.makeMeasureSpec(formHeight,wrapForm?MeasureSpec.AT_MOST:MeasureSpec.EXACTLY));
         if(wrapForm)formHeight=form.getMeasuredHeight();
         setMeasuredDimension(width,resolveSize(getPaddingTop()+(dragHandle==null?0:dragHandle.getMeasuredHeight())+title.getMeasuredHeight()+formHeight+footer.getMeasuredHeight()+getPaddingBottom(),heightSpec));

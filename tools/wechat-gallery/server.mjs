@@ -11,7 +11,18 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
   const api = clientApi('gallery-channel'), wire = clientApi(), { createGalleryPeer, createDownloadPeer,createLivePeer } = clientApi('noise-vendor');
   const checked = api.parseGalleryQr(JSON.stringify(config)), key = Buffer.from(checked.key, 'hex'); checked.key = null; config = null;
   const liveProfile=checked.type==='NikkiSyncLocalGalleryLive',download = liveProfile||checked.type === 'NikkiSyncLocalGalleryDownload', totalLimit = liveProfile?api.MAX_LIVE_TOTAL:download ? api.MAX_DOWNLOAD_TOTAL : api.MAX_TOTAL;
-  const expires = Date.parse(checked.expiresAt), sockets = new Set();let closed=false,claimed=false,attempts=0,resumeKey,activeSocket,sent=0,received=0,quota=0,lastRefresh=-Infinity,workTail=Promise.resolve();
+  const sockets = new Set();let closed=false,claimed=false,attempts=0,resumeKey,activeSocket,sent=0,received=0,quota=0,lastRefresh=-Infinity,workTail=Promise.resolve();
+  let expires = Date.parse(checked.expiresAt), authenticatedAt, connectedExpiry, expiryTimer;
+  let browseBudget = 0, browseQuota = 0, galleryLimit = api.LEGACY_GALLERY_ITEMS;
+  const extendedLibrary = liveProfile && checked.resume === 1 && source.galleryItemLimit === api.MAX_GALLERY_ITEMS;
+  const reportCount = () => { if (Number.isInteger(source.count)) events.refreshed?.(Math.min(source.count, galleryLimit)); };
+  let needsInitialRefresh = typeof source.refreshIfIndexChanged === 'function';
+  const refreshInitialSnapshot = async () => {
+    needsInitialRefresh = false;
+    try {
+      if (await source.refreshIfIndexChanged()) reportCount();
+    } catch { /* Keep the last complete snapshot available if the refresh fails. */ }
+  };
   const server = net.createServer(socket => {
     socket.on('error', () => {});
     if (closed || claimed&&!resumeKey || now() >= expires || sockets.size>=(claimed?2:1) || attempts++ >= 32) { socket.destroy(); return; }
@@ -38,6 +49,49 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
               if (request.kind === 'inspiration' && request.action === 'galleryCapabilities') {
                 api.fields(request.input, []);
                 value = { motionRotation: liveProfile && source.motionRotation === true };
+                if (liveProfile && checked.resume === 1) {
+                  value.connectedSession = true;
+                  if (source.previewCacheKeys && source.cachedDetails) value.galleryCache = true;
+                  browseBudget = galleryLimit === api.MAX_GALLERY_ITEMS ? api.MAX_EXTENDED_BROWSE_REQUESTS : api.MAX_BROWSE_REQUESTS;
+                  value.browseRequests = browseBudget;
+                  if (extendedLibrary) value.extendedLibrary = api.MAX_GALLERY_ITEMS;
+                  reportCount();
+                }
+              } else if (request.kind === 'inspiration' && request.action === 'galleryPreviewKeys') {
+                api.fields(request.input,['ids']);
+                const {ids}=request.input;
+                if(!liveProfile||!source.previewCacheKeys||!Array.isArray(ids)||ids.length<1||ids.length>12
+                  ||ids.some(id=>typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))||new Set(ids).size!==ids.length)throw Error('Preview cache request');
+                value={keys:source.previewCacheKeys(ids)};
+              } else if (request.kind === 'inspiration' && request.action === 'galleryCachedDetails') {
+                api.fields(request.input,['id','version']);
+                const {id,version}=request.input;
+                if(!liveProfile||!source.cachedDetails||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id)
+                  ||version!==undefined&&(typeof version!=='string'||!/^[a-f0-9]{64}$/.test(version)))throw Error('Details cache request');
+                value=source.cachedDetails(id,version);
+              } else if (request.kind === 'inspiration' && request.action === 'galleryShareDetails') {
+                api.fields(request.input,['id']);
+                const {id}=request.input;
+                if(!source.shareDetails||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('Share details request');
+                value=source.shareDetails(id);
+              } else if (request.kind === 'inspiration' && request.action === 'gallerySessionLifetime') {
+                api.fields(request.input, []);
+                if (!liveProfile || checked.resume !== 1 || !resumeKey || !authenticated) throw Error('capability');
+                if (connectedExpiry === undefined) {
+                  connectedExpiry = authenticatedAt + api.CONNECTED_SESSION_MS;
+                  expires = connectedExpiry;
+                  scheduleExpiry();
+                  socket.setTimeout(Math.max(1, expires - now()));
+                  events.expiryChanged?.(new Date(expires).toISOString());
+                }
+                value = {remainingMs: expires - now()};
+              } else if (request.kind === 'inspiration' && request.action === 'galleryExtendedLibrary') {
+                api.fields(request.input, []);
+                if (!extendedLibrary) throw Error('capability');
+                galleryLimit = api.MAX_GALLERY_ITEMS;
+                browseBudget = api.MAX_EXTENDED_BROWSE_REQUESTS;
+                value = { galleryItems:galleryLimit, browseRequests:browseBudget };
+                reportCount();
               } else if (request.kind === 'inspiration' && request.action === 'galleryOutfit') {
                 api.fields(request.input, ['id','offset']);
                 const {id,offset}=request.input;
@@ -56,18 +110,20 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
           finally{request.image?.fill(0)}
         } else if (request.kind === 'list') {
           api.fields(request, ['kind','req','offset']);
-          if (!Number.isInteger(request.offset) || request.offset < 0 || request.offset > 500) throw new Error('Offset');
-          await control({ kind: 'list', req: request.req, ...source.list(request.offset) });
+          if (!Number.isInteger(request.offset) || request.offset < 0 || request.offset > galleryLimit) throw new Error('Offset');
+          if (needsInitialRefresh) await refreshInitialSnapshot();
+          await control({ kind: 'list', req: request.req, ...source.list(request.offset, galleryLimit) });
         } else if(request.kind==='browse' && download) {
           api.fields(request,['kind','req','offset','query']);api.validateBrowseQuery(request.query);
-          if(!Number.isInteger(request.offset)||request.offset<0||request.offset>500)throw new Error('Offset');
-          try{await control({kind:'browse',req:request.req,...source.browse(request.offset,request.query)});}catch{await control({kind:'error',req:request.req});}
+          if(!Number.isInteger(request.offset)||request.offset<0||request.offset>galleryLimit)throw new Error('Offset');
+          if (needsInitialRefresh) await refreshInitialSnapshot();
+          try{await control({kind:'browse',req:request.req,...source.browse(request.offset,request.query,galleryLimit)});}catch{await control({kind:'error',req:request.req});}
         } else if (request.kind === 'refresh' && download) {
           api.fields(request,['kind','req']);
           try {
             // Polling uses the current scanner index; it never triggers a parallel scanner.
-            if(now()-lastRefresh>=5000) {await source.refresh();lastRefresh=now();events.refreshed?.(source.count);}
-            await control({kind:'refresh',req:request.req,...source.list(0)});
+            if(now()-lastRefresh>=5000) {await source.refresh();needsInitialRefresh=false;lastRefresh=now();reportCount();}
+            await control({kind:'refresh',req:request.req,...source.list(0,galleryLimit)});
           } catch { await control({kind:'error',req:request.req}); }
         } else if (request.kind === 'metadata' && download) {
           api.fields(request,['kind','req','id']);if(!/^[a-f0-9]{32}$/.test(request.id)) throw new Error('Id');
@@ -132,8 +188,11 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
       if (busy) throw new Error('Concurrent request');
       const plain = peer.decrypt(bytes); let request;
       try { request = api.decode(plain); } finally { plain.fill(0); }
-      if (!Number.isInteger(request.req) || request.req !== lastReq + 1 || ++quota > 256 || checked.resume===1&&lastReq===0&&request.kind!=='session') throw new Error('Request order');
-      if(!authenticated){authenticated=true;claimed=true;key.fill(0);const previous=activeSocket;activeSocket=socket;previous?.destroy();source.deletionConnected?.();events.authenticated?.();socket.setTimeout(Math.max(1,expires-now()),()=>socket.destroy());}
+      if (!Number.isInteger(request.req) || request.req !== lastReq + 1 || checked.resume===1&&lastReq===0&&request.kind!=='session') throw new Error('Request order');
+      if (browseBudget && api.isBrowseRequest(request.kind,request.action)) {
+        if (++browseQuota > browseBudget) throw new Error('Browse quota');
+      } else if (++quota > api.MAX_REQUESTS) throw new Error('Request quota');
+      if(!authenticated){authenticated=true;authenticatedAt??=now();claimed=true;key.fill(0);const previous=activeSocket;activeSocket=socket;previous?.destroy();source.deletionConnected?.();events.authenticated?.();socket.setTimeout(Math.max(1,expires-now()),()=>socket.destroy());}
       lastReq=request.req;busy=true;
       if(request.kind==='inspirationUpload'&&download){
         api.fields(request,['kind','req','id','revision','size','sha256','mime']);
@@ -149,9 +208,14 @@ export function createGalleryServer(config, source, { now = Date.now, events = {
     socket.on('close', () => { upload?.image.fill(0);upload=undefined;sockets.delete(socket); decoder.close(); peer?.close(); if (authenticated&&activeSocket===socket){activeSocket=undefined;void source.deletionDisconnected?.().catch(()=>{});events.disconnected?.();} });
   });
   let stopping;
-  const stop = () => {if(stopping)return stopping;closed=true;key.fill(0);resumeKey?.fill(0);resumeKey=undefined;const cancelled=source.deletionDisconnected?.();for(const socket of sockets)socket.destroy();stopping=new Promise(resolve=>server.close(resolve)).then(async()=>{await cancelled;await workTail;source.close?.()});return stopping;};
-  const timer = setTimeout(() => { void stop(); }, Math.max(1, expires - now())); timer.unref();
-  return { server, stop: () => { clearTimeout(timer); return stop(); } };
+  const stop = () => {if(stopping)return stopping;clearTimeout(expiryTimer);closed=true;key.fill(0);resumeKey?.fill(0);resumeKey=undefined;const cancelled=source.deletionDisconnected?.();for(const socket of sockets)socket.destroy();stopping=new Promise(resolve=>server.close(resolve)).then(async()=>{await cancelled;await workTail;source.close?.()});return stopping;};
+  function scheduleExpiry() {
+    clearTimeout(expiryTimer);
+    expiryTimer = setTimeout(() => { void stop(); }, Math.max(1, expires - now()));
+    expiryTimer.unref();
+  }
+  scheduleExpiry();
+  return { server, stop };
 }
 async function main() {
   if (process.argv.length !== 2) throw new Error('No file paths or arbitrary command options accepted');

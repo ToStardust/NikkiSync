@@ -37,6 +37,18 @@ public sealed class ConnectionDiagnosticsTests:IDisposable
     public ConnectionDiagnosticsTests()=>Directory.CreateDirectory(_root);
     public void Dispose(){var full=Path.GetFullPath(_root);Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()),full);Assert.StartsWith("MomoDiagTests-",Path.GetFileName(full));Directory.Delete(full,true);}
     private string FileAt(string name)=>Path.Combine(_root,name);
+    [Fact] public void OnlineReportIncludesOnlyKnownCodesAndCounts()
+    {
+        File.WriteAllText(FileAt("startup-error.log"),"""{"code":"FILE_ACCESS","path":"private-source","stack":"private-message"}""");
+        File.WriteAllText(FileAt("startup-diagnostics.log"),"""{"code":"private-token"}""");
+        File.WriteAllText(FileAt("scan-status.json"),"""{"lastScan":{"errorCount":3,"errors":["private-path"]}}""");
+        var report=ConnectionDiagnosticsPackage.SupportReport(_root,"1.0.33",2026111004,true);
+        Assert.Equal(new[]{new SupportError("FILE_ACCESS",1),new SupportError("SCAN_ERROR",3),new SupportError("SERVICE_EXIT",1)},report.Errors);
+        var json=JsonSerializer.Serialize(report,SupportGatewayClient.JsonOptions);
+        Assert.DoesNotContain("private-",json);
+        using var document=JsonDocument.Parse(json);
+        Assert.Equal("windows",document.RootElement.GetProperty("platform").GetString());
+    }
     [Fact] public void DatabaseDiagnosticsKeepOnlyKnownCategoriesAndSafeCounters()
     {
         var input=Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{

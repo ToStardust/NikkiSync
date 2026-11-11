@@ -6,13 +6,14 @@ export const organizerCss=`
 .organizer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;align-items:start}
 .organizer-tile{min-width:0;border-radius:18px;overflow:hidden;background:var(--surface);border:1px solid var(--border)}.organizer-picture{position:relative;aspect-ratio:1;background:var(--tint);display:grid;place-items:center;color:var(--secondary);overflow:hidden}.organizer-picture img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}.organizer-state{position:absolute;bottom:10px;left:10px;right:10px;padding:6px 10px;border-radius:16px;background:#fffcf7dd;backdrop-filter:blur(12px);font-size:11px;color:var(--accent-dark)}.organizer-body{padding:12px}.organizer-body strong{font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.organizer-body .hint{font-size:11px;line-height:1.6;margin:6px 0}.organizer-body details{font-size:11px;color:var(--secondary);margin:10px 0}.organizer-body summary{cursor:pointer}.organizer-body details p{overflow-wrap:anywhere;margin-top:6px}.organizer-actions{display:flex;flex-wrap:wrap;gap:6px}.organizer-actions button{flex:1;min-height:36px;padding:8px;font-size:11px}.organizer-empty{padding:50px 20px;text-align:center;color:var(--secondary)}
 `;
-export const organizerHtml=`<section id="organizer-panel"><div class="organizer-intro glass"><h2>手机整理 · 最近删除 <span id="organizer-count"></span></h2><p>手机标记 → 电脑确认 → 手机在线核对后移入回收站。可从 Windows 回收站恢复，手机已保存照片不受影响。</p><p>小程序请保持在前台连接；断线后未开始的申请会取消。App 新版整批核对完成后可关闭 App，电脑继续处理。开始回收后请从 Windows 回收站恢复。</p><div class="organizer-toolbar"><button id="organizer-approve-all" class="primary" disabled>全选并移入回收站</button><p id="organizer-availability"></p></div><p id="organizer-note" role="status" aria-live="polite"></p></div><details id="organizer-results" class="organizer-results glass" hidden></details><div id="organizer-list" class="organizer-grid"></div></section>`;
+export const organizerHtml=`<section id="organizer-panel"><div class="organizer-intro glass"><h2>手机整理 · 最近删除 <span id="organizer-count"></span></h2><p>手机标记 → 电脑确认 → 手机在线核对后移入回收站。可从 Windows 回收站恢复，手机已保存照片不受影响。</p><p>小程序请保持在前台连接。断线或换新码后，尚未执行的申请会取消，原因可在下方查看。App 新版整批核对完成后可关闭 App，电脑继续处理。开始回收后请从 Windows 回收站恢复。</p><div class="organizer-toolbar"><button id="organizer-approve-all" class="primary" disabled>全选并移入回收站</button><p id="organizer-availability"></p></div><p id="organizer-note" role="status" aria-live="polite"></p></div><details id="organizer-results" class="organizer-results glass" hidden></details><details id="organizer-cancellations" class="organizer-results glass" hidden></details><div id="organizer-list" class="organizer-grid"></div></section>`;
 export const organizerScript=`
 (()=>{
 const list=document.querySelector('#organizer-list'),note=document.querySelector('#organizer-note');if(!list)return;
 let busy=false,loading=false,last='',items=[],revision=0;const previewCache=new Map();const previewObservers=[];let controls=[];
 const activeStates=['preparing','pending','confirming','queued','checking','executing'],processingStates=['queued','checking','executing'];
 const bulk=document.querySelector('#organizer-approve-all'),availability=document.querySelector('#organizer-availability'),results=document.querySelector('#organizer-results');
+const cancellations=document.querySelector('#organizer-cancellations');
 const token=document.querySelector('meta[name="nikkisync-desktop-token"]')?.content||'';
 async function request(action,body){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const response=await fetch('/api/organizer'+action,{signal:controller.signal,method:body?'POST':'GET',headers:{'x-nikkisync-desktop-token':token,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});if(!response.ok)throw Error();return await response.json();}finally{clearTimeout(timer);}}
 function eligible(){return items.filter(item=>item.state==='pending'&&item.online).slice(0,500);}
@@ -24,6 +25,20 @@ function previewUrl(item){
  const entry={url:null,promise:null};entry.promise=fetch('/api/organizer/preview?id='+encodeURIComponent(item.id),{headers:{'x-nikkisync-desktop-token':token}}).then(response=>{if(!response.ok)throw Error();return response.blob();}).then(blob=>{if(previewCache.get(key)!==entry)throw Error();entry.url=URL.createObjectURL(blob);return entry.url;}).catch(error=>{if(previewCache.get(key)===entry)previewCache.delete(key);throw error;});previewCache.set(key,entry);return entry.promise;
 }
 function updateControls(){bulk.disabled=busy||preparingOnline()||!eligible().length;for(const update of controls)update();}
+function renderReminders(section,records,title,description,buttonText,allFailures=false){
+ section.replaceChildren();section.hidden=!records.length;if(!records.length)return;
+ const summary=document.createElement('summary');summary.textContent=title;section.append(summary);
+ for(const item of records){const line=document.createElement('p');line.textContent=(item.files[0]?.name||'照片')+'：'+item.message;section.append(line);}
+ const help=document.createElement('p');help.textContent=description;section.append(help);
+ const clear=document.createElement('button');clear.className='secondary';clear.textContent=buttonText;
+ clear.onclick=async()=>{
+  if(busy)return;busy=true;revision++;updateControls();
+  try{render(await request('/dismiss',{ids:records.map(item=>item.id),...(allFailures?{allFailures:true}:{})}));}
+  catch{note.textContent='未能移除提示，请稍后重试。';}
+  finally{busy=false;updateControls();}
+ };
+ section.append(clear);
+}
 function render(value){const stamp=JSON.stringify(value.items);if(stamp===last)return;last=stamp;items=value.items;controls=[];const needed=new Set(items.filter(item=>activeStates.includes(item.state)).map(previewKey));for(const [id,entry] of previewCache)if(!needed.has(id)){if(entry.url)URL.revokeObjectURL(entry.url);previewCache.delete(id);}for(const observer of previewObservers)observer.disconnect();previewObservers.length=0;list.replaceChildren();
 const pending=value.items.filter(item=>activeStates.includes(item.state));document.querySelector('#organizer-count').textContent=pending.length?'('+pending.length+')':'';
 const ready=eligible().length,offline=pending.filter(item=>!item.online&&!processingStates.includes(item.state)).length,confirming=pending.filter(item=>item.state==='confirming').length,processing=pending.filter(item=>processingStates.includes(item.state)).length,preparing=pending.filter(item=>item.state==='preparing'&&item.online).length;
@@ -33,9 +48,11 @@ availability.textContent=preparing?'正在核对 '+preparing+' 张照片的关�
 note.textContent=pending.length?'剩余 '+pending.length+' 张'+(processing?' · 其中 '+processing+' 张正在核对或移入回收站':'')+' · 结果自动更新。':'暂无待确认的删除记录。';
 const indicator=document.querySelector('#open-organizer');indicator.disabled=!pending.length;indicator.textContent=pending.length?'待删除 '+pending.length+' 张 · 前往核对 →':'暂无待删除照片';
 const badge=document.querySelector('#organizer-nav-count');badge.hidden=!pending.length;badge.textContent=String(pending.length);
-// Keep terminal records for phone acknowledgements, but never leave deleted placeholders in the gallery.
-results.replaceChildren();const failures=value.items.filter(item=>['failed','changed'].includes(item.state)).slice(-10).reverse();results.hidden=!failures.length;
-if(failures.length){const summary=document.createElement('summary');summary.textContent='有 '+failures.length+' 项未完成处理 · 展开查看原因';results.append(summary);for(const item of failures){const line=document.createElement('p');line.textContent=(item.files[0]?.name||'照片')+'：'+item.message;results.append(line);}const help=document.createElement('p');help.textContent='失败项不会自动再删。重新同步后可在手机重新选择；移除提示只整理记录，不会删除照片。';results.append(help);const clear=document.createElement('button');clear.className='secondary';clear.textContent='移除失败提示';clear.onclick=async()=>{if(busy)return;busy=true;revision++;updateControls();try{render(await request('/dismiss',{ids:failures.map(item=>item.id),allFailures:true}));}catch{note.textContent='未能移除提示，请稍后重试。';}finally{busy=false;updateControls();}};results.append(clear);}
+// Terminal records are reminders, never approval tiles.
+const failures=value.items.filter(item=>['failed','changed'].includes(item.state)).slice(-10).reverse();
+renderReminders(results,failures,'有 '+failures.length+' 项未完成处理 · 展开查看原因','失败项不会自动再删。重新同步后可在手机重新选择；移除提示只整理记录，不会删除照片。','移除失败提示',true);
+const ended=value.items.filter(item=>item.sessionCancelled).slice(-10).reverse();
+renderReminders(cancellations,ended,'最近 '+ended.length+' 项小程序删除申请因连接结束而取消','如需删除，请在新连接里重新选择照片并提交申请。','移除取消提示');
 const shown=pending;
 if(!shown.length){const empty=document.createElement('p');empty.className='organizer-empty';empty.textContent='在手机选择待删除照片，连接后会显示在这里。';list.append(empty);}
 for(const item of shown){

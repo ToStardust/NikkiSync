@@ -4,6 +4,10 @@ val releaseStore = providers.environmentVariable("MOMO_RELEASE_STORE_FILE").orNu
 val releasePassword = providers.environmentVariable("MOMO_RELEASE_STORE_PASSWORD").orNull
 val releaseAlias = providers.environmentVariable("MOMO_RELEASE_KEY_ALIAS").orElse("momo-camera").get()
 val releaseSigningReady = !releaseStore.isNullOrBlank() && !releasePassword.isNullOrBlank()
+val storeSubmission = providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") }
+val supportUrl = providers.gradleProperty("momoSupportUrl")
+    .orElse(providers.environmentVariable("MOMO_SUPPORT_URL")).orElse("").get()
+    .also { require(it.none(Char::isISOControl)) }
 
 android {
     namespace = "app.nikkisync.mobile"
@@ -17,11 +21,12 @@ android {
         applicationId = "app.nikkisync.mobile"
         minSdk = 30
         targetSdk = 35
-        versionCode = 60
-        versionName = "1.0.32"
+        versionCode = 65
+        versionName = "1.0.39"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86") }
         externalNativeBuild { cmake { targets += "momo_jpeg" } }
-        buildConfigField("boolean", "STORE_SUBMISSION", providers.gradleProperty("momoStoreSubmission").orElse("false").get().also { require(it == "true" || it == "false") })
+        buildConfigField("boolean", "STORE_SUBMISSION", storeSubmission)
+        buildConfigField("String", "SUPPORT_URL", "\"${supportUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "APP_FILING_NUMBER", "\"${providers.gradleProperty("momoFilingNumber").orElse("").get().replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -43,6 +48,10 @@ android {
     }
 
     buildFeatures { buildConfig = true }
+    if (storeSubmission == "true") {
+        sourceSets.getByName("debug").manifest.srcFile("src/store/AndroidManifest.xml")
+        sourceSets.getByName("release").manifest.srcFile("src/store/AndroidManifest.xml")
+    }
     // Java 9 OSGi descriptors in transitive jars are unused on Android; retain their license files.
     packaging.resources.excludes.add("META-INF/versions/9/OSGI-INF/MANIFEST.MF")
     testOptions { unitTests.isIncludeAndroidResources = true }
@@ -58,6 +67,9 @@ val bundleLegalDocuments = tasks.register<Copy>("bundleLegalDocuments") {
     from(rootProject.projectDir.resolve("../../docs/store-submission")) {
         include("PRIVACY_POLICY.md", "USER_AGREEMENT.md", "PERMISSIONS_DATA.md", "SDK_SERVICES.md")
         into("legal")
+    }
+    from(rootProject.projectDir.resolve("../windows-shell/Assets/update-public-key.pem")) {
+        into("updates")
     }
     into(legalAssets)
 }

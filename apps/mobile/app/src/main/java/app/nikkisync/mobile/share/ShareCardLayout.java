@@ -7,6 +7,8 @@ import java.util.List;
 /** Matches the mini-program's two-column icon grid and read-only camera controls. */
 public final class ShareCardLayout {
     public static final int WIDTH=1440, MAX_HEIGHT=4096;
+    static final int EFFECT_ICON_SIZE=100, EFFECT_TEXT_SIZE=32, EFFECT_LINE_HEIGHT=40, EFFECT_ROW_GAP=24;
+    private static final int EFFECT_TEXT_WIDTH=510;
     private static final String[] ORDER={"焦距","光圈","晕影","柔光","柔光范围","亮度","曝光","对比度","饱和度","自然饱和","高光","阴影"};
     public record Part(ShareCardPayload.Item item, List<String> lines, int column, int y) {}
     public record Parameter(String label, String displayValue, Double ratio, boolean missing,
@@ -24,9 +26,9 @@ public final class ShareCardLayout {
         for(var item:payload.cameraItems()) if(!List.of(ORDER).contains(alias(item.label())))
             parameters.add(parameter(item.label(),item.value()));
         for(var item:payload.effectItems()) {
-            List<String> lines=wrap(item.value(),28,530);
-            parameters.add(new Parameter(item.label(),item.value(),null,false,true,lines,
-                    Math.max(104,28+lines.size()*34)));
+            List<String> lines=wrap(item.value(),EFFECT_TEXT_SIZE,EFFECT_TEXT_WIDTH);
+            int height=Math.max(EFFECT_ICON_SIZE,lines.size()*EFFECT_LINE_HEIGHT)+EFFECT_ROW_GAP;
+            parameters.add(new Parameter(item.label(),item.value(),null,false,true,lines,height));
         }
         int parameterHeight=parameters.stream().mapToInt(Parameter::height).sum()+76;
         if(parameterHeight>3690) throw new IllegalArgumentException("参数内容过长，无法生成分享图");

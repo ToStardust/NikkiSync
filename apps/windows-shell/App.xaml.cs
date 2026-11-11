@@ -14,6 +14,11 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length == 1 && e.Args[0] == "--decode-photo-local")
+        {
+            Shutdown(LocalPhotoDecoder.Run());
+            return;
+        }
         if(e.Args.Length>0&&e.Args[0]=="--recycle-batch")
         {
             Shutdown(e.Args.Length==3?RecycleOnly.RunBatch(e.Args[1],e.Args[2]):3);return;
@@ -44,7 +49,7 @@ public partial class App : System.Windows.Application
         if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
         {
             try { await UpdateInstaller.ApplyAsync(e.Args[1]); Shutdown(0); }
-            catch { System.Windows.MessageBox.Show("自动更新未完成。原程序和用户数据已保留；请重新打开原 EXE，必要时手动下载完整包。", "大喵相机助手"); Shutdown(1); }
+            catch { if (!UpdateInstaller.IsAutomaticJob(e.Args[1])) System.Windows.MessageBox.Show("自动更新未完成。原程序和用户数据已保留；请重新打开原 EXE，必要时手动下载完整包。", "大喵相机助手"); Shutdown(1); }
             return;
         }
         // Full boot acceptance bypasses the normal single-instance activation only
@@ -136,7 +141,7 @@ public partial class App : System.Windows.Application
         }
 
         base.OnStartup(e);
-        _mainWindow = new MainWindow();
+        _mainWindow = new MainWindow(autoProgramUpdates: e.Args.Length != 2 || e.Args[0] != "--update-health");
         MainWindow = _mainWindow;
         _mainWindow.Show();
         if (_activationPending) ActivateMainWindow();

@@ -1,0 +1,106 @@
+<Window x:Class="NikkiSync.WindowsShell.UpdateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="大喵相机助手 · 下载与更新" Width="740" Height="890" MinWidth="580" MinHeight="480"
+        WindowStartupLocation="CenterOwner" Background="#FAE8E8" Foreground="#59475E"
+        FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13" UseLayoutRounding="True">
+  <Window.Resources>
+    <SolidColorBrush x:Key="Muted" Color="#7C6977"/>
+    <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="LineHeight" Value="22"/></Style>
+    <Style x:Key="Card" TargetType="Border">
+      <Setter Property="Background" Value="#FFFCF8"/><Setter Property="BorderBrush" Value="#FFFFFF"/>
+      <Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="22"/>
+      <Setter Property="Padding" Value="23"/><Setter Property="Margin" Value="0,0,0,14"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Foreground" Value="#62425A"/><Setter Property="Background" Value="#FBE8EF"/>
+      <Setter Property="BorderBrush" Value="#EED5DD"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="17,11"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="13"/><Setter Property="MinHeight" Value="44"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+        <Border x:Name="Surface" CornerRadius="14" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+          <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#F5D7E2"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="#AA6486"/><Setter TargetName="Surface" Property="BorderThickness" Value="2"/></Trigger>
+          <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#EFBCCA"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.48"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="SourceButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="Padding" Value="16,15"/>
+      <Setter Property="MinHeight" Value="108"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Padding" Value="12,10"/><Setter Property="Background" Value="#FFFCF8"/>
+      <Setter Property="Foreground" Value="#59475E"/><Setter Property="BorderBrush" Value="#EED5DD"/>
+      <Setter Property="BorderThickness" Value="1"/><Setter Property="MinHeight" Value="42"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox">
+        <Border CornerRadius="11" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+          <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+        </Border>
+        <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#AA6486"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ProgressBar">
+      <Setter Property="Height" Value="7"/><Setter Property="Background" Value="#F1E3E8"/><Setter Property="Foreground" Value="#D780AA"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ProgressBar">
+        <Grid x:Name="PART_Track"><Border Background="{TemplateBinding Background}" CornerRadius="4"/><Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="4" HorizontalAlignment="Left"/></Grid>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+  </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+    <StackPanel Margin="26,26,26,22">
+      <Grid Margin="3,0,3,22">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel><TextBlock Text="下载与更新" FontSize="27" FontWeight="SemiBold" LineHeight="38"/><TextBlock Text="选择顺手的下载方式，继续整理你的暖暖相册。" Foreground="{StaticResource Muted}" Margin="0,6,15,0"/></StackPanel>
+        <Border Grid.Column="1" VerticalAlignment="Top" Background="#FFFCF8" CornerRadius="18" Padding="13,7" Margin="0,4,0,0"><TextBlock x:Name="_version" FontSize="12"/></Border>
+      </Grid>
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="下载安装包" FontSize="17" FontWeight="SemiBold"/>
+          <Border Background="#FBE8EF" CornerRadius="12" Padding="13,10" Margin="0,12,0,15"><TextBlock Text="GitHub 在中国大陆访问可能较慢。检查或下载慢时，推荐使用夸克或百度网盘。" Foreground="#80566C" FontSize="12"/></Border>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Button x:Name="_quark" Style="{StaticResource SourceButton}" AutomationProperties.Name="打开夸克网盘">
+              <StackPanel><TextBlock Text="夸克网盘  ↗" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="推荐下载" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0"/><TextBlock Text="电脑端 / 安卓端" FontSize="11" Foreground="{StaticResource Muted}"/></StackPanel>
+            </Button>
+            <Button x:Name="_baidu" Grid.Column="2" Style="{StaticResource SourceButton}" Background="#FBF0F3" AutomationProperties.Name="打开百度网盘">
+              <StackPanel><TextBlock Text="百度网盘  ↗" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="下载与订阅更新" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0"/><TextBlock Text="电脑端 / 安卓端" FontSize="11" Foreground="{StaticResource Muted}"/></StackPanel>
+            </Button>
+            <Button x:Name="_github" Grid.Column="4" Style="{StaticResource SourceButton}" Background="#F7F1F4" AutomationProperties.Name="打开GitHub发布页">
+              <StackPanel><TextBlock Text="GitHub  ↗" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="发布记录与下载" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,5,0,0"/><TextBlock Text="大陆访问可能较慢" FontSize="11" Foreground="{StaticResource Muted}"/></StackPanel>
+            </Button>
+          </Grid>
+        </StackPanel>
+      </Border>
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="一键更新" FontSize="17" FontWeight="SemiBold"/>
+          <TextBlock Text="通过 GitHub 检查并下载，完成校验后自动替换电脑程序、重新启动。" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,7,0,0"/>
+          <Border Background="#FAF0F3" CornerRadius="13" Padding="14,11" Margin="0,13,0,0">
+            <StackPanel><TextBlock x:Name="_status" AutomationProperties.LiveSetting="Polite"/><ScrollViewer x:Name="_notesPanel" MaxHeight="140" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Margin="0,7,0,0"><TextBlock x:Name="_notes" Foreground="{StaticResource Muted}" FontSize="12"/></ScrollViewer></StackPanel>
+          </Border>
+          <ProgressBar x:Name="_progress" Minimum="0" Maximum="100" Visibility="Collapsed" Margin="0,16,0,0"/>
+          <WrapPanel Margin="0,15,0,0"><Button x:Name="_action" Content="检查更新" Background="#F3BCCB" FontWeight="SemiBold" MinWidth="154"/><Button x:Name="_cancelDownload" Content="取消下载" Background="#FFFCF8" Visibility="Collapsed" Margin="10,0,0,0"/></WrapPanel>
+          <TextBlock Text="更新时手机会短暂断开，电脑助手重启后可重新连接。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,11,0,0"/>
+        </StackPanel>
+      </Border>
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="从网盘下载后，电脑端怎么更新？" FontSize="16" FontWeight="SemiBold"/>
+          <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="30"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="01" Foreground="#B57694" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Text="下载并解压新版，按需选择「仅需 APP」或「兼容小程序和 APP」电脑端，二选一。" FontSize="12"/></Grid>
+          <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="30"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="02" Foreground="#B57694" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Text="在 Windows 右下角托盘找到大喵助手，右键选择「退出」。只关闭窗口仍会在后台运行。" FontSize="12"/></Grid>
+          <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="30"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="03" Foreground="#B57694" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Text="用新版 EXE 替换原来的程序后打开，或将新版放到固定文件夹运行。无需卸载，也不要删除用户数据目录。" FontSize="12"/></Grid>
+          <Border Background="#FBE8EF" CornerRadius="12" Padding="13,10" Margin="0,15,0,0"><TextBlock Text="现有配对、设置和相册索引会保留。安卓 App 请一起更新，直接覆盖安装，无需卸载。" Foreground="#80566C" FontSize="12"/></Border>
+        </StackPanel>
+      </Border>
+      <Expander Header="高级设置 · 自定义签名更新源" Foreground="{StaticResource Muted}" Margin="5,3,5,8">
+        <StackPanel Margin="0,12,0,0"><TextBlock Text="仅填写开发者提供的 HTTPS 更新清单地址；留空使用 GitHub。普通网盘分享链接不能用于一键更新。" FontSize="12"/><TextBox x:Name="_source" Margin="0,10,0,0" AutomationProperties.Name="自定义签名更新源地址"/><Button x:Name="_saveSource" Content="保存并检查" HorizontalAlignment="Left" Margin="0,10,0,0"/></StackPanel>
+      </Expander>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

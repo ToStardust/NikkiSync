@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import {realpath} from 'node:fs/promises'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
 import path from 'node:path'
+import { AppSettingsRepository, SyncReadRepository } from '@nikkisync/database'
 import { PcCompanionRuntime } from './runtime.js'
 import { RuntimeMemoryMaintenance } from './RuntimeMemoryMaintenance.js'
 import { qrSvg } from './qr.js'
@@ -13,8 +15,11 @@ import { clothingNameSupplement } from './metadata/VerifiedClothingNames.js'
 import { loadMetadataDictionaryRemoteConfigFile } from './metadata/MetadataDictionaryRemoteConfigFile.js'
 import { composeMetadataDictionaryProvider, composeMetadataDictionarySupplementProvider, composeMetadataResolver } from './metadata/MetadataStartupComposition.js'
 import { MetadataOnlineConsent } from './metadata/MetadataOnlineConsent.js'
+import { createLocalPhotoMetadataResolver } from './metadata/LocalPhotoMetadataResolver.js'
+import { nuan5QueueStatus } from './metadata/Nuan5CompatibleResolver.js'
 import { orderedMetadataProviderConfigs } from './metadata/MetadataResolverConfigFile.js'
 import { MetadataThumbnailCache } from './metadata/MetadataThumbnailCache.js'
+import { loadLocalClothingIconPack } from './metadata/LocalClothingIconPack.js'
 import { createDesktopControlServer } from './desktop/DesktopControlServer.js'
 import { DesktopStatusService } from './desktop/DesktopStatusService.js'
 import { chooseWritableDataDirectory, isWritableDataDirectory } from './desktop/AppDataDirectory.js'
@@ -22,7 +27,7 @@ import { WeChatGalleryService, resizeForWeChat } from './wechat/WeChatGallerySer
 import {withWeChatDeletion} from './wechat/WeChatDeletion.js'
 import { createIndexedPreviewSource,rotatePng,exportLive } from './wechat/GalleryRuntime.mjs'
 import {withWeChatInspiration} from './wechat/WeChatInspiration.js'
-import {WeChatIconProvider,resizeWeChatIcon} from './wechat/WeChatIconProvider.js'
+import {WeChatIconProvider,convertWeChatWebp,resizeWeChatIcon} from './wechat/WeChatIconProvider.js'
 import { startupFailureRecord } from './desktop/StartupFailure.js'
 import { GameVersionUpdateService } from './server/GameVersionUpdateService.js'
 import { setRemoteGameVersionReleases as setGalleryGameVersionReleases } from './wechat/GalleryRuntime.mjs'
@@ -92,15 +97,21 @@ async function main(): Promise<void> {
   currentPairingHost()
 
   const resolverFile = loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)
+  const invalidResolverFile = !resolverFile && existsSync(METADATA_RESOLVER_CONFIG_FILE)
   const metadataDictionary = loadMetadataDictionaryFile(METADATA_DICTIONARY_FILE)
   const metadataDictionarySupplement = clothingNameSupplement(loadMetadataDictionaryFile(METADATA_DICTIONARY_SUPPLEMENT_FILE))
   const metadataDictionaryRemoteConfig = loadMetadataDictionaryRemoteConfigFile(METADATA_DICTIONARY_REMOTE_CONFIG_FILE)
   const metadataDictionaryRemote = composeMetadataDictionaryProvider(metadataDictionaryRemoteConfig)
   const metadataDictionarySupplementRemote = composeMetadataDictionarySupplementProvider(metadataDictionaryRemoteConfig)
-  const metadataThumbnailCache = new MetadataThumbnailCache({ cacheDir: METADATA_THUMBNAIL_CACHE_DIR })
-  const wechatIcons=new WeChatIconProvider(metadataThumbnailCache,bytes=>resizeWeChatIcon(bytes,process.versions.bun
+  const localClothingIcons = await loadLocalClothingIconPack(path.join(APP_DATA, 'clothing-icons'))
+  if (localClothingIcons && !localClothingIcons.valid) {
+    console.warn('[NikkiSync] 本地服装图标清单不可用，将显示占位图。')
+  }
+  const metadataThumbnailCache = localClothingIcons ? undefined : new MetadataThumbnailCache({ cacheDir: METADATA_THUMBNAIL_CACHE_DIR })
+  const resizeIcon = (bytes: Uint8Array) => resizeWeChatIcon(bytes, process.versions.bun
     ? path.join(path.dirname(process.execPath),'wechat','resize-icon.ps1')
-    : path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','resize-icon.ps1')))
+    : path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','resize-icon.ps1'))
+  const wechatIcons=metadataThumbnailCache&&wechatEnabled ? new WeChatIconProvider(metadataThumbnailCache,resizeIcon) : undefined
   const cachedGameRoot = readCachedGameRoot()
 
   const environmentResolverConfig = process.env.NIKKISYNC_METADATA_RESOLVER_URL ? {
@@ -113,9 +124,14 @@ async function main(): Promise<void> {
   const configuredProviders=orderedMetadataProviderConfigs(resolverFile)
   const recipients=(configuredProviders.length?configuredProviders:environmentResolverConfig?[{...environmentResolverConfig,type:'remote-json'}]:[{type:'nuan5-compatible',endpoint:'https://nuan5.pro/api/decode-photo2'}])
     .map(provider=>({name:provider.type==='nuan5-compatible'?'NUAN5':'自定义参数解析服务',endpoint:provider.endpoint??'https://nuan5.pro/api/decode-photo2',fields:provider.type==='nuan5-compatible'?['游戏UID','原生编码参数','JPEG前缀MD5']:['游戏UID','原生编码参数或令牌','可选校验值','参数格式及长度']}))
-  const onlineConsent=new MetadataOnlineConsent(path.join(APP_DATA,'metadata-online-consent.json'),recipients,resolverFile?.enabled===false)
+  const onlineConsent=new MetadataOnlineConsent(path.join(APP_DATA,'metadata-online-consent.json'),recipients,invalidResolverFile||resolverFile?.enabled===false)
   const candidate=composeMetadataResolver({...resolverFile,enabled:true},environmentResolverConfig)
-  const resolver=candidate?onlineConsent.guard(candidate):undefined
+  const onlineResolver=candidate?onlineConsent.guard(candidate):undefined
+  const localResolver = createLocalPhotoMetadataResolver(
+    process.env.NIKKISYNC_RECYCLE_HELPER, path.dirname(process.execPath), onlineResolver, () => onlineConsent.enabled()
+  )
+  const nuan5Endpoints = recipients.filter(recipient => recipient.name === 'NUAN5').map(recipient => recipient.endpoint)
+  const resolver = localResolver ?? (nuan5Endpoints.length === 0 ? onlineResolver : undefined)
   let metadataDiagnosticRevision: number | undefined
 
   startupPhase = 'database-and-tls'
@@ -164,7 +180,7 @@ async function main(): Promise<void> {
     ...(resolver ? {
       metadataResolver: {
         resolver,
-        service: {canResolve:()=>onlineConsent.enabled(), onWorkSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() } }
+        service: {canResolve:()=>!!localResolver || onlineConsent.enabled(), onWorkSettled: () => { memoryMaintenance.schedule(); writeMetadataStatus() } }
       }
     } : {}),
     server: {
@@ -174,7 +190,8 @@ async function main(): Promise<void> {
       mdns: process.env.NIKKISYNC_MDNS !== '0',
       connectionHosts: () => listLanIpv4(),
       name: APP_NAME,
-      metadataThumbnailCache
+      ...(metadataThumbnailCache ? { metadataThumbnailCache } : {}),
+      ...(localClothingIcons ? { localClothingIcons } : {})
     }
   })
   function writeMetadataStatus(): void {
@@ -201,13 +218,28 @@ async function main(): Promise<void> {
   }
   const status = new DesktopStatusService(runtime.database)
   const bundledFfmpeg = path.join(path.dirname(process.execPath), 'wechat', 'media', 'ffmpeg.exe')
+  let galleryCacheSecret: string | undefined
+  if (wechatEnabled) {
+    const settings = new AppSettingsRepository(runtime.database)
+    const stored = settings.get<string>('wechat.galleryCacheSecret')
+    galleryCacheSecret = typeof stored === 'string' && /^[a-f0-9]{64}$/.test(stored) ? stored : randomBytes(32).toString('hex')
+    if (stored !== galleryCacheSecret) settings.set('wechat.galleryCacheSecret', galleryCacheSecret)
+  }
   const wechat = wechatEnabled ? new WeChatGalleryService({
     onWorkSettled: () => memoryMaintenance.schedule(),
     host: currentPairingHost,
     hosts: () => listLanIpv4(),
     qrSvg,
     snapshot: async () => withWeChatDeletion(withWeChatInspiration(await createIndexedPreviewSource(runtime.database, (await Promise.all(runtime.scanner.getScanRoots().map(async root=>{try{return await realpath(root)}catch{return undefined}}))).filter((root):root is string=>Boolean(root)), {
-      loadIcon:descriptor=>wechatIcons.get(descriptor),
+      reads: new SyncReadRepository(runtime.database, () => runtime.server.accounts.selection(), () => runtime.server.accounts.sourceGroups()),
+      ...(galleryCacheSecret ? {cacheSecret:galleryCacheSecret} : {}),
+      exportCopies: () => runtime.scanner.verifiedExportCopies(),
+      ...(wechatIcons ? { loadIcon: descriptor => wechatIcons.get(descriptor) } : {}),
+      ...(localClothingIcons ? { localClothingIcons,
+        convertLocalWebp: bytes => !process.versions.bun || existsSync(bundledFfmpeg)
+          ? convertWeChatWebp(bytes, process.versions.bun ? bundledFfmpeg : 'ffmpeg.exe').catch(() => resizeIcon(bytes))
+          : resizeIcon(bytes)
+      } : {}),
       ...(existsSync(bundledFfmpeg) ? { motionFfmpeg: bundledFfmpeg } : {}),
       exportLive:(jpeg,video,options)=>exportLive(jpeg,video,{...options,...(process.versions.bun?{ffmpeg:path.join(path.dirname(process.execPath),'wechat','media','ffmpeg.exe'),ffprobe:path.join(path.dirname(process.execPath),'wechat','media','ffprobe.exe')}:{})}),
       rotatePng:(bytes,rotation)=>rotatePng(bytes,rotation,process.versions.bun?path.join(path.dirname(process.execPath),'wechat','rotate-png.ps1'):path.join(import.meta.dirname,'..','..','..','..','tools','wechat-gallery','rotate-png.ps1')),
@@ -224,11 +256,19 @@ async function main(): Promise<void> {
     accounts:runtime.server.accounts,
     deletions:runtime.deletions,
     scanDirectories,
-    metadataPrivacy:{getState:()=>onlineConsent.state(),setEnabled:(enabled,version)=>{
+    metadataPrivacy:{getState:()=>{
+      const state = onlineConsent.state()
+      const queueNotice = invalidResolverFile ? '在线解析配置无法读取，已暂停在线候补。请修正配置后重启电脑端。'
+        : !resolver ? '本机缺少本地解码组件，在线候补不可用。'
+        : state.enabled && nuan5Endpoints.length ? nuan5QueueStatus(runtime.database, nuan5Endpoints) : undefined
+      return { ...state, available: !!resolver && !invalidResolverFile, ...(queueNotice ? { queueNotice } : {}) }
+    },setEnabled:(enabled,version)=>{
+      if (enabled && (!resolver || invalidResolverFile)) throw new Error('Online fallback is unavailable')
       if(enabled&&version!==onlineConsent.state().policyVersion)throw new Error('Current privacy policy must be accepted')
-      if(!enabled){onlineConsent.setEnabled(false);runtime.metadataResolver?.stop()}
+      if(!enabled){onlineConsent.setEnabled(false);if(!localResolver)runtime.metadataResolver?.stop()}
       const latest=loadMetadataResolverConfigFile(METADATA_RESOLVER_CONFIG_FILE)??resolverFile
       writeFileSync(METADATA_RESOLVER_CONFIG_FILE,JSON.stringify({...latest,enabled}),{encoding:'utf8',mode:0o600})
+      runtime.metadataResolver?.reconsider()
       if(enabled){onlineConsent.setEnabled(true,version);runtime.metadataResolver?.start()}
       metadataDiagnosticRevision=undefined;writeMetadataStatus()
     }},

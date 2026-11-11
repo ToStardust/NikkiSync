@@ -54,12 +54,25 @@ public final class ShareCardPreparation {
                     for(var part:page.outfit()) ids.add(part.item().clothingId());
                     final int pageNumber=index+1;
                     Map<String,File> iconFiles=ShareCardIconBatch.load(ids,active,
-                            id->loadIcon(context,client,payload,id,iconVersion,cache,active),
+                            id->loadIcon(client,payload,id,iconVersion,cache,active,
+                                    ()->client.clothingThumbnail(payload.assetId(),id)),
                             (done,total)->progress.update("部件图片 · 第 "+pageNumber+" / "+layouts.size()+" 页",done,total));
                     for(String id:new LinkedHashSet<>(ids)) {
                         check(active);File cached=iconFiles.get(id);Bitmap icon=null;
                         if(cached!=null) try {icon=decode(cached,256);} catch(IOException ignored) {cached.delete();}
                         if(icon==null) missing++;else icons.put(id,icon);
+                    }
+                    for (var effect : payload.effectItems()) {
+                        check(active);
+                        String kind = ShareCardPayload.effectKind(effect.label());
+                        if (kind.isEmpty() || effect.effectId().isEmpty()) continue;
+                        String key = "effect:" + kind;
+                        try {
+                            File cached = loadIcon(client,payload,key + ":" + effect.effectId(),iconVersion,cache,active,
+                                    ()->client.effectThumbnail(payload.assetId(),kind,effect.effectId()));
+                            Bitmap icon = cached == null ? null : decode(cached,256);
+                            if (icon != null) icons.put(key,icon);
+                        } catch (Exception ignored) { check(active); }
                     }
                     progress.update("绘制分享图 · 第 "+pageNumber+" / "+layouts.size()+" 页",0,0);
                     check(active);
@@ -78,14 +91,17 @@ public final class ShareCardPreparation {
             complete=true;return prepared;
         } finally {if(background!=null) background.recycle();if(!complete) deleteJob(dir);prune(cache);}
     }
-    private static File loadIcon(Context context,NikkiSyncClient client,ShareCardPayload payload,String id,String version,File cache,BooleanSupplier active) throws Exception {
+    @FunctionalInterface private interface IconRequest { HttpsURLConnection open() throws Exception; }
+
+    private static File loadIcon(NikkiSyncClient client,ShareCardPayload payload,String id,String version,
+                                 File cache,BooleanSupplier active,IconRequest request) throws Exception {
         File cached=new File(cache,iconKey(client,payload,id,version)+".img");
         if(cached.isFile()){cached.setLastModified(System.currentTimeMillis());return cached;}
         if(client==null)return null;
         // Each concurrent request owns its temporary file, outside the page directory.
         File temp=File.createTempFile(".share-icon-",".tmp",cache);
         try {
-            HttpsURLConnection connection=client.clothingThumbnail(payload.assetId(),id);
+            HttpsURLConnection connection=request.open();
             connection.setReadTimeout(5000);
             download(connection,temp,2L*1024*1024,null,active);
             Bitmap icon=decode(temp,256);if(icon==null)throw new IOException("图标无法解码");

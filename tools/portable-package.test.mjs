@@ -24,7 +24,7 @@ test('portable builder stages an allowlist and supports explicit local Live tool
   assert.match(script, /PublishSingleFile=true/);
   assert.match(script, /IncludeNativeLibrariesForSelfExtract=true/);
   assert.match(script, /--compile-exec-argv="--smol"/);
-  assert.match(script, /NikkiSync-Android.apk/);
+  assert.doesNotMatch(script, /NikkiSync-Android\.apk|Copy-Item\s+-LiteralPath\s+\$apk/);
   assert.doesNotMatch(script, /Copy-Item.*-Recurse/);
   assert.match(script, /\[switch\]\$IncludeWeChatLiveTools/);
   assert.match(script, /if \(\$IncludeWeChatLiveTools\)/);
@@ -37,7 +37,7 @@ test('portable desktop uses private WebView data and extraction progress while p
   assert.match(source, /RuntimePayload.Prepare/);
   assert.match(source, /CoreWebView2Environment.CreateAsync\(null,.*webview2/);
   assert.match(source, /StartupProgress/);
-  assert.match(source, /saveAndroidInstaller/);
+  assert.doesNotMatch(source, /saveAndroidInstaller|SaveAndroidInstaller/);
   assert.match(source, /_service.StopAsync/);
   assert.match(source, /TrySuspendAsync/);
 });

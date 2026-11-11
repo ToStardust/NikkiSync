@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\windows-shell\NikkiSync.WindowsShell.csproj" />
+    <Content Include="..\..\assets\tools\xdelta3\xdelta3.exe" Link="xdelta3.exe" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -43,6 +43,7 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     private final Listener listener;
     private final List<Row> rows = new ArrayList<>();
     private final List<AssetSummary> items = new ArrayList<>();
+    private Set<String> recentIds = Set.of();
     private final Set<String> selected = new HashSet<>();
     private boolean singleAdjustDispatch;
     private boolean groupSelectionEnabled;
@@ -61,12 +62,18 @@ public final class GalleryAdapter extends RecyclerView.Adapter<RecyclerView.View
     }
 
     public void setItems(List<AssetSummary> next) {
-        if (items.equals(next)) return;
+        setItems(next, Set.of());
+    }
+
+    public void setItems(List<AssetSummary> next, Set<String> recent) {
+        Set<String> nextRecent = recent == null ? Set.of() : Set.copyOf(recent);
+        if (items.equals(next) && recentIds.equals(nextRecent)) return;
         endRangeSelection();
         items.clear();
         items.addAll(next);
+        recentIds = nextRecent;
         rows.clear();
-        for (GalleryVersionGroups.Group group : GalleryVersionGroups.group(next)) {
+        for (GalleryVersionGroups.Group group : GalleryVersionGroups.group(next, recentIds)) {
             rows.add(Row.header(group));
             for (AssetSummary asset : group.items()) rows.add(Row.photo(asset));
         }

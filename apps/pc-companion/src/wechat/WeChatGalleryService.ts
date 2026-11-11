@@ -45,6 +45,16 @@ export class WeChatGalleryService {
     releaseProtocolRuntime()
     this.config.onWorkSettled?.()
   }
+  private scheduleExpiry(generation: number, expiresAt: string): void {
+    clearTimeout(this.timer)
+    this.timer = setTimeout(() => {
+      if (generation !== this.generation) return
+      ++this.generation
+      this.current.state = 'expired'
+      void this.release()
+    }, Math.max(1, Date.parse(expiresAt)-Date.now()))
+    this.timer.unref()
+  }
   async stop(): Promise<void> {++this.generation;this.current={state:'closed',photoCount:0,originalsSent:0};await this.release()}
   private async startSession(generation:number): Promise<WeChatGalleryStatus & {qrSvg:string}> {
     const active=()=>generation===this.generation
@@ -66,11 +76,22 @@ export class WeChatGalleryService {
       const expiresAt=new Date(Date.now()+(this.config.ttlMs??600000)).toISOString()
       const payload:GalleryConfig={type:'NikkiSyncLocalGalleryLive',version:1,resume:1,...(source.deletion?{deletion:1 as const}:{}),host,...(hosts.length>1?{hosts}:{}),port,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt}
       this.current={state:'waiting',photoCount:source.count,originalsSent:0,expiresAt}
-      const events:GalleryEvents={authenticated:()=>{if(active())this.current.state='connected'},disconnected:()=>{if(active())this.current.state='disconnected';this.config.onWorkSettled?.()},transferred:()=>{if(active())this.current.originalsSent++},refreshed:count=>{if(active())this.current.photoCount=count},settled:()=>this.config.onWorkSettled?.()}
+      const events:GalleryEvents={
+        authenticated:()=>{if(active())this.current.state='connected'},
+        disconnected:()=>{if(active())this.current.state='disconnected';this.config.onWorkSettled?.()},
+        transferred:()=>{if(active())this.current.originalsSent++},
+        refreshed:count=>{if(active())this.current.photoCount=count},
+        settled:()=>this.config.onWorkSettled?.(),
+        expiryChanged:nextExpiry=>{
+          if(!active())return
+          this.current.expiresAt=nextExpiry
+          if(this.listener)this.scheduleExpiry(generation,nextExpiry)
+        }
+      }
       listener=await (this.config.listen??listen)(payload,source,events);guard()
       const svg=await this.config.qrSvg(JSON.stringify(payload));payload.key='';guard()
       this.listener=listener;listener=undefined
-      this.timer=setTimeout(()=>{if(active()){++this.generation;this.current.state='expired';void this.release()}},Math.max(1,Date.parse(expiresAt)-Date.now()));this.timer.unref()
+      this.scheduleExpiry(generation,this.current.expiresAt??expiresAt)
       return {...this.status(),qrSvg:svg}
     } catch(error) {
       await listener?.stop()
@@ -83,7 +104,8 @@ export class WeChatGalleryService {
 // Package-owned conversion script only; source bytes travel through pipes, never a command string/file.
 export function resizeForWeChat(bytes:Uint8Array, script:string):Promise<Uint8Array> {
   return new Promise((resolve,reject)=>{
-    const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-File',script],{windowsHide:true,stdio:['pipe','pipe','pipe']})
+    // Run only our bundled converter in this child process; never change the user's persisted policy.
+    const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script],{windowsHide:true,stdio:['pipe','pipe','pipe']})
     const chunks:Buffer[]=[];let size=0,settled=false
     const finish=(failed:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);if(failed){child.kill();reject(new Error('照片预览暂不可用'))}else resolve(Buffer.concat(chunks))}
     const timer=setTimeout(()=>finish(true),15000)

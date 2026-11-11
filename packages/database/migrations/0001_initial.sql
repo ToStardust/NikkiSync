@@ -166,6 +166,26 @@ CREATE TABLE IF NOT EXISTS metadata_dictionary_entries (
   PRIMARY KEY(kind, entity_id)
 );
 
+CREATE TABLE IF NOT EXISTS nuan5_resolution (
+  endpoint TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL,
+  response_json TEXT,
+  PRIMARY KEY (endpoint, input_hash)
+);
+
+CREATE TABLE IF NOT EXISTS nuan5_endpoint_state (
+  endpoint TEXT PRIMARY KEY,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  pause_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_resolver_fingerprint
+  ON assets(json_extract(metadata_json, '$.raw.resolver.inputFingerprint'))
+  WHERE json_valid(metadata_json);
+
 CREATE INDEX IF NOT EXISTS idx_metadata_dictionary_entries_kind_name
   ON metadata_dictionary_entries(kind, name);
 

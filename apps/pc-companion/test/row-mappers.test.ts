@@ -28,6 +28,22 @@ test('metadata availability exposes only safe completeness flags to phone client
   assert.equal(partial.nativeParamPayload,undefined)
 })
 
+test('raw decoder responses containing other user IDs are not sent to paired clients', () => {
+  const row = { asset_id: 'sample', asset_type: 'photo', asset_state: 'ready', discovered_at: '2026-01-01T00:00:00Z', revision: 1,
+    metadata_json: JSON.stringify({ schemaVersion: 1, identity: { uid: '10001' }, capture: {}, camera: { focalLength: 50 },
+      raw: { nativeParamToken: 'token', nuan5: { uid: 'hidden-uid', nested: { uid: 'other-uid' } },
+        nikkiGalleryDecoded: { uid: 'decoded-uid' }, resolverResponse: { uid: 'response-uid' },
+        resolver: { status: 'failed', error: 'private raw message hidden-uid' } } }) }
+  const metadata = mapAssetRow(row, []).metadata!
+  assert.equal(metadata.identity?.uid, '10001')
+  assert.equal(metadata.camera?.focalLength, 50)
+  assert.equal(metadata.raw?.nuan5, undefined)
+  assert.equal(metadata.raw?.nikkiGalleryDecoded, undefined)
+  assert.equal(metadata.raw?.resolverResponse, undefined)
+  assert.equal((metadata.raw?.resolver as any)?.status, 'failed')
+  assert.equal((metadata.raw?.resolver as any)?.error, undefined)
+})
+
 test('standalone video resources are not reported as LIVE or an image preview',()=>{
   const summary=mapAssetSummary({asset_id:'video',asset_type:'video',asset_state:'ready',revision:1},[{resource_id:'v',role:'source_motion',file_name:'capture.mp4',mime_type:'video/mp4',file_ext:'.mp4',size_bytes:100,sha256:'a'.repeat(64)}])
   assert.equal(summary.type,'video');assert.equal(summary.hasMotion,false);assert.equal(summary.previewResourceId,undefined)

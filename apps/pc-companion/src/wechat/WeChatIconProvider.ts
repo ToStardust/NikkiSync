@@ -52,8 +52,16 @@ function beforeDeadline<T>(work:Promise<T>,deadline:number):Promise<T>{
  })
 }
 export function resizeWeChatIcon(bytes:Uint8Array,script:string):Promise<Uint8Array>{
+ // The packaged helper needs a process-local policy, independent of the Windows client default.
+ return convertIcon(bytes,'powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script])
+}
+export function convertWeChatWebp(bytes:Uint8Array,ffmpeg:string):Promise<Uint8Array>{
+ return convertIcon(bytes,ffmpeg,['-hide_banner','-loglevel','error','-f','webp_pipe','-i','pipe:0',
+  '-frames:v','1','-c:v','png','-pix_fmt','rgba','-threads','1','-f','image2pipe','pipe:1'])
+}
+function convertIcon(bytes:Uint8Array,command:string,args:string[]):Promise<Uint8Array>{
  return new Promise((resolve,reject)=>{
-  const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-File',script],{windowsHide:true,stdio:['pipe','pipe','pipe']}),chunks:Buffer[]=[];let size=0,settled=false
+  const child=spawn(command,args,{windowsHide:true,stdio:['pipe','pipe','pipe']}),chunks:Buffer[]=[];let size=0,settled=false
   const finish=(failed:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);if(failed){child.kill();for(const chunk of chunks)chunk.fill(0);reject(new Error('Icon conversion unavailable'))}else resolve(Buffer.concat(chunks))}
   const timer=setTimeout(()=>finish(true),10000);child.on('error',()=>finish(true));child.stdin.on('error',()=>finish(true));child.stderr.on('data',()=>{})
   child.stdout.on('data',(chunk:Buffer)=>{if(settled){chunk.fill(0);return}size+=chunk.length;if(size>262144){chunk.fill(0);finish(true)}else chunks.push(chunk)})

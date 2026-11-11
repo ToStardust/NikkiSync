@@ -4,12 +4,12 @@ using System.Text.Json;
 
 namespace NikkiSync.WindowsShell.Services;
 
-public sealed record UpdateJob(int ParentId, long ParentStartedUtcTicks, string Target, string OriginalHash, long OriginalBuild, string Token);
+public sealed record UpdateJob(int ParentId, long ParentStartedUtcTicks, string Target, string OriginalHash, long OriginalBuild, string Token, bool Automatic = false);
 public sealed record UpdateHealth(string Token, bool Ready, int ProcessId);
 
 public static class UpdateInstaller
 {
-    public static Process LaunchHelper(string candidate)
+    public static Process LaunchHelper(string candidate, bool automatic = false)
     {
         var directory = ValidateDirectory(Path.GetDirectoryName(candidate)!);
         var current = Environment.ProcessPath ?? throw new InvalidOperationException("找不到当前程序。");
@@ -21,7 +21,7 @@ public static class UpdateInstaller
         var manifest = DesktopRelease.CreateVerifier().Verify(manifestBytes,signature,DesktopRelease.Build);
         UpdateFiles.VerifyExecutable(candidate,manifest);
         using var parent=Process.GetCurrentProcess();
-        var job = new UpdateJob(parent.Id,parent.StartTime.ToUniversalTime().Ticks,current,UpdateFiles.Hash(current),DesktopRelease.Build,Guid.NewGuid().ToString("N"));
+        var job = new UpdateJob(parent.Id,parent.StartTime.ToUniversalTime().Ticks,current,UpdateFiles.Hash(current),DesktopRelease.Build,Guid.NewGuid().ToString("N"),automatic);
         File.WriteAllText(Path.Combine(directory,"job.json"),JsonSerializer.Serialize(job));
         var helper=Path.Combine(directory,"helper.exe"); File.Copy(current,helper,false);
         if(UpdateFiles.Hash(helper)!=job.OriginalHash)throw new InvalidDataException("更新助手校验失败。");
@@ -35,6 +35,37 @@ public static class UpdateInstaller
         if(!string.Equals(Path.GetDirectoryName(directory),Path.GetFullPath(DesktopRelease.UpdateRoot),StringComparison.OrdinalIgnoreCase)
             || !Guid.TryParseExact(Path.GetFileName(directory),"N",out _))throw new InvalidDataException("更新工作目录无效。");
         UpdateFiles.RejectLinks(directory); return directory;
+    }
+    public static bool HasFailedAutomaticBuild(long build)
+    {
+        var marker = Path.Combine(DesktopRelease.UpdateRoot, "automatic-failed-" + build + ".txt");
+        UpdateFiles.RejectLinks(marker);
+        return File.Exists(marker);
+    }
+    public static bool IsAutomaticJob(string directory)
+    {
+        try { return JsonSerializer.Deserialize<UpdateJob>(File.ReadAllText(Path.Combine(ValidateDirectory(directory), "job.json")))?.Automatic == true; }
+        catch { return false; }
+    }
+    public static void CleanupCompletedJobs()
+    {
+        var root = DesktopRelease.UpdateRoot;
+        if (!Directory.Exists(root)) return;
+        UpdateFiles.RejectLinks(root);
+        foreach (var directory in Directory.EnumerateDirectories(root))
+        {
+            try
+            {
+                var job = ValidateDirectory(directory);
+                if (Directory.GetLastWriteTimeUtc(job) > DateTime.UtcNow.AddHours(-1)) continue;
+                var result = Path.Combine(job, "result.txt");
+                UpdateFiles.RejectLinks(result);
+                if (!File.Exists(result) || File.ReadAllText(result) is not ("updated" or "failed")) continue;
+                Directory.Delete(job, recursive: true);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+            { /* Keep an in-use job for a later launch. */ }
+        }
     }
     public static async Task ApplyAsync(string directory)
     {
@@ -92,6 +123,11 @@ public static class UpdateInstaller
             // The callback below owns this shutdown; the outer guard is a fallback.
             if(next is {HasExited:false}){next.Kill(true);await next.WaitForExitAsync();}
             File.WriteAllText(Path.Combine(directory,"result.txt"),"failed");
+            if (job.Automatic)
+            {
+                try { File.WriteAllText(Path.Combine(DesktopRelease.UpdateRoot,"automatic-failed-"+manifest.Build+".txt"),DateTime.UtcNow.ToString("O")); }
+                catch (IOException) { /* Manual retry remains available. */ }
+            }
             Process.Start(new ProcessStartInfo(job.Target){UseShellExecute=true,WorkingDirectory=Path.GetDirectoryName(job.Target)!});
             throw;
         }

@@ -5,7 +5,7 @@ import android.content.SharedPreferences;
 
 /** Consent is explicit, versioned, local and never inferred from installation or pairing. */
 public final class PrivacyConsentStore {
-    public static final String POLICY_VERSION="2026-10-13.1";
+    public static final String POLICY_VERSION="2026-11-10.1";
     private final SharedPreferences prefs;
     private final Context context;
     public PrivacyConsentStore(Context context){this.context=context.getApplicationContext();prefs=this.context.getSharedPreferences("momo.privacy",Context.MODE_PRIVATE);}

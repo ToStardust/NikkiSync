@@ -1,6 +1,8 @@
 using System.IO;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -27,6 +29,124 @@ public sealed class DesktopUpdateTests : IDisposable
         Assert.Throws<InvalidDataException>(() => Verifier().Verify(bytes, Sign(bytes), 2));
         foreach (var bad in new[] { Manifest() with { AppId = "OtherApp" }, Manifest() with { DownloadUrl = "http://downloads.example.com/app.exe" }, Manifest() with { Size = 0 }, Manifest() with { Sha256 = "invalid" } })
         { var data = Bytes(bad); Assert.Throws<InvalidDataException>(() => Verifier().Verify(data, Sign(data), 1)); }
+    }
+
+    [Fact]
+    public void Schema_two_verifies_every_signed_patch_field()
+    {
+        var delta = new UpdateDelta(1, new string('A', 64), "https://downloads.example.com/update.xdelta3", new string('B', 64), 4, "xdelta3-vcdiff");
+        var manifest = Manifest() with { Schema = 2, Deltas = [delta] };
+        var bytes = Bytes(manifest);
+        Assert.Single(Verifier().Verify(bytes, Sign(bytes), 1).Deltas!);
+        foreach (var bad in new[] { delta with { BaseBuild = 2 }, delta with { DownloadUrl = "http://downloads.example.com/patch" },
+                     delta with { BaseSha256 = "wrong" }, delta with { Size = manifest.Size }, delta with { Algorithm = "unknown" } })
+        {
+            var invalid = Bytes(manifest with { Deltas = [bad] });
+            Assert.Throws<InvalidDataException>(() => Verifier().Verify(invalid, Sign(invalid), 1));
+        }
+        var legacy = Bytes(manifest with { Schema = 1 });
+        Assert.Throws<InvalidDataException>(() => Verifier().Verify(legacy, Sign(legacy), 1));
+    }
+
+    [Fact]
+    public async Task Reconstructs_exact_exe_from_patch_and_falls_back_when_patch_is_corrupt()
+    {
+        Directory.CreateDirectory(_root);
+        var original = Path.Combine(_root, "old.exe"); var target = Path.Combine(_root, "new.exe"); var patch = Path.Combine(_root, "sample.xdelta3");
+        var oldBytes = RandomNumberGenerator.GetBytes(1024 * 1024);
+        oldBytes[0] = 77; oldBytes[1] = 90;
+        var newBytes = (byte[])oldBytes.Clone();
+        newBytes.AsSpan(10000, 64).Fill(42);
+        File.WriteAllBytes(original, oldBytes); File.WriteAllBytes(target, newBytes);
+        var tool = Path.Combine(AppContext.BaseDirectory, "xdelta3.exe");
+        var info = new ProcessStartInfo(tool) { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "-e", "-s", original, target, patch }) info.ArgumentList.Add(arg);
+        using (var process = Process.Start(info)!) { await process.WaitForExitAsync(); Assert.Equal(0, process.ExitCode); }
+        var patchBytes = File.ReadAllBytes(patch);
+        Assert.True(patchBytes.Length < newBytes.Length * .9);
+        var build = DesktopRelease.Build;
+        var delta = new UpdateDelta(build, UpdateFiles.Hash(original), "https://example.com/patch", Convert.ToHexString(SHA256.HashData(patchBytes)), patchBytes.Length, "xdelta3-vcdiff");
+        var manifest = new UpdateManifest(2, "MomoCamera.Windows", "1.0.40", build + 1, "public-beta", "test", "https://example.com/full", Convert.ToHexString(SHA256.HashData(newBytes)), newBytes.Length, [delta]);
+        var bytes = Bytes(manifest); var update = new VerifiedUpdate(Verifier().Verify(bytes, Sign(bytes), build), bytes, Sign(bytes));
+        var fullRequests = 0;
+        using (var http = new UpdateHttp(new StubHandler(r =>
+        {
+            if (r.RequestUri!.AbsolutePath == "/full") fullRequests++;
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(r.RequestUri.AbsolutePath == "/patch" ? patchBytes : newBytes) };
+        })))
+        {
+            var result = await new UpdateDownloader(http, _root, original, tool, build).DownloadAsync(update, null, CancellationToken.None);
+            Assert.Equal(newBytes, File.ReadAllBytes(result));
+            Assert.Equal(0, fullRequests);
+        }
+        var damaged = (byte[])patchBytes.Clone(); damaged[^1] ^= 1;
+        using (var http = new UpdateHttp(new StubHandler(r =>
+        {
+            if (r.RequestUri!.AbsolutePath == "/full") fullRequests++;
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(r.RequestUri.AbsolutePath == "/patch" ? damaged : newBytes) };
+        })))
+        {
+            var result = await new UpdateDownloader(http, _root, original, tool, build).DownloadAsync(update, null, CancellationToken.None);
+            Assert.Equal(newBytes, File.ReadAllBytes(result));
+            Assert.Equal(1, fullRequests);
+        }
+        File.WriteAllBytes(original, newBytes);
+        using (var http = new UpdateHttp(new StubHandler(r =>
+        {
+            Assert.Equal("/full", r.RequestUri!.AbsolutePath);
+            fullRequests++;
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(newBytes) };
+        })))
+        {
+            var result = await new UpdateDownloader(http, _root, original, tool, build).DownloadAsync(update, null, CancellationToken.None);
+            Assert.Equal(newBytes, File.ReadAllBytes(result));
+            Assert.Equal(2, fullRequests);
+        }
+    }
+
+    [Fact]
+    public async Task Resumes_a_partial_download_with_a_verified_range()
+    {
+        Directory.CreateDirectory(_root);
+        var manifest = Manifest(); var bytes = Bytes(manifest); var offset = 9;
+        var requests = 0;
+        using var http = new UpdateHttp(new StubHandler(request =>
+        {
+            requests++;
+            if (requests == 1)
+            {
+                Assert.Null(request.Headers.Range);
+                return new(HttpStatusCode.OK) { Content = new StreamContent(new NonSeekableStream(Exe[..offset])) };
+            }
+            Assert.Equal(offset, request.Headers.Range?.Ranges.Single().From);
+            var response = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = new ByteArrayContent(Exe[offset..]) };
+            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(offset, Exe.Length - 1, Exe.Length);
+            return response;
+        }));
+        var downloader = new UpdateDownloader(http, _root);
+        var update = new VerifiedUpdate(manifest, bytes, Sign(bytes));
+        await Assert.ThrowsAsync<IOException>(() => downloader.DownloadAsync(update, null, CancellationToken.None));
+        var partial = Path.Combine(_root, "partial-" + manifest.Sha256 + ".part");
+        Assert.Equal(offset, new FileInfo(partial).Length);
+        Assert.Empty(Directory.GetFiles(_root, "candidate.exe", SearchOption.AllDirectories));
+        var result = await downloader.DownloadAsync(update, null, CancellationToken.None);
+        Assert.Equal(Exe, File.ReadAllBytes(result));
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
+    public async Task Restarts_safely_when_server_ignores_range_request()
+    {
+        Directory.CreateDirectory(_root);
+        var manifest = Manifest(); var bytes = Bytes(manifest);
+        File.WriteAllBytes(Path.Combine(_root, "partial-" + manifest.Sha256 + ".part"), Exe[..5]);
+        using var http = new UpdateHttp(new StubHandler(request =>
+        {
+            Assert.Equal(5, request.Headers.Range?.Ranges.Single().From);
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(Exe) };
+        }));
+        var result = await new UpdateDownloader(http, _root).DownloadAsync(new(manifest, bytes, Sign(bytes)), null, CancellationToken.None);
+        Assert.Equal(Exe, File.ReadAllBytes(result));
     }
 
     [Fact]
@@ -126,5 +246,11 @@ public sealed class DesktopUpdateTests : IDisposable
 
     private sealed class StubHandler(Func<HttpRequestMessage,HttpResponseMessage> handle) : HttpMessageHandler
     { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken) { cancellationToken.ThrowIfCancellationRequested(); return Task.FromResult(handle(request)); } }
+    private sealed class NonSeekableStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    }
     public void Dispose() { _key.Dispose(); if(Directory.Exists(_root))Directory.Delete(_root,true); }
 }

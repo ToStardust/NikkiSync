@@ -9,7 +9,7 @@ test('app-only edition presents Android controls without an unavailable mini-pro
   assert.match(html,/data-wechat-enabled="false"/)
   assert.match(html,/class="connection-grid app-only-grid"/)
   assert.match(html,/Windows 客户端 · 仅需 APP/)
-  for(const id of ['renew','open-organizer','android-installer','open-scan-settings'])assert.match(html,new RegExp('id="'+id+'"'))
+  for(const id of ['renew','open-organizer','android-direct-download','open-scan-settings'])assert.match(html,new RegExp('id="'+id+'"'))
   assert.doesNotMatch(html,/id="wechat-start"|id="wechat-modal"|\/api\/wechat\//)
 })
 test('account selection belongs inside the sync and connection settings card', () => {
@@ -39,8 +39,10 @@ test('first-use guide and the requested WeChat entry expose independent connecti
   assert.match(html, /首次使用引导/)
   assert.match(html, /id="wechat-start"/)
   assert.match(html, /id="wechat-modal"/)
-  for(const id of ['open-network-settings','open-scan-settings','android-installer']) assert.match(html,new RegExp('id="'+id+'"'))
+  for(const id of ['open-network-settings','open-scan-settings','android-direct-download']) assert.match(html,new RegExp('id="'+id+'"'))
   assert.match(html, /校园网.*隔离/)
+  assert.match(html, /连接错误或照片没参数？点击自查/)
+  assert.match(html, /ScreenShot.*原图/)
   assert.match(html, /<button[^>]+id="scan-directory-help"[^>]+aria-expanded="false"/)
   assert.match(html, /id="scan-directory-guide"[^>]+hidden/)
 })
@@ -66,27 +68,44 @@ test('the home scan shortcut opens settings with folder guidance, without choosi
   assert.deepEqual(JSON.parse(JSON.stringify(messages)),[{type:'getAutostart'}])
 })
 
-test('APK export is offered only when the native desktop reports a bundled installer', () => {
+test('desktop offers the verified APK direct link and two netdisk choices without an embedded installer', () => {
+  const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false})
+  assert.match(html,/id="android-direct-download"[^>]+data-project="androidDirect"/)
+  assert.match(html,/android-update-test\/MomoCamera-Android-1\.0\.36\.apk/)
+  assert.match(html,/夸克网盘 · 下载 App/)
+  assert.match(html,/百度网盘 · 下载 App/)
+  assert.doesNotMatch(html,/android-installer|导出安卓安装包/)
+})
+
+test('About credits the source of local decoding, online decoding and historical icons', () => {
+  const html=renderDesktopPage({service:'ready',host:'192.168.1.8',port:28080,assets:2,pairedDevices:1,firstRun:false})
+  for(const [name,url] of [
+    ['nikkiAlbums','https://github.com/RanAxro/nikki_albums'],
+    ['meowStarMap','https://github.com/QianQianLuLu1/MeowStarMap'],
+    ['nuan5','https://nuan5.pro/'],
+    ['gongeo','https://gongeo.us/']
+  ] as const) assert.match(html,new RegExp(`data-project="${name}" href="${url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}"`))
+  assert.match(html,/本地参数解码组件 nuan5_decryption 的作者/)
+  assert.match(html,/用户开启后提供第三方在线候补服务/)
+  assert.match(html,/历史在线部件图标与素材整理来源/)
+})
+
+test('self-check does not call an unreadable permission or album directory absent', async () => {
   let receive!: (event: { data: unknown }) => void
-  const messages: { type: string }[] = []
-  const ui = mount(async () => ({ ok: false }), {
-    addEventListener: (_: string, handler: typeof receive) => { receive = handler },
-    postMessage: (message: { type: string }) => messages.push(message)
-  })
-  assert.equal(ui.element('#android-installer').hidden, true)
-  receive({ data: { type: 'packageInfo', hasAndroidInstaller: true } })
-  assert.equal(ui.element('#android-installer').hidden, false)
-  ui.element('#android-installer').onclick!()
-  assert.equal(messages.at(-1)?.type, 'saveAndroidInstaller')
-  receive({ data: { type: 'packageInfo', hasAndroidInstaller: false } })
-  assert.equal(ui.element('#android-installer').hidden, true)
+  const ui=mount(async()=>({ok:false,json:async()=>({error:'directory_unavailable'})}),
+    {postMessage(){},addEventListener: (_:string,handler:typeof receive)=>{receive=handler}})
+  receive({data:{type:'networkAuthorization',authorized:false,message:'暂时无法读取网络授权状态。'}})
+  assert.match(ui.element('#permission-self-check').textContent,/暂时无法确认/)
+  ui.navigation[1]!.onclick!()
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.match(ui.element('#metadata-self-check').textContent,/暂时无法读取相册目录状态/)
 })
 
 function mount(fetcher: (url: string,options?:{body?:string;signal?:AbortSignal}) => Promise<unknown>, bridge?: unknown, organizerItems:unknown[] = [], confirmResult=true,previewFetcher?:()=>Promise<unknown>) {
   let active: Element | undefined
   class Element {
     children:Element[]=[];style={cssText:''};className='';content='local-token'
-    hidden = false; disabled = false; checked = false; inert = false
+    hidden = false; disabled = false; checked = false; inert = false; open = false
     textContent = ''; innerHTML = ''; dataset: Record<string, string> = {}
     attributes: Record<string, string> = {}
     onclick?: (event?: unknown) => Promise<void> | void
@@ -191,6 +210,20 @@ test('failed reminders can be dismissed without approving or deleting files',asy
  const ui=mount(async(url,options)=>{calls.push({url,body:JSON.parse(options?.body||'null')});return {ok:true,json:async()=>({items:[organizerItem('still-pending')]})}},undefined,[failed,organizerItem('still-pending')])
  await new Promise(resolve=>setImmediate(resolve));const clear=descendants(ui.element('#organizer-results')).find(node=>node.textContent==='移除失败提示');assert.ok(clear)
  await clear.onclick();assert.deepEqual(calls,[{url:'/api/organizer/dismiss',body:{ids:['old-failure'],allFailures:true}}]);assert.equal(ui.prompts.length,0)
+})
+test('cancelled Mini Program requests remain visible as reminders without entering the approval queue',async()=>{
+ const calls:{url:string;body:unknown}[]=[]
+ const expired={...organizerItem('old-wechat','cancelled',false),sessionCancelled:true,message:'小程序连接已结束，尚未执行的申请已取消'}
+ const ui=mount(async(url,options)=>{calls.push({url,body:JSON.parse(options?.body||'null')});return {ok:true,json:async()=>({items:[]})}},undefined,[expired])
+ await new Promise(resolve=>setImmediate(resolve))
+ assert.equal(ui.element('#organizer-approve-all').disabled,true)
+ assert.equal(ui.element('#organizer-list').children[0]?.className,'organizer-empty')
+ assert.equal(ui.element('#organizer-cancellations').hidden,false)
+ const notices=descendants(ui.element('#organizer-cancellations'))
+ assert.ok(notices.some(node=>node.textContent.includes(expired.message)))
+ await notices.find(node=>node.textContent==='移除取消提示').onclick()
+ assert.deepEqual(calls,[{url:'/api/organizer/dismiss',body:{ids:['old-wechat']}}])
+ assert.equal(ui.element('#organizer-cancellations').hidden,true)
 })
 test('verified batch processing explains that the phone can leave without showing reconnect warnings',async()=>{
  const ui=mount(async()=>({}),undefined,[{...organizerItem('verified','executing',false),batchVerified:true,message:'整批已核对'}])
@@ -348,17 +381,26 @@ test('network authorization is a named native action with no web-supplied progra
 test('QR diagnostic export sends one fixed action and shares progress across both entries',()=>{
   const messages:unknown[]=[];let reply!:(event:unknown)=>void
   const ui=mount(async()=>({}),{postMessage:(message:unknown)=>messages.push(message),addEventListener(_:string,handler:typeof reply){reply=handler}})
-  for(const id of ['#export-connection-diagnostics','#pairing-export-diagnostics'])assert.equal(ui.element(id).disabled,false)
+  for(const id of ['#export-connection-diagnostics','#pairing-export-diagnostics','#about-export-diagnostics'])assert.equal(ui.element(id).disabled,false)
   ui.element('#pairing-export-diagnostics').onclick!()
   assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'exportConnectionDiagnostics'})
   const count=messages.length;ui.element('#export-connection-diagnostics').onclick!();assert.equal(messages.length,count)
   reply({data:{type:'connectionDiagnostics',busy:true,message:'collecting'}})
   assert.equal(ui.element('#export-connection-diagnostics').disabled,true)
+  assert.equal(ui.element('#about-export-diagnostics').disabled,true)
   assert.equal(ui.element('diagnostic-home-note').textContent,'collecting');assert.equal(ui.element('diagnostic-modal-note').textContent,'collecting')
   reply({data:{type:'connectionDiagnostics',busy:false,message:'saved'}})
   assert.equal(ui.element('#pairing-export-diagnostics').disabled,false)
   assert.equal(ui.element('diagnostic-modal-note').textContent,'saved')
   assert.equal(mount(async()=>({})).element('#export-connection-diagnostics').disabled,true)
+})
+
+test('the Windows feedback entry asks the native shell to preview a report',()=>{
+  const messages:unknown[]=[]
+  const ui=mount(async()=>({}),{postMessage:(message:unknown)=>messages.push(message),addEventListener(){}})
+  ui.element('#send-support-diagnostics').onclick!()
+  assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1))),{type:'sendSupportDiagnostics'})
+  assert.equal(mount(async()=>({})).element('#send-support-diagnostics').disabled,true)
 })
 
 test('conflict inspection, repair and restore send fixed actions and respect native policy/busy state',()=>{
@@ -429,9 +471,14 @@ test('a failed pairing request offers retry without showing a stale or invalid c
     : { ok: true, json: async () => ({ qrSvg: '<svg data-valid="retry"/>' }) })
   await ui.element('#renew').onclick!()
   assert.equal(ui.element('#modal-qr').innerHTML, '')
-  assert.match(ui.element('#pairing-message').textContent, /重试/)
+  assert.match(ui.element('#pairing-message').textContent, /确认同步服务/)
+  assert.equal(ui.element('#pairing-retry').hidden,false)
+  assert.equal(ui.element('#pairing-help').hidden,false)
   assert.equal(ui.element('#renew').disabled, false)
-  await ui.element('#pairing-retry').onclick!()
+  ui.element('#pairing-help').onclick!()
+  assert.equal(ui.element('#modal').hidden,true)
+  assert.equal(ui.element('.self-check').open,true)
+  await ui.element('#renew').onclick!()
   assert.match(ui.element('#modal-qr').innerHTML, /data-valid="retry"/)
   assert.equal(ui.element('#pairing-retry').hidden, true)
 })
@@ -465,6 +512,7 @@ test('service loss hides stale paired and QR success and offers a native restart
   assert.equal(ui.element('#android-paired').hidden,true);
   assert.equal(ui.element('#android-first-pairing').hidden,true);
   assert.equal(ui.element('#restart-sync-service').hidden,false);
+  assert.equal(ui.element('.self-check').open,true);
   assert.equal(ui.element('#renew').disabled,true);
   assert.equal(ui.element('#desktop-assets').textContent,'12');
   ui.element('#restart-sync-service').onclick!();

@@ -27,6 +27,11 @@ export const extraScanDirectoriesScript=String.raw`
   function extraButtons(){extraAdd.disabled=extraSpinning.disabled=!bridge||extraBusy;extraRescan.disabled=extraBusy;document.querySelector('#confirm-scan-directory').disabled=extraBusy;document.querySelector('#cancel-scan-directory').disabled=extraBusy;}
   function renderExtraState(state){
     extraLastState=state;const list=document.querySelector('#scan-directory-list');list.replaceChildren();
+    const nativeExtra=(state.directories||[]).filter(item=>item.mode==='native').length;
+    const automaticCount=(state.automaticRoots||[]).length;
+    document.querySelector('#metadata-self-check').textContent=automaticCount||nativeExtra
+      ?'已发现 '+automaticCount+' 个默认扫描目录、'+nativeExtra+' 个额外原生相册。若缺参数，请核对该照片是否来自 ScreenShot，并确认原游戏相册已包含在下方目录中。'
+      :'尚未发现默认游戏相册或额外原生相册。请在下方添加 GamePlayPhotos 或包含 UID 的原游戏相册，再重新扫描。';
     for(const item of state.directories||[]){
       const row=document.createElement('div');row.className='scan-folder-card';
       const title=document.createElement('strong');title.textContent=item.path.split(/[\\/]/).filter(Boolean).pop()||'照片目录';row.appendChild(title);
@@ -47,7 +52,7 @@ export const extraScanDirectoriesScript=String.raw`
   }
   async function loadExtraDirectories(){
     if(extraLoading)return;extraLoading=true;
-    try{renderExtraState(await extraRequest(''));}catch(error){if(!extraBusy)extraMessage.textContent=error.message;}finally{extraLoading=false;}
+    try{renderExtraState(await extraRequest(''));}catch(error){if(!extraBusy)extraMessage.textContent=error.message;document.querySelector('#metadata-self-check').textContent='暂时无法读取相册目录状态。请到“同步设置 → 额外扫描目录”重试，确认原游戏相册是否已收录。';}finally{extraLoading=false;}
   }
   async function extraOperation(work){
     if(extraBusy)return;extraBusy=true;extraButtons();extraMessage.textContent='正在更新目录并扫描照片，照片较多时可能需要一些时间…';

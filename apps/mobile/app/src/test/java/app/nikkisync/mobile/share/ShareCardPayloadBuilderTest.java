@@ -3,6 +3,8 @@ package app.nikkisync.mobile.share;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.Test;
 
 public final class ShareCardPayloadBuilderTest {
@@ -75,5 +77,23 @@ public final class ShareCardPayloadBuilderTest {
         assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("晕影") && item.value().equals("0")));
         assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("柔光强度") && item.value().equals("8")));
         assertTrue(payload.cameraItems().stream().anyMatch(item -> item.label().equals("柔光范围")));
+    }
+
+    @Test public void rendersTheSameCanonicalCameraValuesAsMiniProgram() {
+        var payload = ShareCardPayloadBuilder.build("photo", "", "", """
+                {"camera":{"focalLength":29.4,"apertureSection":1.2,"rotation":3.85,"vignetteIntensity":23,
+                "bloomIntensity":95.8,"bloomThreshold":-1,"brightness":55.8,"exposure":0.16,
+                "contrast":33.7,"saturation":-0.55,"vibrance":0.34,"highlights":-0.37,"shadows":-0.01}}
+                """);
+        var displayed = payload.cameraItems().stream().collect(Collectors.toMap(
+                ShareCardPayload.Item::label,
+                item -> ShareCardLayout.parameter(item.label().equals("柔光强度") ? "柔光" : item.label(),
+                        item.value()).displayValue()));
+        assertEquals(Map.ofEntries(
+                Map.entry("焦距", "29.4mm"), Map.entry("光圈", "f/1.2"), Map.entry("镜头旋转", "3.85"),
+                Map.entry("晕影", "23%"), Map.entry("柔光强度", "95.8%"), Map.entry("柔光范围", "-1"),
+                Map.entry("亮度", "55.8%"), Map.entry("曝光", "0.16"), Map.entry("对比度", "33.7%"),
+                Map.entry("饱和度", "-0.55"), Map.entry("自然饱和", "0.34"),
+                Map.entry("高光", "-0.37"), Map.entry("阴影", "-0.01")), displayed);
     }
 }

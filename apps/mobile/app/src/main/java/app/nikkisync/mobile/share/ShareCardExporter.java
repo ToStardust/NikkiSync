@@ -1,4 +1,9 @@
 package app.nikkisync.mobile.share;
+import static app.nikkisync.mobile.share.ShareCardLayout.EFFECT_ICON_SIZE;
+import static app.nikkisync.mobile.share.ShareCardLayout.EFFECT_LINE_HEIGHT;
+import static app.nikkisync.mobile.share.ShareCardLayout.EFFECT_ROW_GAP;
+import static app.nikkisync.mobile.share.ShareCardLayout.EFFECT_TEXT_SIZE;
+
 import android.graphics.*;
 import java.util.Map;
 
@@ -6,6 +11,8 @@ import java.util.Map;
 public final class ShareCardExporter {
     public static final int WIDTH=1440;
     private static final int INK=0xFFFFF8F0, PINK=0xFFF6BCC0;
+    private static final int EFFECT_ICON_X=708, EFFECT_ICON_INSET=2;
+    private static final int EFFECT_TEXT_X=EFFECT_ICON_X+EFFECT_ICON_SIZE+20;
     private ShareCardExporter() {}
     static Bitmap render(Bitmap background,ShareCardPayload payload) {
         return renderPage(background,payload,ShareCardLayout.pages(payload).get(0),0,1,Map.of());
@@ -44,10 +51,24 @@ public final class ShareCardExporter {
             for(var row:page.parameters()) {
                 if(row.effect()) {
                     if(firstEffect) {line(canvas,570,y-22,1346,y-22,0x80FFF8F0);y+=16;firstEffect=false;}
-                    text(canvas,row.label(),574,y+24,27,0xCCFFF8F0);
-                    rounded(canvas,728,y-8,64,64,14,0x26F6BCC0);
-                    text(canvas,row.label().substring(0,1),747,y+32,27,PINK);
-                    for(int n=0;n<row.lines().size();n++) text(canvas,row.lines().get(n),816,y+26+n*34,28,INK);
+                    float centerX=EFFECT_ICON_X+EFFECT_ICON_SIZE/2f;
+                    float centerY=y+(row.height()-EFFECT_ROW_GAP)/2f;
+                    float top=centerY-EFFECT_ICON_SIZE/2f;
+                    text(canvas,row.label(),574,centerY+10,28,0xDBFFF8F0);
+                    RectF badge=new RectF(EFFECT_ICON_X,top,EFFECT_ICON_X+EFFECT_ICON_SIZE,top+EFFECT_ICON_SIZE);
+                    canvas.drawRoundRect(badge,16,16,paint(0,0x26F6BCC0));
+                    Paint border=paint(0,0x8CF6BCC0);border.setStyle(Paint.Style.STROKE);border.setStrokeWidth(1);
+                    canvas.drawRoundRect(badge,16,16,border);
+                    Bitmap icon=icons.get("effect:"+ShareCardPayload.effectKind(row.label()));
+                    if(icon!=null) {
+                        float size=EFFECT_ICON_SIZE-2*EFFECT_ICON_INSET;
+                        float scale=Math.min(size/icon.getWidth(),size/icon.getHeight());
+                        float w=icon.getWidth()*scale,h=icon.getHeight()*scale;
+                        canvas.drawBitmap(icon,null,new RectF(centerX-w/2,centerY-h/2,centerX+w/2,centerY+h/2),paint(0,0xFFFFFFFF));
+                    } else centered(canvas,row.label().substring(0,1),centerX,centerY+11,EFFECT_TEXT_SIZE,PINK);
+                    float baseline=centerY+11-(row.lines().size()-1)*EFFECT_LINE_HEIGHT/2f;
+                    for(int n=0;n<row.lines().size();n++)
+                        text(canvas,row.lines().get(n),EFFECT_TEXT_X,baseline+n*EFFECT_LINE_HEIGHT,EFFECT_TEXT_SIZE,INK);
                     y+=row.height();continue;
                 }
                 String label=switch(row.label()) {case "焦距","光圈","晕影" -> row.label()+"调节";case "柔光" -> "柔光强度";default -> row.label();};

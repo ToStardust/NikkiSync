@@ -9,6 +9,22 @@ test('request waits for user confirmation; no photo is hidden or removed until P
  f.page.requestViewedDeletion();f.modal().success({confirm:true});assert.equal(called,1);assert.equal(f.page.data.deletionItems[0].state,'pending');assert.equal(f.page.data.selectedId,'a'.repeat(32));
 });
 
+test('viewer cancellation belongs to its photo and disappears after a terminal response',async()=>{
+ const f=await fixture(),a='a'.repeat(32),b='b'.repeat(32),intent='c'.repeat(32);
+ const row=state=>({id:intent,photoId:a,state,message:'测试',count:1,files:[]});
+ let pending=true;
+ f.page._channel={deletion:(action,input,done)=>{
+  if(action==='sync'){assert.deepEqual(Array.from(input.cancel),[intent]);pending=false;}
+  done({status:'ok',value:{items:[row(pending?'pending':'cancelled')]}});
+ }};
+ f.page.requestViewedDeletion();f.modal().success({confirm:true});
+ assert.equal(f.page.data.viewerDeletionId,intent);
+ assert.equal(f.page.deletionIdForPhoto(b),'');
+ f.page.cancelDeletion({currentTarget:{dataset:{id:intent}}});
+ assert.equal(f.page.data.viewerDeletionId,'');
+ assert.equal(f.page.data.deletionItems[0].state,'cancelled','keep the result in the history panel');
+});
+
 test('PC approval is echoed immediately while foreground without another phone confirmation or refresh tap',async()=>{
  const f=await fixture(),id='b'.repeat(32),approval='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';let stage=0,modals=0;
  const row=state=>({id,photoId:'a'.repeat(32),state,message:'测试',count:1,files:[],...(state==='confirming'?{approval}:{})});

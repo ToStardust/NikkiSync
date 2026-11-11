@@ -90,6 +90,49 @@ public static class ConnectionDiagnosticsPackage
         }
         return JsonSerializer.SerializeToUtf8Bytes(safe,new JsonSerializerOptions{WriteIndented=true});
     }
+
+    private static (byte[]? Bytes,string Status) ReadLog(string logDirectory,string name)
+    {
+        var path=Path.Combine(logDirectory,name);
+        try
+        {
+            RejectLinks(path);
+            if(!File.Exists(path))return (null,"missing");
+            using var input=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+            if(input.Length>MaxLogBytes)return (null,"too-large");
+            using var buffer=new MemoryStream();
+            var chunk=new byte[4096];
+            for(int count;(count=input.Read(chunk))>0;)
+            {
+                if(buffer.Length+count>MaxLogBytes)return (null,"unavailable");
+                buffer.Write(chunk,0,count);
+            }
+            return (SanitizeLog(name,buffer.ToArray()),"included");
+        }
+        catch(JsonException){return (null,"invalid-json");}
+        catch(Exception error) when(error is IOException or InvalidDataException or UnauthorizedAccessException or System.Security.SecurityException)
+        {return (null,"unavailable");}
+    }
+
+    public static SupportDiagnosticReport SupportReport(string logDirectory,string version,long build,bool serviceStopped)
+    {
+        var counts=new Dictionary<string,int>();
+        void Add(string code,int count)=>counts[code]=Math.Min(9999,counts.GetValueOrDefault(code)+count);
+        foreach(var name in new[]{"startup-error.log","startup-diagnostics.log","scan-status.json"})
+        {
+            var (bytes,_)=ReadLog(logDirectory,name);
+            if(bytes is null)continue;
+            using var parsed=JsonDocument.Parse(bytes);
+            var log=parsed.RootElement;
+            if(log.TryGetProperty("code",out var value)&&value.GetString() is { } code&&Codes.Contains(code))Add(code,1);
+            if(log.TryGetProperty("lastScan",out var scan)&&scan.TryGetProperty("errorCount",out var errors)
+                &&errors.TryGetDouble(out var count)&&count>=1)Add("SCAN_ERROR",(int)Math.Min(9999,count));
+        }
+        if(serviceStopped&&!counts.ContainsKey("SERVICE_EXIT"))Add("SERVICE_EXIT",1);
+        return new SupportDiagnosticReport(1,"windows",version,build,Environment.OSVersion.Version.Build,
+            counts.OrderBy(entry=>entry.Key,StringComparer.Ordinal).Select(entry=>new SupportError(entry.Key,entry.Value)).ToArray());
+    }
+
     public static async Task ExportAsync(string destination,string logDirectory,int desktopPort,DiagnosticContext context,IConnectionDiagnosticCollector collector,CancellationToken cancellationToken=default)
     {
         if(desktopPort is <1 or >65535)throw new ArgumentOutOfRangeException(nameof(desktopPort));
@@ -113,19 +156,10 @@ public static class ConnectionDiagnosticsPackage
                 statuses["connectionCheck"]=validCollection?"included":collected.Status is "timeout" or "failed" or "unavailable"?collected.Status:"unavailable";
                 foreach(var name in Logs)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();var path=Path.Combine(logDirectory,name);
-                    try
-                    {
-                        RejectLinks(path);
-                        if(!File.Exists(path)){statuses[name]="missing";continue;}
-                        using var input=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
-                        if(input.Length>MaxLogBytes){statuses[name]="too-large";continue;}
-                        using var buffer=new MemoryStream();var chunk=new byte[4096];int count;
-                        while((count=input.Read(chunk))>0){if(buffer.Length+count>MaxLogBytes)throw new InvalidDataException();buffer.Write(chunk,0,count);}
-                        Add("logs/"+name,SanitizeLog(name,buffer.ToArray()));statuses[name]="included";
-                    }
-                    catch(JsonException){statuses[name]="invalid-json";}
-                    catch(Exception error) when(error is IOException or InvalidDataException or UnauthorizedAccessException or System.Security.SecurityException){statuses[name]="unavailable";}
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (bytes,status)=ReadLog(logDirectory,name);
+                    if(bytes is not null)Add("logs/"+name,bytes);
+                    statuses[name]=status;
                 }
                 Add("DiagnosticSummary.json",JsonSerializer.SerializeToUtf8Bytes(new{schema=1,serviceProcessRunning=context.ServiceProcessRunning,exportedAt=DateTimeOffset.UtcNow,appVersion=context.Version,appBuild=context.Build,windows=Environment.OSVersion.Version.ToString(),architecture=System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),desktopControlPort=desktopPort,collectorExitCode=collected.ExitCode,collectorNativeErrorCode=collected.NativeErrorCode,lastRepairCode=context.LastRepairCode,lastRepairOperation=context.LastRepairOperation is "repair" or "restore"?context.LastRepairOperation:null,lastRepairState=context.LastRepairState is "running" or "completed" or "cancelled" or "launch-failed"?context.LastRepairState:null,files=statuses},new JsonSerializerOptions{WriteIndented=true}));
                 Text("反馈说明.txt","请把此压缩包发给开发者，并补充手机品牌/型号、App版本、连接方式和手机端报错截图。\n压缩包包含连接检查、版本信息和筛选后的启动日志，不包含照片、配对码、密钥、用户名、MAC地址、Wi-Fi名称或个人路径；不会自动上传。\n连接检查仅用于排障，不修改防火墙、热点或网络设置。日志可能来自不同启动时间，旧错误不一定代表本次故障。\nDiagnosticSummary.json列出了缺失或未完成的项目，部分检查失败时其余信息仍可用于排查。\n");

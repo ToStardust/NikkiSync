@@ -58,7 +58,7 @@ public final class PlayerFacingDetails {
         return visible;
     }
 
-    /** Describe only known availability, never infer lost metadata from the image or its folder name. */
+    /** Describe the observed result; do not present a list of unrelated guesses. */
     public static String metadataNotice(String metadataJson) {
         try {
             JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
@@ -85,14 +85,70 @@ public final class PlayerFacingDetails {
                 if(identity==null||identity.optString("uid", "").isBlank())return "检测到原始参数，但未识别到所属 UID。请在电脑添加保留 UID 文件夹的原游戏相册后重新扫描。";
             }
             if (!"resolved".equals(status) && (embedded || "failed".equals(status)))
-                return missing + "尚未解析完整，请保持电脑联网，并检查“同步设置”的在线参数解析。";
+                return "检测到游戏参数，但" + missing + "尚未解码成功。请在电脑端重新扫描并检查参数解析状态。";
             if ("resolved".equals(status)) return missing + "未能完整读取，当前仅展示已读取的信息。";
             if (raw != null && raw.optBoolean("sourceParametersChecked", false) && !raw.optBoolean("sourceParametersPresent"))
-                return "电脑当前索引未检测到可识别的游戏参数。普通截图可能没有保存这些信息；若有原图，请添加保留 UID 的原游戏相册并重新扫描。";
-            return missing + "未能完整读取。普通截图或搬迁后的相册可能缺少原始数据，可在电脑“同步设置”补充原游戏相册目录。";
+                return "电脑已检查这张照片，未检测到可读取的游戏参数。请使用游戏内相机原图。";
+            if (hasClothes || hasCamera) return missing + "未能完整读取，当前仅展示已读取的信息。";
+            return "当前未读到穿搭和拍摄参数。请查看照片来源并尝试使用游戏内相机原图。";
         } catch (Exception ignored) {
             return "照片参数暂不可用，请连接电脑重新同步。";
         }
+    }
+
+    public static String metadataNotice(String metadataJson, String sourcePath) {
+        String notice = metadataNotice(metadataJson);
+        if (notice.isEmpty() || !isScreenShotPath(sourcePath)) return notice;
+        try {
+            JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
+            JSONObject raw = metadata.optJSONObject("raw");
+            JSONObject resolver = raw == null ? null : raw.optJSONObject("resolver");
+            boolean hasOriginalParameters = raw != null && (raw.optBoolean("sourceParametersPresent", false)
+                    || !raw.optString("nativeParamToken", "").isBlank()
+                    || !raw.optString("nativeParamPayload", "").isBlank());
+            if (hasOriginalParameters || resolver != null && ("failed".equals(resolver.optString("status"))
+                    || "resolved".equals(resolver.optString("status")))) return notice;
+            if (raw != null && raw.optBoolean("sourceParametersChecked", false))
+                return "这张照片来自 ScreenShot，电脑已检查但未检测到游戏参数。请使用游戏内相机原图。";
+        } catch (Exception ignored) { return notice; }
+        return "这张照片来自 ScreenShot，当前未读到游戏参数。请使用游戏内相机原图。";
+    }
+
+    /** Asset type and indexed source are available for both online and saved photo viewers. */
+    public static String metadataNoticeForAsset(AssetSummary asset, String metadataJson) {
+        if (asset == null) return metadataNotice(metadataJson);
+        String notice = metadataNotice(metadataJson, asset.sourcePath());
+        if (notice.isEmpty()) return notice;
+        try {
+            JSONObject metadata = metadataJson == null || metadataJson.isBlank() ? new JSONObject() : new JSONObject(metadataJson);
+            JSONObject raw = metadata.optJSONObject("raw");
+            JSONObject resolver = raw == null ? null : raw.optJSONObject("resolver");
+            boolean sourcePresent = raw != null && (raw.optBoolean("sourceParametersPresent", false)
+                    || !raw.optString("nativeParamToken", "").isBlank()
+                    || !raw.optString("nativeParamPayload", "").isBlank());
+            boolean checkedMissing = raw != null && raw.optBoolean("sourceParametersChecked", false) && !sourcePresent;
+            JSONObject camera = metadata.optJSONObject("camera"), dressing = metadata.optJSONObject("dressing");
+            JSONArray clothes = dressing == null ? null : dressing.optJSONArray("clothes");
+            boolean partial = camera != null && camera.length() > 0 || clothes != null && clothes.length() > 0;
+            if (!sourcePresent && !partial && (resolver == null || !"failed".equals(resolver.optString("status", "")))
+                    && (checkedMissing || !asset.hasMetadata())) {
+                if (asset.hasMotion()) return "这张 LIVE 照片未读到游戏参数，因此无法显示穿搭和拍摄设置。";
+                if (isScreenShotPath(asset.sourcePath()))
+                    return "这张照片来自 ScreenShot，未读到游戏参数；请使用游戏内相机原图。";
+                if (isGamePlayPhotosPath(asset.sourcePath()))
+                    return "这张游戏内相机照片未读到参数。请在电脑重新扫描这张原图。";
+                return "这张照片未读到游戏参数，因此无法显示穿搭和拍摄设置。";
+            }
+        } catch (Exception ignored) { return notice; }
+        return notice;
+    }
+
+    public static boolean isScreenShotPath(String sourcePath) {
+        return sourcePath != null && ("/" + sourcePath.replace('\\', '/') + "/").matches("(?is).*/ScreenShot(?:/.*)?");
+    }
+
+    private static boolean isGamePlayPhotosPath(String sourcePath) {
+        return sourcePath != null && ("/" + sourcePath.replace('\\', '/') + "/").matches("(?is).*/GamePlayPhotos(?:/.*)?");
     }
 
     private static String date(String capturedAt) {

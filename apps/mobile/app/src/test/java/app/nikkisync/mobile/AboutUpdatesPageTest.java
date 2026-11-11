@@ -20,6 +20,32 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35)
 public class AboutUpdatesPageTest {
+    @Test public void settingsOpensOfflineConnectionAndMetadataSelfCheck() throws Exception {
+        MainActivity activity=activity();
+        try {
+            Button entry=button((View)field(activity,"settingsContent"),"查看自查结果");
+            assertNotNull(entry);entry.performClick();
+            View page=(View)field(activity,"troubleshootingPage");
+            assertNotNull(page);
+            String copy=allText(page);
+            assertTrue(copy.contains("尚未配对电脑"));
+            assertTrue(copy.contains("GamePlayPhotos"));
+            assertNotNull(button(page,"扫码配对"));
+            assertNull(Shadows.shadowOf(activity).getNextStartedActivity());
+        }finally{close(activity);}
+    }
+    @Test public void settingsOpensDiagnosticExportWithoutRequiringNetwork() throws Exception {
+        MainActivity activity=activity();
+        try {
+            var entry=button((View)field(activity,"settingsContent"),"诊断与反馈");
+            assertNotNull(entry);entry.performClick();
+            View page=(View)field(activity,"supportPage");
+            assertNotNull(button(page,"导出日志"));
+            assertTrue(button(page,"导出日志").isEnabled());
+            assertNull(Shadows.shadowOf(activity).getNextStartedActivity());
+        }finally{close(activity);}
+    }
+
     @Test public void settingsOpensOfflineAboutWithInstalledVersionAuthorAndAvatar() throws Exception {
         MainActivity activity = activity();
         try {
@@ -33,6 +59,12 @@ public class AboutUpdatesPageTest {
             assertTrue(allText(content).contains("星尘（支持粉毛拯救世界版）"));
             assertTrue(allText(content).contains("https://github.com/ToStardust/NikkiSync/releases"));
             assertTrue(allText(content).contains("https://github.com/QianQianLuLu1/NikkiGallery"));
+            assertTrue(allText(content).contains("RanAxro · Nikki Albums"));
+            assertTrue(allText(content).contains("https://github.com/QianQianLuLu1/MeowStarMap"));
+            assertTrue(allText(content).contains("NUAN5.PRO"));
+            assertTrue(allText(content).contains("暖暖共鸣录"));
+            assertNotNull(button(content, "检查更新"));
+            assertNotNull(button(content, "开启更新提醒"));
             ImageView avatar = avatar(content);
             assertNotNull(avatar);
             assertNotNull(avatar.getDrawable());

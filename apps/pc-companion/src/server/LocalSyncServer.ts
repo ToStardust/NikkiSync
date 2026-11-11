@@ -25,6 +25,7 @@ import {
   type WsEvent
 } from '@nikkisync/protocol'
 import type { MetadataThumbnailCache } from '../metadata/MetadataThumbnailCache.js'
+import type { LocalClothingIconPack, PhotoEffectKind } from '../metadata/LocalClothingIconPack.js'
 import type { RemoteBridgeService } from '../remote/RemoteBridgeService.js'
 import { RemoteRoutes } from '../remote/RemoteRoutes.js'
 import { AuthService } from './AuthService.js'
@@ -51,6 +52,7 @@ export interface LocalSyncServerConfig {
   mdns?: boolean
   maxJsonBodyBytes?: number
   metadataThumbnailCache?: MetadataThumbnailCache
+  localClothingIcons?: LocalClothingIconPack
   remoteBridge?: RemoteBridgeService
   connectionHosts?: () => string[]
 }
@@ -75,6 +77,17 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 function errorBody(code: ApiErrorBody['error']['code'], message: string): ApiErrorBody {
   return { error: { code, message } }
+}
+
+function clothingThumbnailHeaders(mime: string, size: number, sha256: string, fallback = false) {
+  return {
+    'Content-Type': mime,
+    'Content-Length': size,
+    'ETag': `"sha256:${sha256}"`,
+    'X-NikkiSync-SHA256': sha256,
+    'X-NikkiSync-Thumbnail-Source': fallback ? 'fallback' : 'primary',
+    'Cache-Control': 'private, max-age=86400'
+  }
 }
 
 function parseInteger(value: string | null, fallback?: number): number | undefined {
@@ -159,7 +172,7 @@ export class LocalSyncServer {
   private readonly suitSearchResponseCache = new Map<string, SuitSearchResponse>()
   private readonly clothingSearchResponseCache = new Map<string, ClothingSearchResponse>()
   private readonly remoteRoutes: RemoteRoutes | undefined
-  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'remoteBridge' | 'connectionHosts'>
+  private readonly config: Required<Pick<LocalSyncServerConfig, 'name' | 'host' | 'port' | 'journalPollMs' | 'mdns' | 'maxJsonBodyBytes'>> & Pick<LocalSyncServerConfig, 'tls' | 'metadataThumbnailCache' | 'localClothingIcons' | 'remoteBridge' | 'connectionHosts'>
 
   constructor(database: DatabaseManager, config: LocalSyncServerConfig = {}) {
     this.inspirations=new InspirationRepository(database)
@@ -181,6 +194,7 @@ export class LocalSyncServer {
       ...(config.connectionHosts ? { connectionHosts: config.connectionHosts } : {}),
       ...(config.tls ? { tls: config.tls } : {}),
       ...(config.metadataThumbnailCache ? { metadataThumbnailCache: config.metadataThumbnailCache } : {}),
+      ...(config.localClothingIcons ? { localClothingIcons: config.localClothingIcons } : {}),
       ...(config.remoteBridge ? { remoteBridge: config.remoteBridge } : {})
     }
   }
@@ -278,6 +292,11 @@ export class LocalSyncServer {
           decodeURIComponent(clothingThumbnailMatch[1]!),
           decodeURIComponent(clothingThumbnailMatch[2]!)
         )
+      }
+      const effectThumbnail = /^\/v1\/assets\/([^/]+)\/effects\/(pose|lighting)\/([^/]+)\/thumbnail$/.exec(url.pathname)
+      if ((req.method === 'GET' || req.method === 'HEAD') && effectThumbnail) {
+        return void await this.streamEffectThumbnail(req, res, decodeURIComponent(effectThumbnail[1]!),
+          effectThumbnail[2] as PhotoEffectKind, decodeURIComponent(effectThumbnail[3]!))
       }
       const assetMatch = /^\/v1\/assets\/([^/]+)$/.exec(url.pathname)
       if (req.method === 'GET' && assetMatch) return this.assetDetail(decodeURIComponent(assetMatch[1]!), res)
@@ -440,7 +459,7 @@ export class LocalSyncServer {
   private assetDetail(assetId: string, res: ServerResponse): void {
     const row = this.reads.getAsset(assetId)
     if (!row) return json(res, 404, errorBody('not_found', 'Asset not found'))
-    json(res, 200, mapAssetDetail(row, this.reads.listResources(assetId)))
+    json(res, 200, mapAssetDetail(row, this.reads.listResources(assetId), !!this.config.localClothingIcons))
   }
 
   private updateMetadata(body: Buffer, res: ServerResponse, assetId: string): void {
@@ -459,7 +478,7 @@ export class LocalSyncServer {
     }
     const revision = this.assets.updateMetadata(assetId, patch)
     const row = this.reads.getAsset(assetId)!
-    json(res, 200, { ...mapAssetDetail(row, this.reads.listResources(assetId)), revision })
+    json(res, 200, { ...mapAssetDetail(row, this.reads.listResources(assetId), !!this.config.localClothingIcons), revision })
   }
 
   private listChanges(url: URL, res: ServerResponse): void {
@@ -475,24 +494,28 @@ export class LocalSyncServer {
 
   private clothingThumbnailSource(assetId: string, clothingId: string): { sourceUrls: string[]; versionKey: string } | undefined {
     const row = this.reads.getAsset(assetId)
-    if (!row?.metadata_json) return undefined
+    if (!row?.metadata_json || row.asset_state === 'deleted') return undefined
     try {
       const metadata = objectOf(JSON.parse(String(row.metadata_json)))
       const dressing = objectOf(metadata?.dressing)
       const clothes = Array.isArray(dressing?.clothes) ? dressing.clothes : []
-      const clothing = clothes
-        .map(objectOf)
-        .find((item) => item && String(item.id ?? '') === clothingId)
+      const local = this.config.localClothingIcons
+      const clothing = clothes.find((item: unknown) => {
+        const id = objectOf(item)?.id ?? (local ? item : undefined)
+        return (typeof id === 'string' || typeof id === 'number') && String(id) === clothingId
+      })
       if (!clothing) return undefined
+      if (local) return { sourceUrls: [], versionKey: '' }
+      const item = objectOf(clothing)!
 
       const sourceUrls: string[] = []
       const addSource = (value: unknown) => {
         if (typeof value !== 'string' || !/^https:\/\//i.test(value) || sourceUrls.includes(value)) return
         sourceUrls.push(value)
       }
-      addSource(clothing.thumbnail)
-      if (Array.isArray(clothing.thumbnailFallbacks)) {
-        for (const fallback of clothing.thumbnailFallbacks) addSource(fallback)
+      addSource(item.thumbnail)
+      if (Array.isArray(item.thumbnailFallbacks)) {
+        for (const fallback of item.thumbnailFallbacks) addSource(fallback)
       }
       if (sourceUrls.length === 0) return undefined
 
@@ -505,9 +528,18 @@ export class LocalSyncServer {
   }
 
   private async streamClothingThumbnail(req: IncomingMessage, res: ServerResponse, assetId: string, clothingId: string): Promise<void> {
-    const cache = this.config.metadataThumbnailCache
     const source = this.clothingThumbnailSource(assetId, clothingId)
-    if (!cache || !source) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
+    if (!source) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
+    const local = this.config.localClothingIcons
+    if (local) {
+      const thumbnail = await local.read(clothingId)
+      if (!thumbnail) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
+      res.writeHead(200, clothingThumbnailHeaders(thumbnail.mime, thumbnail.image.length, thumbnail.sha256, thumbnail.source === 'category'))
+      res.end(req.method === 'HEAD' ? undefined : thumbnail.image)
+      return
+    }
+    const cache = this.config.metadataThumbnailCache
+    if (!cache) return json(res, 404, errorBody('resource_not_ready', 'Clothing thumbnail is unavailable'))
 
     let thumbnail
     let sourceIndex = -1
@@ -525,16 +557,29 @@ export class LocalSyncServer {
       console.warn(`[NikkiSync] clothing thumbnail unavailable for ${clothingId}: ${failures.join(' | ')}`)
       return json(res, 503, errorBody('resource_not_ready', 'Clothing thumbnail sources are temporarily unavailable'))
     }
-    res.writeHead(200, {
-      'Content-Type': thumbnail.mimeType,
-      'Content-Length': thumbnail.sizeBytes,
-      'ETag': `"sha256:${thumbnail.sha256}"`,
-      'X-NikkiSync-SHA256': thumbnail.sha256,
-      'X-NikkiSync-Thumbnail-Source': sourceIndex === 0 ? 'primary' : 'fallback',
-      'Cache-Control': 'private, max-age=86400'
-    })
+    res.writeHead(200, clothingThumbnailHeaders(thumbnail.mimeType, thumbnail.sizeBytes, thumbnail.sha256, sourceIndex !== 0))
     if (req.method === 'HEAD') return void res.end()
     createReadStream(thumbnail.path).pipe(res)
+  }
+
+  private async streamEffectThumbnail(req: IncomingMessage, res: ServerResponse, assetId: string,
+    kind: PhotoEffectKind, id: string): Promise<void> {
+    const asset = this.reads.getAsset(assetId)
+    let matching = false
+    if (asset?.metadata_json && asset.asset_state !== 'deleted') {
+      try {
+        const metadata = objectOf(JSON.parse(String(asset.metadata_json)))
+        const entries = kind === 'pose' ? [metadata?.pose, metadata?.action] : [metadata?.lighting]
+        matching = entries.some(entry => {
+          const value = objectOf(entry)?.id
+          return (typeof value === 'string' || typeof value === 'number') && String(value) === id
+        })
+      } catch { /* Invalid photo metadata cannot authorize a thumbnail. */ }
+    }
+    const thumbnail = matching ? await this.config.localClothingIcons?.readEffect(kind, id) : undefined
+    if (!thumbnail) return json(res, 404, errorBody('resource_not_ready', 'Photo effect thumbnail is unavailable'))
+    res.writeHead(200, clothingThumbnailHeaders(thumbnail.mime, thumbnail.image.length, thumbnail.sha256))
+    res.end(req.method === 'HEAD' ? undefined : thumbnail.image)
   }
 
   private async streamResource(req: IncomingMessage, res: ServerResponse, assetId: string, resourceId: string): Promise<void> {

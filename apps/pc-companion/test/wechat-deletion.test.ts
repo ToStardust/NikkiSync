@@ -45,9 +45,13 @@ test('disconnect cancels unexecuted requests; recovery cannot replay the old app
  const f=await fixture();try{
   const r=await f.call('request',{ids:[f.photoId]});await f.queue.idle();const id=r.items[0]!.id
   await f.queue.decide(id,true);const state=await f.call('sync',{cancel:[],approvals:[]})
-  await f.source.deletionDisconnected!();assert.equal(f.queue.list()[0]!.state,'cancelled');assert.equal(f.queue.list()[0]!.online,false)
+  await f.source.deletionDisconnected!()
+  const cancelled=f.queue.list()[0]!
+  assert.equal(cancelled.state,'cancelled');assert.equal(cancelled.online,false);assert.equal(cancelled.sessionCancelled,true)
   await assert.rejects(()=>f.call('request',{ids:[f.photoId]}));f.source.deletionConnected!()
-  await f.call('sync',{cancel:[],approvals:[{id,approval:state.items[0]!.approval}]});await f.queue.idle();assert.equal(f.recycled(),0)
+  const synced=await f.call('sync',{cancel:[],approvals:[{id,approval:state.items[0]!.approval}]})
+  assert.equal(synced.items[0]?.state,'cancelled');assert.ok(!('sessionCancelled' in synced.items[0]!))
+  await f.queue.idle();assert.equal(f.recycled(),0)
  }finally{await f.close()}
 })
 test('rejects forged IDs, paths, oversize, duplicate targets and another session request IDs atomically',async()=>{

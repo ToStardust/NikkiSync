@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
+import {playerMetadata} from './metadata.mjs';
 const m={exports:{}};
 runInNewContext(readFileSync(new URL('../../apps/wechat-mini-program/miniprogram/lib/share-card.js',import.meta.url),'utf8'),{module:m,Uint8Array,Date,Promise,setTimeout,clearTimeout});
 const {buildPayload,layoutCards,createShareCardJob,saveShareCard}=m.exports;
@@ -20,6 +21,39 @@ test('share payload contains only presentation fields; missing/zero values and c
  const cards=layoutCards(ctx,payload);assert.ok(cards.length>1);assert.ok(cards.every(p=>p.height<=4096));
  assert.equal(cards.flatMap(p=>p.outfit).length,100);assert.ok(cards.every(p=>p.parameters.filter(r=>r.label==='滤镜').length===1));
  assert.equal(layoutCards(ctx,buildPayload({rows:[],outfits:[]})).length,1);
+});
+test('the production metadata response supplies camera values and named effects to the share card',()=>{
+ const metadata={camera:{focalLength:29.4,apertureSection:1.2,rotation:3.85,vignetteIntensity:23,
+  bloomIntensity:95.8,bloomThreshold:-1,brightness:55.8,exposure:0.16,contrast:33.7,
+  saturation:-0.55,vibrance:0.34,highlights:-0.37,shadows:-0.01},
+  pose:{id:'private-pose',name:'侧身'},lighting:{id:'private-light',name:'柔黄-右',strength:89},
+  location:{coordinates:{x:12345}},raw:{token:'private-token'}};
+ const response=playerMetadata(metadata);
+ const parameters=layoutCards(ctx,buildPayload(response))[0].parameters;
+ const display=Object.fromEntries(parameters.map(row=>[row.label,row.displayValue]));
+ assert.equal(display['焦距'],'29.4mm');
+ assert.equal(display['光圈'],'f/1.2');
+ assert.equal(display['晕影'],'23%');
+ assert.equal(display['柔光范围'],'-1');
+ assert.equal(display['自然饱和'],'0.34');
+ assert.equal(display['高光'],'-0.37');
+ assert.equal(display['阴影'],'-0.01');
+ assert.equal(display['镜头旋转'],'3.85');
+ assert.equal(display['动作'],'侧身');
+ assert.equal(display['光照'],'柔黄-右 · 89%');
+ assert.doesNotMatch(JSON.stringify(response),/private-|12345/);
+});
+test('share camera accepts the same legacy aliases as Android and preserves zero',()=>{
+ const response=playerMetadata({camera:{aperture:2.8,vignetteIntensity:0,vignette:65,
+  softLightStrength:0,softLightRange:1,depthOfField:0,highlights:NaN}});
+ const parameters=layoutCards(ctx,buildPayload(response))[0].parameters;
+ const display=Object.fromEntries(parameters.map(row=>[row.label,row.displayValue]));
+ assert.equal(display['光圈'],'f/2.8');
+ assert.equal(display['晕影'],'0%');
+ assert.equal(display['柔光'],'0%');
+ assert.equal(display['柔光范围'],'1');
+ assert.equal(display['景深'],'0');
+ assert.equal(display['高光'],'—');
 });
 function api(){let exportCallback,album;const deleted=[],written=[];
  const canvas={getContext:()=>ctx,createImage:()=>{const image={width:320,height:180};Object.defineProperty(image,'src',{set(){queueMicrotask(()=>image.onload());}});return image;}};
@@ -117,4 +151,45 @@ test('share generation reuses cached icons, serially fetches missing ones and de
  await new Promise(r=>setImmediate(r));assert.deepEqual(requests,['d'.repeat(32),'e'.repeat(32)]);assert.equal(png.every(x=>x===0),true);
  f.exported.success({tempFilePath:'/cache/grid.png'});const value=await job.result;assert.equal(value.missingIcons,1);assert.equal(value.payload.outfit[0].value,'');
  job.dispose();assert.ok(f.deleted.some(x=>/nikkisync-share-icon-/.test(x)));assert.ok(!f.deleted.includes('/cache/borrowed.png'));
+});
+test('share draws exact effect artwork in the badge and keeps the other fallback glyph',async()=>{
+ const f=api(),requests=[],drawn=[],labels=[],key='a'.repeat(32);
+ f.canvas.getContext=()=>({...ctx,drawImage:(...args)=>drawn.push(args),fillText(text,x,y){labels.push({text,x,y,font:this.font});}});
+ const channel={shareDetails:(_,done)=>done({status:'ok',rows:[{label:'动作',value:'浮荧共舞'},{label:'光照',value:'柔黄-右 · 89%'}],effectIcons:{pose:key}}),
+  outfit:(_,offset,done)=>done({status:'ok',offset,total:0,next:null,items:[]}),
+  icon:(_,value,done)=>{requests.push(value);done({status:'ok',icon:true,mime:'image/png',source:'item',image:new Uint8Array([137,80,78,71,13,10,26,10])});}};
+ const job=createShareCardJob(f.wx,{channel,id,canvas:f.canvas,originalPath:'/cache/original.jpg'});
+ await new Promise(r=>setImmediate(r));
+ assert.deepEqual(requests,[key]);
+ assert.equal(drawn.length,2);
+ const [,x,y,width,height]=drawn[1];
+ assert.equal(width,96);
+ assert.equal(height,54);
+ assert.equal(x+width/2,758);
+ const pose=labels.find(label=>label.text==='浮荧共舞');
+ const light=labels.find(label=>label.text==='柔黄-右 · 89%');
+ assert.equal(pose.font,'32px sans-serif');
+ assert.equal(pose.x,828);
+ assert.equal(pose.y-(y+height/2),11);
+ assert.equal(light.x,pose.x);
+ assert.equal(light.y-pose.y,124);
+ assert.equal(labels.some(label=>label.text==='动'),false);
+ assert.equal(labels.some(label=>label.text==='光'),true);
+ f.exported.success({tempFilePath:'/cache/effects.png'});
+ assert.equal((await job.result).missingIcons,0);
+ job.dispose();
+});
+test('a desktop without share-details still exports with its original metadata and text badges',async()=>{
+ const f=api(),calls=[];
+ const channel={
+  shareDetails:(_,done)=>{calls.push('shareDetails');done({status:'failed'});},
+  metadata:(_,done)=>{calls.push('metadata');done({status:'ok',rows:[{label:'动作',value:'浮荧共舞'}]});},
+  outfit:(_,offset,done)=>done({status:'ok',offset,total:0,next:null,items:[]})
+ };
+ const job=createShareCardJob(f.wx,{channel,id,canvas:f.canvas,originalPath:'/cache/original.jpg'});
+ await new Promise(r=>setImmediate(r));
+ assert.deepEqual(calls,['shareDetails','metadata']);
+ f.exported.success({tempFilePath:'/cache/legacy.png'});
+ assert.equal((await job.result).payload.effects[0].iconPath,'');
+ job.dispose();
 });

@@ -5,6 +5,7 @@ import android.widget.FrameLayout;
 import android.view.ViewGroup;
 import app.nikkisync.mobile.model.Models.AssetSummary;
 import java.util.List;
+import java.util.Set;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -73,6 +74,18 @@ public class GalleryBatchSelectionTest {
         adapter.onBindViewHolder(holder,0);
         assertEquals("取消全选",button.getText().toString());button.performClick();
         assertEquals(List.of(c),adapter.selectedItems());
+    }
+    @Test public void recentHeaderSelectsOnlyCurrentBatchAndCanUndo() {
+        var adapter=adapter();
+        var old=asset("old","2.11");var newOne=asset("new-one","2.11");var newTwo=asset("new-two","2.10");
+        adapter.setItems(List.of(newOne,newTwo,old),Set.of("new-one","new-two"));adapter.enableGroupSelection();
+        var holder=adapter.onCreateViewHolder(new FrameLayout(RuntimeEnvironment.getApplication()),0);
+        adapter.onBindViewHolder(holder,0);
+        Button button=(Button)((ViewGroup)holder.itemView).getChildAt(2);
+        assertEquals("全选",button.getText().toString());button.performClick();
+        assertEquals(List.of(newOne,newTwo),adapter.selectedItems());
+        adapter.onBindViewHolder(holder,0);button.performClick();
+        assertTrue(adapter.selectedItems().isEmpty());
     }
     @Test public void sweepCrossesVersionHeadersAndBacktrackingRestoresPriorSelections() {
         var adapter=adapter();

@@ -2,6 +2,21 @@ const { parseEncryptedQr, prologue, frame } = require('./encrypted-probe.js');
 const { createGalleryPeer, createDownloadPeer, createLivePeer, sha256, sha256Original, sha256Live } = require('./noise-vendor.js');
 const MAX_IMAGE = 524288, MAX_TOTAL = 16777216, MAX_ORIGINAL = 16777216, MAX_DOWNLOAD_TOTAL = 134217728;
 const MAX_LIVE=100663296,MAX_LIVE_TOTAL=536870912;
+const MAX_REQUESTS = 256;
+const MAX_BROWSE_REQUESTS = 768;
+const LEGACY_GALLERY_ITEMS = 500;
+const MAX_GALLERY_ITEMS = 2048;
+const MAX_EXTENDED_BROWSE_REQUESTS = 2432;
+const CONNECTED_SESSION_MS = 60 * 60 * 1000;
+function isBrowseRequest(kind,action) {
+  return kind === 'list' || kind === 'browse' || kind === 'get' || kind === 'refresh' || kind==='inspiration'&&action==='galleryPreviewKeys';
+}
+const stableKey = value => typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+function validateMetadata(value,maxRows=16) {
+  if (!['available','partial','unavailable'].includes(value.availability)||!Array.isArray(value.rows)||value.rows.length>maxRows)throw Error('Metadata bounds');
+  value.rows.forEach(row=>{fields(row,['label','value']);if(typeof row.label!=='string'||!row.label.length||row.label.length>24
+    ||typeof row.value!=='string'||row.value.length>160)throw Error('Metadata row');});
+}
 function parseGalleryQr(raw) {
   let v; try { if (typeof raw !== 'string' || raw.length > 2048) throw new Error(); v = JSON.parse(raw); } catch (_) { throw new Error('本机浏览码无效。'); }
   if (!v || !['NikkiSyncLocalGalleryPreview','NikkiSyncLocalGalleryDownload','NikkiSyncLocalGalleryLive'].includes(v.type)) throw new Error('请使用本机图库浏览码。');
@@ -65,35 +80,79 @@ function createGalleryDecoder(onFrame, totalLimit = MAX_TOTAL) {
 }
 function connectGallery(wxApi, config, hooks) {
   let socket, peer, decoder, checked, key, resumeKey, timer, deadline, stopped = false, stage = 0, serial = 0, request, canDownload = false,liveProfile=false,epoch=0,quota=0,received=0,suspended=false,targetIndex=0,dialResuming=false;
+  let browseBudget = 0, browseQuota = 0, capabilitiesRead = false, galleryLimit = LEGACY_GALLERY_ITEMS;
+  let expiresAt, extendedDeadline = false, galleryCache = false;
+  const scheduleDeadline = () => {
+    clearTimeout(deadline);
+    deadline = setTimeout(() => fail(), Math.max(1, expiresAt - Date.now()));
+  };
   const detach = () => { ++epoch;clearTimeout(timer);timer=null;decoder?.close();peer?.close();decoder=null;peer=null;stage=0;serial=0;
     const pending=request;request=null;if(pending?.image)pending.image.fill(0);const old=socket;socket=null;try{old?.close();}catch(_){}return pending; };
   const cleanup = () => {const pending=detach();clearTimeout(deadline);key?.fill(0);resumeKey?.fill(0);resumeKey=null;key=null;checked=null;config=null;return pending;};
   const progress=message=>{try{hooks.progress?.(message);}catch(_){}};
-  const fail = code => { if (stopped) return;const phase=code||(stage===0?'C02':stage===1?'C03':request?.kind==='session'?'C04':'C05');stopped = true;const expired=checked&&Date.now()>=Date.parse(checked.expiresAt),pending=cleanup();
-    const reasons={C01:'安全接口未就绪',C02:'未连上电脑',C03:'密钥握手未完成',C04:'会话确认未完成',C05:'数据校验未通过',C06:'页面初始化失败'};
+  const fail = code => { if (stopped) return;const phase=code||(stage===0?'C02':stage===1?'C03':request?.kind==='session'?'C04':'C05');stopped = true;const expired=checked&&Date.now()>=expiresAt,pending=cleanup();
+    const reasons={C01:'安全接口未就绪',C02:'未连上电脑',C03:'密钥握手未完成',C04:'会话确认未完成',C05:'数据校验未通过',C06:'页面初始化失败',C07:'本次连接已达到请求上限'};
     if (hooks.failed) hooks.failed(expired?'连接已过期，请在电脑生成新浏览码。':'连接已关闭（'+phase+'：'+reasons[phase]+'）。请在电脑生成新连接码后重试。'); if (pending) pending.done({ status: 'failed', message: '传输中断或校验失败。' }); };
   const close = () => { if (!stopped) { stopped = true; cleanup(); } };
-  const recoverable=()=>!stopped&&!!resumeKey&&Date.now()<Date.parse(checked.expiresAt)&&quota<256;
+  const recoverable=()=>!stopped&&!!resumeKey&&Date.now()<expiresAt&&quota<MAX_REQUESTS;
   const suspend=()=>{if(!recoverable()){close();return false;}suspended=true;const pending=detach();pending?.done({status:'failed',message:'传输已暂停，请回到前台后重试。'});return true;};
   const transportLost=()=>{if(stopped||suspended)return;
-    if(stage<2&&!request&&targetIndex+1<(checked.hosts||[checked.host]).length&&Date.now()<Date.parse(checked.expiresAt)){
+    if(stage<2&&!request&&targetIndex+1<(checked.hosts||[checked.host]).length&&Date.now()<expiresAt){
       const next=targetIndex+1,resuming=dialResuming;detach();dial(resuming,next);return;
     }
     if(!recoverable()){fail();return;}suspended=true;const pending=detach();hooks.disconnected?.();pending?.done({status:'failed',message:'连接暂时中断，请重试。'});};
   const send = value => { const packet = frame(peer.encrypt(encode(value))); socket.write(packet.buffer); };
   const complete = result => { const done = request.done; if (result.status !== 'ok' && request.image) request.image.fill(0); request = null; clearTimeout(timer);try{done(result);}catch(_){fail('C06');} };
   const start = (kind, data, done, progress) => {
-    if(!stopped && quota>=256){fail();throw new Error('Gallery quota exhausted');}
     if (stopped || suspended || stage !== 2 || request || typeof done !== 'function') throw new Error('Gallery unavailable');
-    ++quota;request = Object.assign({ kind, req: ++serial, done, progress }, data); timer = setTimeout(transportLost, ['motion','live'].includes(kind)?480000:['original','export','reference','inspirationUpload'].includes(kind) ? 120000 : 20000);
+    if (Date.now() >= expiresAt) { fail(); throw new Error('Gallery expired'); }
+    if (browseBudget && isBrowseRequest(kind,data.action)) {
+      if (browseQuota >= browseBudget) { fail('C07'); throw new Error('Gallery browse quota exhausted'); }
+      browseQuota++;
+    } else {
+      if (quota >= MAX_REQUESTS) { fail('C07'); throw new Error('Gallery quota exhausted'); }
+      quota++;
+    }
+    request = Object.assign({ kind, req: ++serial, done, progress }, data); timer = setTimeout(transportLost, ['motion','live'].includes(kind)?480000:['original','export','reference','inspirationUpload'].includes(kind) ? 120000 : 20000);
     try { send(Object.assign({ kind, req: serial }, data)); } catch (_) { fail(); }
   };
-  const channel = { close, list(offset, done) { if (!Number.isInteger(offset) || offset < 0 || offset > 500) throw new Error('Offset'); start('list', { offset }, done); },
+  const channel = { close, list(offset, done) { if (!Number.isInteger(offset) || offset < 0 || offset > galleryLimit) throw new Error('Offset'); start('list', { offset }, done); },
     refresh(done) { if(!canDownload) throw new Error('Refresh unavailable'); start('refresh', {}, done); },
     preview(id, done) { if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) throw new Error('Photo id'); start('get', { id }, done); },
     original(id, done, progress) { if (!canDownload || typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) throw new Error('Original unavailable'); start('original', { id }, done, progress); },
     metadata(id, done) { if (!canDownload || typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) throw new Error('Metadata unavailable'); start('metadata', { id }, done); } };
-  channel.browse=(offset,query,done)=>{if(!canDownload||!Number.isInteger(offset)||offset<0||offset>500)throw new Error('Browse unavailable');validateBrowseQuery(query);start('browse',{offset,query},done);};
+  channel.browse=(offset,query,done)=>{if(!canDownload||!Number.isInteger(offset)||offset<0||offset>galleryLimit)throw new Error('Browse unavailable');validateBrowseQuery(query);start('browse',{offset,query},done);};
+  channel.previewCacheKeys=(ids,done)=>{
+    if(!galleryCache){done();return;}
+    start('inspiration',{action:'galleryPreviewKeys',input:{ids}},result=>{
+      const keys=result.value?.keys;
+      done(result.status==='ok'&&Array.isArray(keys)&&keys.length===ids.length&&keys.every(stableKey)?keys:undefined);
+    });
+  };
+  channel.cachedDetails=(id,version,done)=>{
+    if(!galleryCache){channel.metadata(id,done);return;}
+    start('inspiration',{action:'galleryCachedDetails',input:{id,...(stableKey(version)?{version}:{})}},result=>{
+      if(result.status!=='ok'){done(result);return;}
+      const value=result.value;
+      if(!stableKey(value.version))throw Error('Details version');
+      if(value.unchanged===true){
+        fields(value,['version','unchanged']);
+        if(value.version!==version)throw Error('Unexpected details version');
+      }else{
+        fields(value,['version','availability','rows','items']);
+        validateMetadata(value);
+        if(!Array.isArray(value.items)||value.items.length>100)throw Error('Outfit bounds');
+        const keys=new Set();
+        for(const item of value.items){
+          fields(item,['key','name','hasIcon','cacheKey']);
+          if(typeof item.key!=='string'||!/^[a-f0-9]{32}$/.test(item.key)||keys.has(item.key)||typeof item.name!=='string'
+            ||!item.name.length||item.name.length>64||typeof item.hasIcon!=='boolean'||!stableKey(item.cacheKey))throw Error('Outfit cache item');
+          keys.add(item.key);
+        }
+      }
+      done({...value,status:'ok'});
+    });
+  };
   channel.export=(id,options,done,progress)=>{if(!canDownload||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw new Error('Export unavailable');validateExportOptions(options);start('export',{id,options},done,progress);};
   // The existing extension envelope returns an ordinary error on older PC builds.
   channel.motionRotationSupported = done => {
@@ -127,6 +186,19 @@ function connectGallery(wxApi, config, hooks) {
     });
   };
   channel.icon=(id,key,done)=>{if(!canDownload||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id)||typeof key!=='string'||!/^[a-f0-9]{32}$/.test(key))throw new Error('Icon unavailable');start('icon',{id,key},done);};
+  channel.shareDetails=(id,done)=>{
+    if(!canDownload||typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('Share details unavailable');
+    start('inspiration',{action:'galleryShareDetails',input:{id}},result=>{
+      if(result.status!=='ok'){done(result);return;}
+      const value=result.value;
+      try{
+        fields(value,['rows','availability','effectIcons']);validateMetadata(value,24);
+        fields(value.effectIcons,['pose','lighting']);
+        if(Object.values(value.effectIcons).some(key=>typeof key!=='string'||!/^[a-f0-9]{32}$/.test(key)))throw Error('Effect icon key');
+      }catch(_){done({status:'failed'});return;}
+      done({status:'ok',...value});
+    });
+  };
   channel.suspend=suspend;
   channel.inspiration=(action,input,done)=>{if(!canDownload||!['list','save','delete','removeImage'].includes(action))throw Error('Inspiration unavailable');start('inspiration',{action,input},done);};
   channel.deletion=(action,input,done)=>{if(!canDownload||checked.deletion!==1||!['request','sync'].includes(action))throw Error('Deletion unavailable');start('deletion',{action,input},done);};
@@ -139,6 +211,45 @@ function connectGallery(wxApi, config, hooks) {
   channel.interrupt=()=>{const retained=suspend();if(retained)hooks.disconnected?.();return retained;};
   channel.resume=()=>{if(!recoverable()){if(!stopped)fail();return false;}if(!suspended)return false;suspended=false;dial(true);return true;};
   const ready=()=>{key?.fill(0);key=null;try{hooks.ready?.({download:canDownload,export:canDownload,browse:canDownload,resume:!!resumeKey,deletion:canDownload&&checked.deletion===1});}catch(_){fail('C06');}};
+  const finishSession = () => {
+    if (!liveProfile || capabilitiesRead) { ready(); return; }
+    const connection = epoch;
+    const current = () => !stopped && !suspended && connection === epoch;
+    const finish = () => { capabilitiesRead = true; ready(); };
+    const applyBrowseCapabilities = result => {
+      galleryCache = result.status==='ok'&&result.value.galleryCache===true;
+      if (result.status === 'ok' && result.value.browseRequests === MAX_BROWSE_REQUESTS) {
+        browseBudget = MAX_BROWSE_REQUESTS;
+      }
+      if (result.status !== 'ok' || result.value.extendedLibrary !== MAX_GALLERY_ITEMS) { finish(); return; }
+      start('inspiration', {action:'galleryExtendedLibrary', input:{}}, accepted => {
+        if (!current()) return;
+        if (accepted.status === 'ok' && accepted.value.galleryItems === MAX_GALLERY_ITEMS
+            && accepted.value.browseRequests === MAX_EXTENDED_BROWSE_REQUESTS) {
+          galleryLimit = MAX_GALLERY_ITEMS;
+          browseBudget = MAX_EXTENDED_BROWSE_REQUESTS;
+        }
+        finish();
+      });
+    };
+    start('inspiration', {action:'galleryCapabilities', input:{}}, result => {
+      if (!current()) return;
+      if (extendedDeadline || result.status !== 'ok' || result.value.connectedSession !== true) {
+        applyBrowseCapabilities(result);
+        return;
+      }
+      start('inspiration', {action:'gallerySessionLifetime', input:{}}, lease => {
+        if (!current()) return;
+        const remaining = lease.value?.remainingMs;
+        if (lease.status === 'ok' && Number.isInteger(remaining) && remaining > 0 && remaining <= CONNECTED_SESSION_MS) {
+          expiresAt = Date.now() + remaining;
+          extendedDeadline = true;
+          scheduleDeadline();
+        }
+        applyBrowseCapabilities(result);
+      });
+    });
+  };
   const dial=(resuming,index=0)=>{
     targetIndex=index;dialResuming=resuming;progress('正在连接电脑…');
     const connection=++epoch;timer=setTimeout(()=>{if(connection===epoch)transportLost();},5000);
@@ -146,12 +257,12 @@ function connectGallery(wxApi, config, hooks) {
       let entropy;
       try {
         if (!(value.randomValues instanceof ArrayBuffer) || value.randomValues.byteLength !== 64) throw new Error('RNG'); entropy = new Uint8Array(value.randomValues);
-        if (stopped||connection!==epoch) { entropy.fill(0); return; } if (Date.now() >= Date.parse(checked.expiresAt)) throw new Error('Expired');
+        if (stopped||connection!==epoch) { entropy.fill(0); return; } if (Date.now() >= expiresAt) throw new Error('Expired');
         peer = (liveProfile?createLivePeer:canDownload ? createDownloadPeer : createGalleryPeer)(true, resuming?resumeKey:key, galleryPrologue(checked,resuming), entropy); entropy.fill(0);socket = wxApi.createTCPSocket();
         decoder = createGalleryDecoder(bytes => {
-          if (Date.now() >= Date.parse(checked.expiresAt)) throw new Error('Expired');
+          if (Date.now() >= expiresAt) throw new Error('Expired');
           if (stage === 1) { peer.receiveHandshake(bytes); stage = 2; clearTimeout(timer);
-            if(checked.resume===1)start('session',{},result=>{if(result.status==='ok')ready();});else ready();return; }
+            if(checked.resume===1)start('session',{},result=>{if(result.status==='ok')finishSession();});else ready();return; }
           if (stage !== 2 || !request) throw new Error('Unexpected response');
           const plain = peer.decrypt(bytes);
           try {
@@ -179,15 +290,15 @@ function connectGallery(wxApi, config, hooks) {
               }
             } else if (request.kind === 'list' || request.kind === 'refresh' || request.kind==='browse') {
               const browse=request.kind==='browse';fields(response, browse?['kind','req','offset','total','items','next','versions','libraryTotal']:['kind','req','offset','total','items','next']);
-              if (response.kind !== request.kind || response.offset !== (request.kind === 'refresh' ? 0 : request.offset) || !Number.isInteger(response.total) || response.total < 0 || response.total > 500
+              if (response.kind !== request.kind || response.offset !== (request.kind === 'refresh' ? 0 : request.offset) || !Number.isInteger(response.total) || response.total < 0 || response.total > galleryLimit
                 || !Array.isArray(response.items) || response.items.length > 12 || (response.next !== null && (!Number.isInteger(response.next) || response.next <= response.offset || response.next > response.total))) throw new Error('List limit');
               if(response.items.length!==Math.min(12,Math.max(0,response.total-response.offset)) || response.next!==(response.offset+response.items.length<response.total?response.offset+response.items.length:null)) throw new Error('List shape');
               const ids = new Set();
               response.items.forEach(x => { fields(x, browse?['id','date','version','versionSource','mime','live','video']:['id','date','live','video']); if (x.video!==undefined&&typeof x.video!=='boolean'||x.video===true&&x.live===true||x.live!==undefined&&typeof x.live!=='boolean'||!/^[a-f0-9]{32}$/.test(x.id) || ids.has(x.id) || typeof x.date !== 'string'
                 || (x.date !== '' && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(x.date) || !Number.isFinite(Date.parse(x.date))))) throw new Error('List item'); ids.add(x.id); });
               if(browse){
-                if(!Number.isInteger(response.libraryTotal)||response.libraryTotal<response.total||response.libraryTotal>500||!Array.isArray(response.versions)||response.versions.length>32)throw new Error('Version list');
-                const versionNames=new Set();let sum=0;response.versions.forEach(x=>{fields(x,['version','count','inferred']);if(typeof x.version!=='string'||x.version!==''&&!/^\d{1,3}(\.\d{1,3}){1,2}$/.test(x.version)||versionNames.has(x.version)||!Number.isInteger(x.count)||x.count<1||x.count>500||typeof x.inferred!=='boolean')throw new Error('Version entry');versionNames.add(x.version);sum+=x.count;});if(sum!==response.libraryTotal)throw new Error('Version total');
+                if(!Number.isInteger(response.libraryTotal)||response.libraryTotal<response.total||response.libraryTotal>galleryLimit||!Array.isArray(response.versions)||response.versions.length>32)throw new Error('Version list');
+                const versionNames=new Set();let sum=0;response.versions.forEach(x=>{fields(x,['version','count','inferred']);if(typeof x.version!=='string'||x.version!==''&&!/^\d{1,3}(\.\d{1,3}){1,2}$/.test(x.version)||versionNames.has(x.version)||!Number.isInteger(x.count)||x.count<1||x.count>galleryLimit||typeof x.inferred!=='boolean')throw new Error('Version entry');versionNames.add(x.version);sum+=x.count;});if(sum!==response.libraryTotal)throw new Error('Version total');
                 response.items.forEach(x=>{if(typeof x.version!=='string'||x.version!==''&&!/^\d{1,3}(\.\d{1,3}){1,2}$/.test(x.version)||!['explicit','inferred','unknown'].includes(x.versionSource)||x.version===''&&x.versionSource!=='unknown'||x.version!==''&&x.versionSource==='unknown'||x.mime!==undefined&&!['image/jpeg','image/png','video/mp4'].includes(x.mime)||x.video===true&&x.mime!=='video/mp4')throw new Error('Version item');});
               }
               complete(Object.assign({ status: 'ok' }, response));
@@ -198,10 +309,8 @@ function connectGallery(wxApi, config, hooks) {
               complete(Object.assign({status:'ok'},response));
             } else if (request.kind === 'metadata') {
               fields(response,['kind','req','id','availability','rows']);
-              if (response.kind !== 'metadata' || response.id !== request.id || !['available','partial','unavailable'].includes(response.availability)
-                || !Array.isArray(response.rows) || response.rows.length > 16) throw new Error('Metadata bounds');
-              response.rows.forEach(row => {fields(row,['label','value']);if(typeof row.label !== 'string' || !row.label.length || row.label.length>24
-                || typeof row.value !== 'string' || row.value.length>160) throw new Error('Metadata row');});
+              if (response.kind !== 'metadata' || response.id !== request.id) throw new Error('Metadata bounds');
+              validateMetadata(response);
               complete({status:'ok',availability:response.availability,rows:response.rows});
             } else if (!request.image) {
               const reference=request.kind==='reference',live=request.kind==='live',motion=request.kind==='motion',media=live||motion,icon=request.kind==='icon',exported=request.kind==='export',original = request.kind === 'original',full=original||exported||media||reference;
@@ -233,8 +342,8 @@ function connectGallery(wxApi, config, hooks) {
   try {
     checked = parseGalleryQr(JSON.stringify(config));liveProfile=checked.type==='NikkiSyncLocalGalleryLive';canDownload=liveProfile||checked.type==='NikkiSyncLocalGalleryDownload';key=Uint8Array.from(checked.key.match(/../g).map(x=>parseInt(x,16)));checked.key=null;config=null;
     if(typeof wxApi.getRandomValues!=='function'||typeof wxApi.createTCPSocket!=='function')throw new Error('Missing secure API');
-    deadline=setTimeout(fail,Date.parse(checked.expiresAt)-Date.now());dial(false);
+    expiresAt=Date.parse(checked.expiresAt);scheduleDeadline();dial(false);
   } catch (_) { fail('C01'); }
   return channel;
 }
-module.exports = { parseGalleryQr, galleryPrologue, connectGallery, createGalleryDecoder, encode, decode, fields, hashHex, validateBrowseQuery,validateExportOptions, MAX_IMAGE, MAX_TOTAL, MAX_ORIGINAL, MAX_DOWNLOAD_TOTAL,MAX_LIVE,MAX_LIVE_TOTAL };
+module.exports = { parseGalleryQr, galleryPrologue, connectGallery, createGalleryDecoder, encode, decode, fields, hashHex, validateBrowseQuery,validateExportOptions, MAX_IMAGE, MAX_TOTAL, MAX_ORIGINAL, MAX_DOWNLOAD_TOTAL,MAX_LIVE,MAX_LIVE_TOTAL,MAX_REQUESTS,MAX_BROWSE_REQUESTS,LEGACY_GALLERY_ITEMS,MAX_GALLERY_ITEMS,MAX_EXTENDED_BROWSE_REQUESTS,CONNECTED_SESSION_MS,isBrowseRequest };

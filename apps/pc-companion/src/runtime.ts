@@ -64,8 +64,9 @@ export class PcCompanionRuntime {
     this.database.initialize()
     this.scanner = new ScannerService(this.database, config.scanner)
     this.deletions = new DeletionQueue(this.database,()=>this.scanner.getScanRoots(),()=>this.scanner.fullScan(),undefined,undefined,work=>this.scanner.withDeferredWatchEvents(work),{exportsFor:source=>this.scanner.exactExportCopies(source),recycleMany,preview:nativePreview})
-    if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote) {
-      this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement)
+    const localIconVersion = config.server?.localClothingIcons?.cacheVersion
+    if (config.metadataDictionary || config.metadataDictionaryRemote || config.metadataDictionarySupplement || config.metadataDictionarySupplementRemote || localIconVersion) {
+      this.metadataDictionary = new MetadataDictionaryService(this.database, config.metadataDictionarySupplement, localIconVersion)
       if (config.metadataDictionary) this.metadataDictionary.replaceManifest(config.metadataDictionary)
       if (config.metadataDictionaryRemote) {
         this.metadataDictionaryUpdater = new MetadataDictionaryUpdateService(

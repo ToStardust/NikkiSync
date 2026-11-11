@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { AssetRepository, DatabaseManager } from '@nikkisync/database'
+import { loadLocalClothingIconPack } from '../src/metadata/LocalClothingIconPack.js'
 import { MetadataThumbnailCache } from '../src/metadata/MetadataThumbnailCache.js'
 import { LocalSyncServer } from '../src/server/LocalSyncServer.js'
 import { PairingService } from '../src/server/PairingService.js'
@@ -168,5 +169,175 @@ test('clothing thumbnail route falls back to the dictionary clothing-type image 
     await server.stop()
     db.close()
     await rm(temp, { recursive: true, force: true })
+  }
+})
+
+test('paired thumbnail requests in local mode use only exact pack IDs and never request legacy URLs', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-local-icons-'))
+  const db = new DatabaseManager()
+  let server: LocalSyncServer | undefined
+  try {
+    const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGN4WTQFAAQ3AfCGNPMoAAAAAElFTkSuQmCC', 'base64')
+    const digest = sha256(image)
+    const exact = '1020100111', missing = '1020600111', unrelated = '1020900111'
+    const imagePath = path.join(directory, digest + '.png')
+    await writeFile(imagePath, image)
+    await writeFile(path.join(directory, 'manifest.json'), JSON.stringify({
+      schemaVersion: 1, version: 'test', source: 'synthetic',
+      entries: [{ id: exact, sha256: digest }, { id: unrelated, sha256: digest }]
+    }))
+    const pack = await loadLocalClothingIconPack(directory)
+    assert.ok(pack)
+    db.initialize()
+    new AssetRepository(db).create({
+      assetId: 'asset_local_clothing', assetType: 'photo', uid: '10001', discoveredAt: '2026-11-09T00:00:00.000Z',
+      metadataSchemaVersion: 1,
+      metadata: {
+        schemaVersion: 1, identity: { uid: '10001' }, capture: {}, camera: {},
+        dressing: { clothes: [Number(exact), {
+          id: missing, name: '保留已有名称', thumbnail: 'https://images.example.test/item.png',
+          thumbnailFallbacks: ['https://images.example.test/category.png']
+        }] }
+      }
+    })
+    let requests = 0
+    const config = {
+      host: '127.0.0.1', port: 0, mdns: false, localClothingIcons: pack,
+      metadataThumbnailCache: new MetadataThumbnailCache({ cacheDir: directory,
+        fetchImpl: async () => { requests++; throw Error('Unexpected external request') } })
+    }
+    server = new LocalSyncServer(db, config)
+    const address = await server.start()
+    const base = 'http://127.0.0.1:' + address.port
+    const deviceId = 'phone_local_clothing'
+    const keys = await pairTestPhone(db, base, address.port, deviceId)
+    const get = (route: string, method = 'GET') => fetch(base + route, {
+      method, headers: signedHeaders(keys.privateKey, deviceId, method, route)
+    })
+    const detailRoute = '/v1/assets/asset_local_clothing'
+    const route = (id: string) => `${detailRoute}/clothing/${id}/thumbnail`
+    assert.equal((await fetch(base + route(exact))).status, 401)
+    const detail = await (await get(detailRoute)).json()
+    assert.deepEqual(detail.asset.metadata.dressing.clothes, [Number(exact), { id: missing, name: '保留已有名称' }])
+    const served = await get(route(exact))
+    assert.equal(served.status, 200)
+    assert.equal(served.headers.get('x-nikkisync-sha256'), digest)
+    assert.equal(served.headers.get('content-type'), 'image/png')
+    assert.deepEqual(Buffer.from(await served.arrayBuffer()), image)
+    const head = await get(route(exact), 'HEAD')
+    assert.equal(head.headers.get('content-length'), String(image.length))
+    assert.equal((await head.arrayBuffer()).byteLength, 0)
+    assert.equal((await get(route(missing))).status, 404)
+    assert.equal((await get(route(unrelated))).status, 404)
+    const corrupt = Buffer.from(image)
+    corrupt[50] = corrupt[50]! ^ 1
+    await writeFile(imagePath, corrupt)
+    assert.equal((await get(route(exact))).status, 404)
+    assert.equal(requests, 0)
+  } finally {
+    await server?.stop()
+    db.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the local icon pack rejects ambiguous IDs and filename traversal and is optional when absent', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-invalid-local-icons-'))
+  try {
+    const id = '1020100111'
+    const digest = 'a'.repeat(64)
+    const manifest = path.join(directory, 'manifest.json')
+    assert.equal(await loadLocalClothingIconPack(path.join(directory, 'absent')), undefined)
+    for (const entries of [
+      [{ id, sha256: digest }, { id, sha256: 'b'.repeat(64) }],
+      [{ id, sha256: '../' + digest }],
+      [{ id: 'S0205', sha256: digest }]
+    ]) {
+      await writeFile(manifest, JSON.stringify({ schemaVersion: 1, version: 'test', source: 'synthetic', entries }))
+      const pack = await loadLocalClothingIconPack(directory)
+      assert.ok(pack, 'invalid installed packs must still select local-only mode')
+      assert.equal(pack.sha256For(id), undefined)
+      assert.equal(await pack.read(id), undefined)
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('the WebP pack prioritizes item art and exposes category fallback from the offline manifest', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-webp-icons-'))
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(directory, 'icons'))
+    await mkdir(path.join(directory, 'fallbacks'))
+    const image = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v4G0AA=', 'base64')
+    const digest = sha256(image)
+    const exact = '1020100111', fallback = '1020600111'
+    const item = { id: exact, sha256: digest, file: `icons/${exact}.webp`, sizeBytes: image.length, width: 1, height: 1 }
+    const category = { ...item, id: fallback, file: `fallbacks/${digest}.webp` }
+    await writeFile(path.join(directory, item.file), image)
+    await writeFile(path.join(directory, category.file), image)
+    const manifest = { schemaVersion: 2, version: 'r2', source: 'test', imageFormat: 'webp',
+      entries: [item], fallbackEntries: [{ ...category, id: exact }, category] }
+    const manifestPath = path.join(directory, 'manifest.json')
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    const pack = await loadLocalClothingIconPack(directory)
+    assert.equal(pack?.valid, true)
+    assert.deepEqual(await pack?.read(exact), { image, sha256: digest, mime: 'image/webp', source: 'item' })
+    assert.deepEqual(await pack?.read(fallback), { image, sha256: digest, mime: 'image/webp', source: 'category' })
+    assert.equal(await pack?.read('1020900111'), undefined)
+    await writeFile(path.join(directory, item.file), Buffer.alloc(image.length))
+    assert.equal((await pack?.read(exact))?.source, 'category')
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, entries: [{ ...item, file: '../icon.webp' }] }))
+    assert.equal((await loadLocalClothingIconPack(directory))?.valid, false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('signed effect icons use the exact pose and lighting attached to the photo', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nikkisync-effect-icons-'))
+  const db = new DatabaseManager()
+  let server: LocalSyncServer | undefined
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(path.join(directory, 'effects'))
+    const image = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/v4G0AA=', 'base64')
+    const digest = sha256(image), pose = '1090012102', light = '1090030001', alias = 'HueEdgeLight_001_R'
+    const effectEntries = [
+      { kind: 'pose', id: pose, file: `effects/pose-${pose}.webp` },
+      { kind: 'lighting', id: light, file: `effects/lighting-${light}.webp`, aliases: [alias] }
+    ].map(entry => ({ ...entry, sha256: digest, sizeBytes: image.length, width: 1, height: 1 }))
+    for (const entry of effectEntries) await writeFile(path.join(directory, entry.file), image)
+    await writeFile(path.join(directory, 'manifest.json'), JSON.stringify({
+      schemaVersion: 2, version: 'r3', source: 'fixture', imageFormat: 'webp', entries: [], effectEntries
+    }))
+    const pack = await loadLocalClothingIconPack(directory)
+    assert.ok(pack?.valid)
+    db.initialize()
+    new AssetRepository(db).create({
+      assetId: 'asset_effects', assetType: 'photo', uid: '10001', discoveredAt: '2026-11-10T00:00:00.000Z',
+      metadata: { pose: { id: pose }, lighting: { id: alias } }
+    })
+    server = new LocalSyncServer(db, { host: '127.0.0.1', port: 0, mdns: false, localClothingIcons: pack })
+    const address = await server.start(), base = 'http://127.0.0.1:' + address.port, device = 'phone_effects'
+    const keys = await pairTestPhone(db, base, address.port, device)
+    const route = (kind: string, id: string) => `/v1/assets/asset_effects/effects/${kind}/${id}/thumbnail`
+    const get = (pathname: string) => fetch(base + pathname, { headers: signedHeaders(keys.privateKey, device, 'GET', pathname) })
+    assert.equal((await fetch(base + route('pose', pose))).status, 401)
+    for (const [kind, id] of [['pose', pose], ['lighting', alias]]) {
+      const response = await get(route(kind!, id!))
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('content-type'), 'image/webp')
+      assert.equal(response.headers.get('x-nikkisync-sha256'), digest)
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), image)
+    }
+    assert.equal((await get(route('lighting', light))).status, 404)
+    assert.equal((await get(route('lighting', pose))).status, 404)
+    assert.equal((await get('/v1/assets/asset_effects/clothing/' + pose + '/thumbnail')).status, 404)
+  } finally {
+    await server?.stop()
+    db.close()
+    await rm(directory, { recursive: true, force: true })
   }
 })

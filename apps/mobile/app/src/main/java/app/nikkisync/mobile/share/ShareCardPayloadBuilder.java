@@ -95,7 +95,7 @@ public final class ShareCardPayloadBuilder {
                 if ("动作".equals(item.label())) return;
             }
         }
-        output.add(new ShareCardPayload.Item(label, value));
+        output.add(new ShareCardPayload.Item(label, value, "", stringValue(effect.opt("id"))));
     }
 
     private static void add(List<ShareCardPayload.Item> output, JSONObject object, String key, String label) {

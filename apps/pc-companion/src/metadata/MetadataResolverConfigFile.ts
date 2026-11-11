@@ -43,10 +43,14 @@ function isProvider(value: unknown): value is MetadataProviderConfig {
   if (provider.type !== 'remote-json' && provider.type !== 'nuan5-compatible') return false
   if (provider.priority !== undefined && (typeof provider.priority !== 'number' || !Number.isFinite(provider.priority))) return false
   if (provider.capabilities !== undefined && (!Array.isArray(provider.capabilities) || provider.capabilities.some((capability) => typeof capability !== 'string'))) return false
-  if (provider.type === 'remote-json') {
-    return typeof provider.endpoint === 'string' && /^https:\/\//i.test(provider.endpoint)
-  }
-  return provider.endpoint === undefined || (typeof provider.endpoint === 'string' && /^https:\/\//i.test(provider.endpoint))
+  if (provider.endpoint === undefined) return provider.type === 'nuan5-compatible'
+  if (typeof provider.endpoint !== 'string') return false
+  try {
+    const url = new URL(provider.endpoint)
+    const host = url.hostname.replace(/\.$/, '')
+    return url.protocol === 'https:' && !url.username && !url.password
+      && (provider.type === 'nuan5-compatible' || (host !== 'nuan5.pro' && !host.endsWith('.nuan5.pro')))
+  } catch { return false }
 }
 
 /** Optional hot-update config. Startup composition supplies the known NUAN5 default when absent. */

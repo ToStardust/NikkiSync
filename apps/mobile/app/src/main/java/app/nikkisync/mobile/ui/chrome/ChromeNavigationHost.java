@@ -64,16 +64,17 @@ public final class ChromeNavigationHost extends FrameLayout {
             animate(300,t->photo.setReveal(ease(t)),()->reset(e));});
     }
     public void showSheet(View sheet){showSheet(sheet,()->{});}
-    public void showSheet(View sheet,Runnable closed){showSheet(sheet,closed,false,top->{});}
+    public void showSheet(View sheet,Runnable closed){showSheet(sheet,closed,false,top->{},true);}
+    public void showSheetWithOwnControls(View sheet){showSheet(sheet,()->{},false,top->{},false);}
     public void showPhotoDetails(ChromeSheetLayout sheet){showPhotoDetails(sheet,()->{});}
     public void showPhotoDetails(ChromeSheetLayout sheet,Runnable closed){
         showPhotoDetails(sheet,closed,top->{});
     }
     public void showPhotoDetails(ChromeSheetLayout sheet,Runnable closed,java.util.function.DoubleConsumer visibleTop){
         sheet.enablePhotoDetailDragging(()->dismiss(sheet));
-        showSheet(sheet,closed,true,visibleTop);
+        showSheet(sheet,closed,true,visibleTop,true);
     }
-    private void showSheet(View sheet,Runnable closed,boolean dismissOutside,java.util.function.DoubleConsumer visibleTop){
+    private void showSheet(View sheet,Runnable closed,boolean dismissOutside,java.util.function.DoubleConsumer visibleTop,boolean glassControls){
         interrupt();FrameLayout layer=new FrameLayout(getContext()){
             private boolean outside;
             @Override public boolean onInterceptTouchEvent(MotionEvent event){
@@ -100,7 +101,8 @@ public final class ChromeNavigationHost extends FrameLayout {
         LiquidGlassDockView glass=new LiquidGlassDockView(getContext(),source,sheet,true);
         recording.addView(glass,new LayoutParams(-1,-1));
         ArrayList<LiquidGlassDockView> controlGlass=new ArrayList<>();
-        addSheetControlGlass(sheet,source,recording,controlGlass);
+        // A solid detail surface owns its buttons and text colors; glass tinting would erase them.
+        if(glassControls&&sheet.getBackground()==null)addSheetControlGlass(sheet,source,recording,controlGlass);
         Runnable updateGeometry=()->{
             glass.invalidate();
             for(View control:controlGlass)control.invalidate();

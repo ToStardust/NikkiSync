@@ -23,6 +23,15 @@ export function metadataResolutionDiagnostics(database: Pick<DatabaseManager, 'c
     FROM photos`).get() as Record<string, number>
   const failures = database.connection.prepare(`${entries}
     SELECT CASE
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'rateLimited' THEN 'rateLimited'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'attemptLimit' THEN 'attemptLimit'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'databasePaused' THEN 'databasePaused'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'accessOrConfiguration' THEN 'accessOrConfiguration'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'transientHttp' THEN 'http'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'networkOrTimeout' THEN 'networkOrTimeout'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'rejectedPhoto' THEN 'sourceRejected'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'invalidInput' THEN 'incompleteEnvelope'
+      WHEN json_extract(metadata, '$.raw.resolver.error') = 'invalidResponse' THEN 'invalidResponse'
       WHEN json_extract(metadata, '$.raw.resolver.error') LIKE '%fetch failed%'
         OR json_extract(metadata, '$.raw.resolver.error') LIKE '%abort%'
         OR json_extract(metadata, '$.raw.resolver.error') LIKE '%timed out%'

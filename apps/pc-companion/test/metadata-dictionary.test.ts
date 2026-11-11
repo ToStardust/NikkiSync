@@ -6,6 +6,9 @@ import path from 'node:path'
 import { AssetRepository, DatabaseManager, MetadataDictionaryRepository } from '@nikkisync/database'
 import { MetadataDictionaryService, parseMetadataDictionaryManifest } from '../src/metadata/MetadataDictionaryService.js'
 import { loadMetadataDictionaryFile } from '../src/metadata/MetadataDictionaryConfigFile.js'
+import { clothingNameSupplement } from '../src/metadata/VerifiedClothingNames.js'
+import { parseLocalPhotoMetadata } from '../src/metadata/LocalPhotoMetadataResolver.js'
+import { mapAssetRow } from '../src/server/row-mappers.js'
 
 function setup() {
   const db = new DatabaseManager(':memory:')
@@ -17,6 +20,71 @@ function setup() {
     service: new MetadataDictionaryService(db)
   }
 }
+
+test('previously decoded photos gain verified local effect names offline without changing custom names', () => {
+  const { db, assets, service } = setup()
+  try {
+    service.replaceManifest({ schemaVersion: 1, provider: 'old-dictionary', providerVersion: 'old', entries: [] })
+    for (const [id, name] of [['old-photo', undefined], ['custom-photo', '自定义光照']] as const) {
+      assets.create({ assetId: id, assetType: 'photo', uid: '10001', discoveredAt: '2026-11-08T00:00:00.000Z',
+        metadataSchemaVersion: 1, metadata: { schemaVersion: 1, identity: { uid: '10001' }, capture: {}, camera: {},
+          filter: { id: 'Vibe_013', strength: 0.28 }, lighting: { id: 'DirectionLight_R', strength: 0.46, ...(name ? { name } : {}) },
+          raw: { resolver: { status: 'resolved', provider: 'local-photo' }, dictionary: { provider: 'old-dictionary', providerVersion: 'old' } } } })
+    }
+    const fixed = new MetadataDictionaryService(db, clothingNameSupplement())
+    assert.equal(fixed.reenrichResolvedAssets(), 2)
+    const result = JSON.parse(String(assets.getById('old-photo')?.metadata_json))
+    assert.deepEqual(result.filter, { id: 'Vibe_013', strength: 0.28, name: '溯影' })
+    assert.deepEqual(result.lighting, { id: 'DirectionLight_R', strength: 0.46, name: '方向补光-侧光-右' })
+    assert.equal(JSON.parse(String(assets.getById('custom-photo')?.metadata_json)).lighting.name, '自定义光照')
+    assert.equal(new MetadataDictionaryService(db, clothingNameSupplement()).reenrichResolvedAssets(), 0)
+  } finally { db.close() }
+})
+
+test('installing, updating and removing the icon pack invalidates old photo detail caches without changing names', () => {
+  const { db, assets, service } = setup()
+  const id = '1020100111'
+  const manifest = {
+    schemaVersion: 1 as const, provider: 'fixture', providerVersion: 'dict-v1',
+    entries: [{ kind: 'clothing' as const, id, name: '字典名称' }]
+  }
+  try {
+    service.replaceManifest(manifest)
+    assets.create({ assetId: 'legacy-clothing', assetType: 'photo', discoveredAt: '2026-11-09T00:00:00Z',
+      metadataSchemaVersion: 1, metadata: { schemaVersion: 1, identity: {}, capture: {}, camera: {},
+        dressing: { clothes: [{ id, name: '我的自定义名称' }] }
+      } })
+    let revision = Number(assets.getById('legacy-clothing')?.revision)
+    for (const digest of ['a'.repeat(64), 'b'.repeat(64), undefined]) {
+      const dictionary = new MetadataDictionaryService(db, undefined, digest)
+      assert.equal(dictionary.reenrichResolvedAssets(), 1)
+      const row = assets.getById('legacy-clothing')!
+      assert.ok(Number(row.revision) > revision)
+      revision = Number(row.revision)
+      const { dressing, raw } = JSON.parse(String(row.metadata_json))
+      assert.equal(dressing.clothes[0].name, '我的自定义名称')
+      assert.equal(raw.dictionary.providerVersion, digest ? 'dict-v1:local-icons-' + digest : 'dict-v1')
+      assert.equal(dictionary.reenrichResolvedAssets(), 0)
+    }
+  } finally { db.close() }
+})
+
+test('local camera IDs are translated before the photo detail is sent to mobile', () => {
+  const { db } = setup()
+  try {
+    const values: unknown[] = Array(31).fill(0)
+    values[14] = 50
+    values[17] = 'DirectionLight_R'; values[18] = 0.46
+    values[29] = 'Vibe_013'; values[30] = 0.28
+    const decoded = parseLocalPhotoMetadata(JSON.stringify(values), '{"nikkiClothes":[]}')
+    const fixed = new MetadataDictionaryService(db, clothingNameSupplement())
+    const metadata = fixed.enrichMetadata(decoded)
+    const detail = mapAssetRow({ asset_id: 'photo', asset_type: 'photo', asset_state: 'ready',
+      discovered_at: '2026-11-08T00:00:00Z', revision: 1, metadata_json: JSON.stringify(metadata) }, [])
+    assert.deepEqual(detail.metadata?.filter, { id: 'Vibe_013', name: '溯影', strength: 28 })
+    assert.deepEqual(detail.metadata?.lighting, { id: 'DirectionLight_R', name: '方向补光-侧光-右', strength: 46 })
+  } finally { db.close() }
+})
 
 test('dictionary service loads a local manifest and re-enriches resolved photos without a photo resolver', async () => {
   const { db, assets, service } = setup()

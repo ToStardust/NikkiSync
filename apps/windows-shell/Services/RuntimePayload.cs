@@ -12,7 +12,8 @@ public enum PayloadPreparationStep
 {
     ReadManifest, ValidateManifest, CreateCache, CheckCachePath, AcquireCacheLock,
     ValidateCache, ValidateArchive, ValidateEntries, CreateStaging, ExtractFiles,
-    BackupCache, PublishCache, VerifyPublishedCache, Ready
+    BackupCache, PublishCache, VerifyPublishedCache, Ready,
+    ExtractRecoveryCache, VerifyRecoveryCache
 }
 
 // The ZIP and its file hashes are build artifacts embedded in the desktop executable.
@@ -56,6 +57,7 @@ public static class RuntimePayload
         step?.Invoke(PayloadPreparationStep.CheckCachePath);
         RejectLink(root);
         var target = Path.Combine(root, archiveHash.ToUpperInvariant());
+        var recovery = target + ".recovery";
         // Synchronize extraction across launches without holding a background polling timer.
         step?.Invoke(PayloadPreparationStep.AcquireCacheLock);
         using var mutex = new Mutex(false, "Local\\NikkiSync-payload-" + archiveHash.ToUpperInvariant());
@@ -66,7 +68,8 @@ public static class RuntimePayload
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) throw new IOException("另一个程序正在准备运行文件，请稍后重试。");
             step?.Invoke(PayloadPreparationStep.ValidateCache);
-            if (IsValid(target, files)) { step?.Invoke(PayloadPreparationStep.Ready); progress?.Invoke(1); return target; }
+            var cached = IsValid(target, files) ? target : IsValid(recovery, files) ? recovery : null;
+            if (cached is not null) { step?.Invoke(PayloadPreparationStep.Ready); progress?.Invoke(1); return cached; }
             // An interrupted or modified cache is not accepted merely because a marker exists.
             step?.Invoke(PayloadPreparationStep.ValidateArchive);
             archive.Position = 0;
@@ -88,28 +91,8 @@ public static class RuntimePayload
             Directory.CreateDirectory(staging);
             try
             {
-                long done = 0; var total = Math.Max(1, files.Sum(file => file.Length));
-                var buffer = new byte[81920];
                 step?.Invoke(PayloadPreparationStep.ExtractFiles);
-                foreach (var entry in zip.Entries)
-                {
-                    var destination = Path.Combine(staging, entry.FullName);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    using var input = entry.Open();
-                    using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                    using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                    long length = 0;
-                    int count;
-                    while ((count = input.Read(buffer)) > 0)
-                    {
-                        length += count;
-                        if (length > entry.Length) throw new InvalidDataException("Payload length mismatch.");
-                        output.Write(buffer, 0, count); hash.AppendData(buffer, 0, count);
-                        done += count; progress?.Invoke((double)done / total);
-                    }
-                    if (length != entry.Length || !Convert.ToHexString(hash.GetHashAndReset()).Equals(expected[entry.FullName].Sha256, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("Payload file checksum mismatch.");
-                }
+                ExtractFiles(zip, staging, expected, progress);
                 if (Directory.Exists(target))
                 {
                     step?.Invoke(PayloadPreparationStep.BackupCache);
@@ -118,7 +101,35 @@ public static class RuntimePayload
                     MoveCacheDirectory(target, target + ".bad-" + Guid.NewGuid().ToString("N"),root);
                 }
                 step?.Invoke(PayloadPreparationStep.PublishCache);
-                MoveCacheDirectory(staging, target,root);
+                try
+                {
+                    MoveCacheDirectory(staging, target, root);
+                }
+                catch (Exception error) when (IsCacheMoveConflict(error))
+                {
+                    // Keep a stable executable path for subsequent launches and firewall rules.
+                    // Use the embedded archive again, since staging may still be locked.
+                    step?.Invoke(PayloadPreparationStep.ExtractRecoveryCache);
+                    RejectLink(root);
+                    if (Directory.Exists(recovery))
+                        MoveCacheDirectory(recovery, recovery + ".bad-" + Guid.NewGuid().ToString("N"), root);
+                    Directory.CreateDirectory(recovery);
+                    try
+                    {
+                        RejectLink(recovery);
+                        ExtractFiles(zip, recovery, expected, null);
+                        step?.Invoke(PayloadPreparationStep.VerifyRecoveryCache);
+                        if (!IsValid(recovery, files)) throw new InvalidDataException("备用运行缓存校验未通过。");
+                    }
+                    catch
+                    {
+                        CleanTemporaryCache(recovery, root);
+                        throw;
+                    }
+                    step?.Invoke(PayloadPreparationStep.Ready);
+                    progress?.Invoke(1);
+                    return recovery;
+                }
                 // A wait for another reader must not make post-extraction changes
                 // executable. Verify the final directory before reporting Ready.
                 step?.Invoke(PayloadPreparationStep.VerifyPublishedCache);
@@ -129,20 +140,56 @@ public static class RuntimePayload
             }
             finally
             {
-                // Only this invocation's freshly created, contained temporary folder is removed.
-                try
-                {
-                    if (Directory.Exists(staging) && Path.GetFullPath(staging).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    {RejectLink(staging);Directory.Delete(staging, true);}
-                }
-                // A locked temporary file must not hide the original startup error.
-                // Leave only this invocation's staging folder; it is never accepted
-                // as a usable runtime on subsequent launches.
-                catch(Exception cleanupError) when(cleanupError is IOException or UnauthorizedAccessException){}
+                CleanTemporaryCache(staging, root);
             }
         }
         finally { if (acquired) mutex.ReleaseMutex(); }
     }
+
+    private static void ExtractFiles(ZipArchive zip, string directory, IReadOnlyDictionary<string, PayloadFile> expected, Action<double>? progress)
+    {
+        long done = 0;
+        var total = Math.Max(1, expected.Values.Sum(file => file.Length));
+        var buffer = new byte[81920];
+        foreach (var entry in zip.Entries)
+        {
+            var destination = Path.Combine(directory, entry.FullName);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            using var input = entry.Open();
+            using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            long length = 0;
+            int count;
+            while ((count = input.Read(buffer)) > 0)
+            {
+                length += count;
+                if (length > entry.Length) throw new InvalidDataException("Payload length mismatch.");
+                output.Write(buffer, 0, count);
+                hash.AppendData(buffer, 0, count);
+                done += count;
+                progress?.Invoke((double)done / total);
+            }
+            if (length != entry.Length || !Convert.ToHexString(hash.GetHashAndReset()).Equals(expected[entry.FullName].Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Payload file checksum mismatch.");
+        }
+    }
+
+    private static void CleanTemporaryCache(string directory, string root)
+    {
+        // Only remove a directory created by this invocation. Cleanup must not mask startup errors.
+        try
+        {
+            if (!Directory.Exists(directory) || !Path.GetFullPath(directory).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return;
+            RejectLink(root);
+            RejectLink(directory);
+            Directory.Delete(directory, true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static bool IsCacheMoveConflict(Exception error) =>
+        (error is IOException or UnauthorizedAccessException)
+        && (error.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021));
 
     private static void MoveCacheDirectory(string source,string destination,string root)
     {
@@ -151,8 +198,7 @@ public static class RuntimePayload
         {
             RejectLink(root);RejectLink(source);
             try{Directory.Move(source,destination);return;}
-            catch(Exception error) when(attempt<delays.Length&&(error is IOException or UnauthorizedAccessException)
-                &&(error.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021)))
+            catch(Exception error) when(attempt<delays.Length&&IsCacheMoveConflict(error))
             {Thread.Sleep(delays[attempt]);}
         }
     }

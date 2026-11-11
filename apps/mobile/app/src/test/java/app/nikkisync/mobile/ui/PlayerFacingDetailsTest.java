@@ -50,8 +50,8 @@ public final class PlayerFacingDetailsTest {
 
     @Test public void plainScreenshotExplainsMissingDataWithoutClaimingAFormatOrProgram() {
         String notice=PlayerFacingDetails.metadataNotice(null);
-        assertTrue(notice.contains("穿搭和拍摄参数"));assertTrue(notice.contains("普通截图或搬迁后的相册可能"));
-        assertTrue(notice.contains("原游戏相册目录"));assertFalse(notice.contains("损坏"));
+        assertTrue(notice.contains("穿搭和拍摄参数"));assertTrue(notice.contains("游戏内相机原图"));
+        assertFalse(notice.contains("可能"));assertFalse(notice.contains("损坏"));
         assertEquals(notice,PlayerFacingDetails.metadataNotice("{\"camera\":{},\"dressing\":{\"clothes\":[]}}"));
     }
 
@@ -63,10 +63,22 @@ public final class PlayerFacingDetailsTest {
         assertFalse(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":false}}").contains("未检测到"));
     }
 
+    @Test public void screenshotPathGetsSpecificHintButEmbeddedParametersStillUseResolverGuidance() {
+        assertTrue(PlayerFacingDetails.isScreenShotPath("D:\\Game\\X6Game\\ScreenShot\\photo.jpg"));
+        assertFalse(PlayerFacingDetails.isScreenShotPath("D:\\Game\\ScreenShots\\photo.jpg"));
+        String screenshot=PlayerFacingDetails.metadataNotice(null,"D:\\Game\\ScreenShot\\photo.jpg");
+        assertTrue(screenshot.contains("来自 ScreenShot"));
+        assertTrue(screenshot.contains("游戏内相机原图"));
+        assertTrue(PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersChecked\":true,\"sourceParametersPresent\":false}}", "D:/Game/ScreenShot/photo.jpg").contains("已检查但未检测到"));
+        String embedded=PlayerFacingDetails.metadataNotice("{\"raw\":{\"sourceParametersPresent\":true,\"resolver\":{\"status\":\"failed\"}}}", "D:/Game/ScreenShot/photo.jpg");
+        assertTrue(embedded.contains("尚未解码成功"));
+        assertFalse(embedded.contains("来自 ScreenShot"));
+    }
+
     @Test public void knownNativeDataAndResolverFailureAreUnparsedRatherThanLost() {
         for(String raw:new String[]{"{\"nativeParamToken\":\"private-token\"}","{\"sourceParametersPresent\":true}","{\"resolver\":{\"status\":\"failed\",\"error\":\"private-error\"}}"}) {
             String notice=PlayerFacingDetails.metadataNotice("{\"raw\":"+raw+"}");
-            assertTrue(notice.contains("尚未解析完整"));assertTrue(notice.contains("在线参数解析"));
+            assertTrue(notice.contains("尚未解码成功"));assertTrue(notice.contains("参数解析状态"));
             assertFalse(notice.contains("缺少原始数据"));assertFalse(notice.contains("private"));
         }
     }
@@ -91,5 +103,20 @@ public final class PlayerFacingDetailsTest {
 
     @Test public void corruptMetadataOffersResyncRatherThanAFalseMissingSourceDiagnosis() {
         String notice=PlayerFacingDetails.metadataNotice("{broken");assertTrue(notice.contains("重新同步"));assertFalse(notice.contains("普通截图"));
+    }
+
+    @Test public void indexedLiveWithoutParametersHasOneDirectReason() {
+        AssetSummary live=new AssetSummary("live","photo","ready",null,null,1,100,100,true,false,null,null,null,null);
+        String notice=PlayerFacingDetails.metadataNoticeForAsset(live,null);
+        assertTrue(notice.contains("LIVE 照片未读到游戏参数"));
+        assertFalse(notice.contains("普通截图"));assertFalse(notice.contains("可能"));
+    }
+
+    @Test public void screenshotFolderAndNativeResolverEvidenceTakeDifferentPaths() {
+        AssetSummary screenshot=new AssetSummary("screen","photo","ready",null,null,1,100,100,false,false,null,null,null,null);
+        screenshot=screenshot.withSource("D:/Game/ScreenShot/photo.jpg","ScreenShot",null);
+        assertTrue(PlayerFacingDetails.metadataNoticeForAsset(screenshot,null).contains("来自 ScreenShot"));
+        String embedded=PlayerFacingDetails.metadataNoticeForAsset(screenshot,"{\"raw\":{\"sourceParametersPresent\":true,\"resolver\":{\"status\":\"failed\"}}}");
+        assertTrue(embedded.contains("尚未解码成功"));assertFalse(embedded.contains("来自 ScreenShot"));
     }
 }

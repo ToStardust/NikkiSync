@@ -145,6 +145,10 @@ public final class NikkiSyncClient {
         return http.resource("/v1/assets/" + encode(assetId) + "/clothing/" + encode(clothingId) + "/thumbnail");
     }
 
+    public HttpsURLConnection effectThumbnail(String assetId, String kind, String effectId) throws Exception {
+        return http.resource("/v1/assets/" + encode(assetId) + "/effects/" + encode(kind) + "/" + encode(effectId) + "/thumbnail");
+    }
+
     public SignedHttpClient signedHttp() { return http; }
     public PairedServer server() { return server; }
 

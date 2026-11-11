@@ -61,7 +61,7 @@ export class NikkiAlbumsMetadataDictionaryProvider implements MetadataDictionary
 
   async fetch(state?: MetadataDictionaryFetchState): Promise<MetadataDictionaryFetchResult> {
     // Older cached snapshots omitted photography names even when the language package contained them.
-    const currentFormat = state?.contentVersion?.endsWith(':photography-names-v1') === true
+    const currentFormat = state?.contentVersion?.endsWith(':photography-names-v2') === true
     const response = await this.fetchWithTimeout(this.endpoint, {
       accept: 'application/json',
       'accept-language': this.locale,
@@ -97,7 +97,7 @@ export class NikkiAlbumsMetadataDictionaryProvider implements MetadataDictionary
     const database = parseNuan5Database(decryptNikkiAlbumsPackage(databasePackage))
     const manifest = buildDictionaryManifest({
       provider: this.id,
-      providerVersion: `${langGroup.versionId}:${databaseGroup.versionId}:photography-names-v1`,
+      providerVersion: `${langGroup.versionId}:${databaseGroup.versionId}:photography-names-v2`,
       language,
       database
     })
@@ -207,7 +207,7 @@ export function buildDictionaryManifest(input: {
   if (entries.length === 0) throw new Error('Nikki Albums database returned no clothing entries')
   for (const [kind, section] of [['filter', 'filter'], ['lighting', 'light']] as const) {
     for (const [id, name] of getNestedStringMap(input.language, ['infinity_nikki', section])) {
-      if (!/^[1-9]\d{0,15}$/.test(id) || !name.trim()) continue
+      if (!/^(?:[1-9]\d{0,15}|[A-Za-z][A-Za-z0-9_]{0,79})$/.test(id) || !name.trim()) continue
       entries.push({ kind, id, name: name.trim(), raw: { source: 'nikki-albums-public', languageSection: section } })
     }
   }

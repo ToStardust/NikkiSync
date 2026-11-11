@@ -9,6 +9,8 @@ import {
 } from '@nikkisync/core'
 import { AssetRepository, MetadataDictionaryRepository, type DatabaseManager } from '@nikkisync/database'
 
+const LOCAL_ICON_VERSION = /:local-icons-[a-f0-9]{64}(?=:|$)/
+
 function objectOf(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
@@ -78,7 +80,7 @@ export class MetadataDictionaryService {
   private readonly dictionary: MetadataDictionaryRepository
   private readonly supplements = new Map<string, MetadataDictionaryManifest>()
 
-  constructor(database: DatabaseManager, supplement?: MetadataDictionaryManifest) {
+  constructor(database: DatabaseManager, supplement?: MetadataDictionaryManifest, private readonly localIconVersion?: string) {
     this.assets = new AssetRepository(database)
     this.dictionary = new MetadataDictionaryRepository(database)
     if (supplement) {
@@ -89,20 +91,23 @@ export class MetadataDictionaryService {
     if (active) {
       const merged = this.withSupplement(active)
       if (merged !== active) this.dictionary.replaceSnapshot(merged)
-    } else if (supplement) {
-      this.dictionary.replaceSnapshot(parseMetadataDictionaryManifest(supplement))
+    } else if (supplement || localIconVersion) {
+      const initial = supplement ?? { schemaVersion: 1, provider: 'nikkisync-local', providerVersion: '1', entries: [] }
+      this.dictionary.replaceSnapshot(this.withSnapshotVersion(parseMetadataDictionaryManifest(initial)))
     }
   }
 
-  private withImageFallbackVersion(manifest: MetadataDictionaryManifest): MetadataDictionaryManifest {
-    if (!manifest.entries.some(entry => entry.thumbnailFallbacks?.length)
-      || manifest.providerVersion.split(':').includes('image-fallbacks-v1')) return manifest
+  private withSnapshotVersion(manifest: MetadataDictionaryManifest): MetadataDictionaryManifest {
+    let providerVersion = manifest.providerVersion.replace(LOCAL_ICON_VERSION, '')
     // Existing photos must be enriched once even when the remote source returns HTTP 304.
-    return { ...manifest, providerVersion: `${manifest.providerVersion}:image-fallbacks-v1` }
+    if (manifest.entries.some(entry => entry.thumbnailFallbacks?.length)
+      && !providerVersion.split(':').includes('image-fallbacks-v1')) providerVersion += ':image-fallbacks-v1'
+    if (this.localIconVersion) providerVersion += ':local-icons-' + this.localIconVersion
+    return providerVersion === manifest.providerVersion ? manifest : { ...manifest, providerVersion }
   }
 
   private withSupplement(manifest: MetadataDictionaryManifest): MetadataDictionaryManifest {
-    if (!this.supplements.size) return this.withImageFallbackVersion(manifest)
+    if (!this.supplements.size) return this.withSnapshotVersion(manifest)
     const entries = new Map(manifest.entries.map(entry => [`${entry.kind}:${entry.id}`, entry]))
     let changed = false
     for (const source of this.supplements.values()) for (const supplement of source.entries) {
@@ -132,9 +137,9 @@ export class MetadataDictionaryService {
       entries.set(key, patched)
       changed = true
     }
-    if (!changed) return this.withImageFallbackVersion(manifest)
+    if (!changed) return this.withSnapshotVersion(manifest)
     const digest = createHash('sha256').update(JSON.stringify([...this.supplements.values()].flatMap(source => source.entries))).digest('hex').slice(0, 16)
-    return this.withImageFallbackVersion({
+    return this.withSnapshotVersion({
       ...manifest,
       providerVersion: `${manifest.providerVersion.replace(/:local-names-[a-f0-9]{16}(?=:|$)/g, '')}:local-names-${digest}`,
       entries: [...entries.values()]
@@ -214,7 +219,11 @@ export class MetadataDictionaryService {
       if (!row.metadata_json) continue
       const metadata = JSON.parse(String(row.metadata_json)) as InfinityPhotoMetadata
       const resolver = objectOf(metadata.raw?.resolver)
-      if (resolver?.status !== 'resolved') continue
+      const previousVersion = objectOf(metadata.raw?.dictionary)?.providerVersion
+      const hadLocalIcons = typeof previousVersion === 'string' && LOCAL_ICON_VERSION.test(previousVersion)
+      const hasLegacyClothes = (this.localIconVersion || hadLocalIcons)
+        && row.asset_state !== 'deleted' && Boolean(metadata.dressing?.clothes?.length)
+      if (resolver?.status !== 'resolved' && !hasLegacyClothes) continue
       if (this.enrichAssetMetadata(String(row.asset_id), metadata, manifest, previousManifest)) updated++
     }
     return updated

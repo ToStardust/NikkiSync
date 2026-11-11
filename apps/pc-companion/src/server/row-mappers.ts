@@ -35,6 +35,15 @@ function publicMetadata(value: InfinityPhotoMetadata | undefined): InfinityPhoto
     delete raw.nativeParamPayload
     delete raw.nativeParamNuan5Md5
     delete raw.previousSourceMetadata
+    // Decoder responses can include UIDs for other players and are needed only in the PC cache.
+    delete raw.nuan5
+    delete raw.nikkiGalleryDecoded
+    delete raw.resolverResponse
+    if (raw.resolver && typeof raw.resolver === 'object' && !Array.isArray(raw.resolver)) {
+      const resolver = { ...(raw.resolver as Record<string, unknown>) }
+      delete resolver.error
+      raw.resolver = resolver
+    }
   }
   return raw ? { ...value, raw } as InfinityPhotoMetadata : value
 }
@@ -128,8 +137,18 @@ export function mapAssetRow(row: Record<string, unknown>, resourceRows: Record<s
   }
 }
 
-export function mapAssetDetail(row: Record<string, unknown>, resourceRows: Record<string, unknown>[]): AssetDetailResponse {
-  return { asset: mapAssetRow(row, resourceRows) }
+export function mapAssetDetail(row: Record<string, unknown>, resourceRows: Record<string, unknown>[], localClothingIcons = false): AssetDetailResponse {
+  const asset = mapAssetRow(row, resourceRows)
+  const clothes = asset.metadata?.dressing?.clothes
+  if (localClothingIcons && Array.isArray(clothes)) {
+    for (const clothing of clothes) {
+      if (typeof clothing !== 'object' || !clothing) continue
+      const item = clothing as Record<string, unknown>
+      delete item.thumbnail
+      delete item.thumbnailFallbacks
+    }
+  }
+  return { asset }
 }
 
 export function mapAssetSummary(row: Record<string, unknown>, resourceRows: Record<string, unknown>[]): AssetSummary {

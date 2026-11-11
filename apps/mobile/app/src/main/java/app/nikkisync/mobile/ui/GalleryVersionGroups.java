@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Pure presentation grouping that preserves the server's newest-first chronology. */
 public final class GalleryVersionGroups {
@@ -15,11 +16,15 @@ public final class GalleryVersionGroups {
 
     public record Group(String version, String versionLabel, boolean inferred, List<AssetSummary> items) {}
 
+    public static String filterKey(String version) {
+        String normalized = normalizeVersion(version);
+        return normalized == null ? UNKNOWN_KEY : normalized;
+    }
+
     public static List<Group> group(List<AssetSummary> assets) {
         Map<String, List<AssetSummary>> grouped = new LinkedHashMap<>();
         for (AssetSummary asset : assets) {
-            String version = normalizeVersion(asset.gameVersion());
-            grouped.computeIfAbsent(version == null ? UNKNOWN_KEY : version, ignored -> new ArrayList<>()).add(asset);
+            grouped.computeIfAbsent(filterKey(asset.gameVersion()), ignored -> new ArrayList<>()).add(asset);
         }
 
         List<Group> output = new ArrayList<>();
@@ -32,6 +37,21 @@ public final class GalleryVersionGroups {
             String label = unknown ? "版本未知" : version + " 版本";
             output.add(new Group(version, label, inferred, List.copyOf(items)));
         }
+        return List.copyOf(output);
+    }
+
+    public static List<Group> group(List<AssetSummary> assets, Set<String> recentIds) {
+        if (recentIds == null || recentIds.isEmpty()) return group(assets);
+        List<AssetSummary> recent = new ArrayList<>();
+        List<AssetSummary> older = new ArrayList<>();
+        for (AssetSummary asset : assets) {
+            if (recentIds.contains(asset.assetId())) recent.add(asset);
+            else older.add(asset);
+        }
+        if (recent.isEmpty()) return group(assets);
+        List<Group> output = new ArrayList<>();
+        output.add(new Group(null, "最近拍摄", false, List.copyOf(recent)));
+        output.addAll(group(older));
         return List.copyOf(output);
     }
 

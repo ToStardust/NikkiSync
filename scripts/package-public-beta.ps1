@@ -1,4 +1,4 @@
-param([string]$Version='1.0.1',[long]$Build=2026101801,[string]$Tag='v1.0.1-public-beta.1',[string]$OutputDirectory='release\MomoCamera-PublicBeta-1.0.1-2026-10-18',[string]$BunExecutable='bun',[string]$AndroidApk,[string]$ExpectedApkSha256,[string]$Notes='新增电脑助手一键更新、签名校验及启动失败恢复；内置安卓安装包更新为1.0.1。',[string]$Quickstart='docs\remote-bridge\PUBLIC_BETA_QUICKSTART.txt',[string]$ReleaseNotesFile='docs\remote-bridge\PUBLIC_BETA_RELEASE_NOTES.txt')
+param([string]$Version='1.0.1',[long]$Build=2026101801,[string]$Tag='v1.0.1-public-beta.1',[string]$OutputDirectory='release\MomoCamera-PublicBeta-1.0.1-2026-10-18',[string]$BunExecutable='bun',[string]$AndroidApk,[string]$ExpectedApkSha256,[string]$Notes='新增电脑助手一键更新、签名校验及启动失败恢复；安卓安装包从应用内直链或网盘单独下载。',[string]$Quickstart='docs\remote-bridge\PUBLIC_BETA_QUICKSTART.txt',[string]$ReleaseNotesFile='docs\remote-bridge\PUBLIC_BETA_RELEASE_NOTES.txt')
 $ErrorActionPreference='Stop'
 if($Version -ne '1.0.1' -and (!$AndroidApk -or $ExpectedApkSha256 -notmatch '^[a-fA-F0-9]{64}$')){throw 'A new version requires an explicitly verified matching Android APK and SHA256.'}
 $workspace=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -10,7 +10,7 @@ $apk=Join-Path $workspace $apkRelative
 $expectedHash=if($ExpectedApkSha256){$ExpectedApkSha256}else{'1358C8191146370E9859E7CE41E54397F7221F634D25763061036C88C1A0E2EA'}
 if((Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash -ne $expectedHash){throw 'Unexpected Android APK; inspect version and signing before packaging.'}
 $pcOutput=$OutputDirectory+'-PC-Build'
-& (Join-Path $workspace 'apps\windows-shell\package-portable.ps1') -OutputDirectory $pcOutput -AndroidApk $apkRelative -BunExecutable $BunExecutable -DesktopVersion $Version -DesktopBuild $Build
+& (Join-Path $workspace 'apps\windows-shell\package-portable.ps1') -OutputDirectory $pcOutput -BunExecutable $BunExecutable -DesktopVersion $Version -DesktopBuild $Build
 if($LASTEXITCODE -ne 0){throw 'Desktop build failed.'}
 New-Item -ItemType Directory -Force $root | Out-Null
 $exeName="MomoCamera-PC-$Version.exe"

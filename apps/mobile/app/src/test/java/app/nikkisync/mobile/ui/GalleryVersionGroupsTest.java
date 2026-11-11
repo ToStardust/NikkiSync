@@ -10,6 +10,7 @@ import app.nikkisync.mobile.model.Models.AssetSummary;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.Set;
 
 public final class GalleryVersionGroupsTest {
     @Test public void versionGroupsFollowNewestServerOrderInsteadOfSemanticVersionOrder() {
@@ -51,6 +52,17 @@ public final class GalleryVersionGroupsTest {
 
         assertFalse(mixed.get(0).inferred());
         assertTrue(inferredOnly.get(0).inferred());
+    }
+
+    @Test public void recentBatchIsFirstAndDoesNotRepeatInsideVersionSections() {
+        var recent = asset("recent", "2026-11-11T10:00:00Z", "2.11", "explicit");
+        var older = asset("older", "2026-11-10T10:00:00Z", "2.11", "explicit");
+        var otherVersion = asset("other", "2026-10-01T10:00:00Z", "2.10", "explicit");
+        var groups = GalleryVersionGroups.group(List.of(recent, older, otherVersion), Set.of("recent"));
+        assertEquals("最近拍摄", groups.get(0).versionLabel());
+        assertEquals(List.of("recent"), groups.get(0).items().stream().map(AssetSummary::assetId).toList());
+        assertEquals(List.of("older"), groups.get(1).items().stream().map(AssetSummary::assetId).toList());
+        assertEquals(List.of("other"), groups.get(2).items().stream().map(AssetSummary::assetId).toList());
     }
 
     private static AssetSummary asset(String id, String capturedAt, String version, String source) {

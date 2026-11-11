@@ -26,6 +26,14 @@ export class ScannerService {
   private exportImages=new Map<string,{path:string;size:number;sha256:string;imageHash:string}>()
   private exportsByImage=new Map<string,Array<{path:string;size:number;sha256:string}>>()
   exactExportCopies(source:string){const image=this.nativeImages.get(source);return image?(this.exportsByImage.get(image)??[]).map(file=>({...file})):[]}
+  verifiedExportCopies(): ReadonlyMap<string, string> {
+    const nativeHashes = new Set(this.nativeImages.values())
+    const copies = new Map<string, string>()
+    for (const hash of nativeHashes) {
+      for (const copy of this.exportsByImage.get(hash) ?? []) copies.set(copy.path, copy.sha256)
+    }
+    return copies
+  }
   private watcherHolds=0
   private deferredWatchPaths=new Set<string>()
   constructor(private readonly database: DatabaseManager, config: ScannerConfig = {}) {

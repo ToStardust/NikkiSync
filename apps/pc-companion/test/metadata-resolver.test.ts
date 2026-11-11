@@ -12,6 +12,38 @@ import { loadMetadataResolverConfigFile } from '../src/metadata/MetadataResolver
 import { Nuan5CompatibleResolver } from '../src/metadata/Nuan5CompatibleResolver.js'
 import { MetadataDictionaryService } from '../src/metadata/MetadataDictionaryService.js'
 import { metadataResolutionDiagnostics } from '../src/metadata/MetadataResolutionDiagnostics.js'
+import { parseLocalPhotoMetadata } from '../src/metadata/LocalPhotoMetadataResolver.js'
+
+test('local photo data decodes camera settings and exact outfit IDs from game JSON extensions', () => {
+  const values = Array.from({ length: 32 }, () => '0')
+  values[14] = '50'
+  values[17] = 'None'
+  values[29] = '812'
+  values[30] = '0.75'
+  const metadata = parseLocalPhotoMetadata(values.join(','), '{"photoInfo":{"state":None,"nikkiClothes":[1020400170,1020300070]}}')
+  assert.equal(metadata.camera?.focalLength, 50)
+  assert.deepEqual(metadata.filter, { id: '812', strength: 75 })
+  assert.deepEqual(metadata.dressing?.clothes, [{ id: '1020400170' }, { id: '1020300070' }])
+  const arrayWithPadding = JSON.stringify(values) + '\u0007\u0002'
+  assert.equal(parseLocalPhotoMetadata(arrayWithPadding, '{}').camera?.focalLength, 50)
+  assert.throws(() => parseLocalPhotoMetadata('missing', '{}'))
+})
+
+test('local photo camera values use the online display units and available full-precision photo fields', () => {
+  const values: unknown[] = Array(32).fill(0)
+  values.splice(13, 18, 3.85, 0.43, 1, 3.85, 'HueEdgeLight_001_R', 0.88, 0.23, 7.67, -1,
+    0.97, 0.16, 1.04, -0.55, 0.17, -0.37, -0.01, 'None', 1)
+  const decoded = parseLocalPhotoMetadata(JSON.stringify(values), `{"SocialPhoto":{"GiantState":None,"PhotoInfo":{
+    "cameraFocalLength":29.429458618164,"apertureSection":1,"vignetteIntensity":0.23000000417233,
+    "lightStrength":0.88815879821777,"poseId":1090012102,"nikkiClothes":[1020400170]}}}`)
+  assert.deepEqual(decoded.camera, {
+    focalLength: 29.4, apertureSection: 1.2, rotation: 3.85, vignetteIntensity: 23,
+    bloomIntensity: 95.8, bloomThreshold: -1, brightness: 55.8, exposure: 0.16,
+    contrast: 33.7, saturation: -0.55, vibrance: 0.34, highlights: -0.37, shadows: -0.01, portraitMode: false
+  })
+  assert.deepEqual(decoded.lighting, { id: 'HueEdgeLight_001_R', strength: 89 })
+  assert.equal(decoded.pose?.id, '1090012102')
+})
 
 function seedFirstRun(assets: AssetRepository, count: number): void {
   for (let index = 0; index < count; index++) assets.create({
@@ -20,6 +52,38 @@ function seedFirstRun(assets: AssetRepository, count: number): void {
     metadata: { camera: {}, raw: { nativeParamToken: `fixture-${index}` } }
   })
 }
+
+test('an older local result is refreshed once without overwriting edited values or losing a usable result', async () => {
+  const db = new DatabaseManager(':memory:'); db.initialize()
+  const assets = new AssetRepository(db); seedFirstRun(assets, 2)
+  const oldMetadata = { camera: { brightness: 0.97, contrast: 1.04 },
+    lighting: { id: 'known', strength: 0.88, name: '用户名称' } }
+  const old = new MetadataResolverService(db, { id: 'local-photo', version: '1', usesPhotoFile: true,
+    resolve: async () => ({ provider: 'local-photo', metadata: oldMetadata }) })
+  let attempts = 0
+  const service = new MetadataResolverService(db, { id: 'local-photo', version: '2+online', usesPhotoFile: true,
+    resolve: async request => {
+      attempts++
+      assert.equal(request.localOnly, true)
+      if (request.assetId.endsWith('001')) throw Error('Old original unavailable')
+      return { provider: 'local-photo', providerVersion: '2', previousLocalValues: oldMetadata,
+        metadata: { camera: { brightness: 55.8, contrast: 33.7 }, lighting: { id: 'known', strength: 89 } } }
+    } })
+  try {
+    assert.equal(await old.runOnce(), 2)
+    assets.updateMetadata('first-run-000', { camera: { contrast: 80 } })
+    assert.equal(await service.runOnce(), 1)
+    const upgraded = JSON.parse(String(assets.getById('first-run-000')!.metadata_json))
+    assert.deepEqual(upgraded.camera, { brightness: 55.8, contrast: 80 })
+    assert.deepEqual(upgraded.lighting, { id: 'known', name: '用户名称', strength: 89 })
+    assert.equal(upgraded.raw.resolver.providerVersion, '2')
+    const retained = JSON.parse(String(assets.getById('first-run-001')!.metadata_json))
+    assert.equal(retained.raw.resolver.status, 'resolved')
+    assert.deepEqual(retained.camera, oldMetadata.camera)
+    assert.equal(await service.runOnce(), 0)
+    assert.equal(attempts, 2)
+  } finally { old.stop(); service.stop(); db.close() }
+})
 
 test('an in-flight parameter response cannot overwrite a changed photo input', async () => {
   const db=new DatabaseManager(':memory:');db.initialize()
@@ -200,6 +264,8 @@ test('unchanged resolver input does not keep loading parameter payloads and fail
 })
 
 test('NUAN5 resolver sends the verified decode-photo2 tuple without source media bytes', async () => {
+  const db = new DatabaseManager()
+  db.initialize()
   let received: { headers: http.IncomingHttpHeaders, body: Record<string, unknown> } | undefined
   const server = http.createServer(async (request, response) => {
     const chunks: Buffer[] = []
@@ -222,11 +288,12 @@ test('NUAN5 resolver sends the verified decode-photo2 tuple without source media
     const result = await resolver.resolve({
       assetId: 'asset_one', uid: '10001', nativeParamPayload: payload, nativeParamToken: token,
       nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef'
-    })
+    }, db)
     const encoded = Buffer.concat([Buffer.from(token, 'base64'), Buffer.from(payload, 'base64')]).toString('base64')
     assert.deepEqual(received?.body, { photos: { '10001': [['0123456789abcdef0123456789abcdef', encoded]] }, raw_data: true, raw_id: true })
     assert.equal(received?.headers['content-type'], 'application/json')
-    assert.equal(received?.headers['x-client'], 'SpinningMomo')
+    assert.equal(received?.headers['x-client'], 'NikkiSync')
+    assert.match(String(received?.headers['user-agent']), /^NikkiSync\/[A-Za-z0-9._-]+ \(\+https:\/\/github\.com\/ToStardust\/NikkiSync\)$/)
     assert.equal('token' in (received?.body ?? {}), false)
     assert.equal('jpeg' in (received?.body ?? {}), false)
     assert.equal(result.metadata.camera?.focalLength, 50)
@@ -236,11 +303,14 @@ test('NUAN5 resolver sends the verified decode-photo2 tuple without source media
     assert.deepEqual(result.metadata.dressing?.clothes, [101, 102])
     assert.deepEqual(result.metadata.location?.coordinates, { x: 1, y: 2, z: 3 })
   } finally {
+    db.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
 
 test('NUAN5 resolver spaces sequential requests to respect the endpoint rate limit', async () => {
+  const db = new DatabaseManager()
+  db.initialize()
   const requestTimes: number[] = []
   const server = http.createServer(async (request, response) => {
     requestTimes.push(Date.now())
@@ -256,10 +326,12 @@ test('NUAN5 resolver spaces sequential requests to respect the endpoint rate lim
       assetId: 'asset_rate', uid: '10001', nativeParamPayload: Buffer.from('payload').toString('base64'),
       nativeParamToken: Buffer.from('token').toString('base64'), nativeParamNuan5Md5: '0123456789abcdef0123456789abcdef'
     }
-    await resolver.resolve(request); await resolver.resolve(request)
+    await resolver.resolve(request, db)
+    await resolver.resolve({ ...request, nativeParamNuan5Md5: 'abcdef0123456789abcdef0123456789' }, db)
     assert.equal(requestTimes.length, 2)
-    assert.ok(requestTimes[1]! - requestTimes[0]! >= 15)
+    assert.ok(requestTimes[1]! - requestTimes[0]! >= 500)
   } finally {
+    db.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

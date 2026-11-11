@@ -14,6 +14,17 @@ test('primary dictionary includes exact filter and lighting names from its exist
   assert.equal(manifest.entries.find(entry => entry.kind === 'filter' && entry.id === '1090020014')?.name, '红蓝交响')
   assert.equal(manifest.entries.find(entry => entry.kind === 'lighting' && entry.id === '1090030013')?.name, '轻白边光')
 })
+
+test('the dictionary accepts exact symbolic photo effects alongside numeric IDs', () => {
+  const manifest = buildDictionaryManifest({ provider: 'fixture', providerVersion: '1',
+    language: { infinity_nikki: { cloth: { '10': '已有服装' },
+      filter: { Vibe_013: '溯影', '1090020022': '溯影', 'bad id!': '无效' },
+      light: { DirectionLight_R: '方向补光-侧光-右', BlueTearsLight: '幽蓝一梦' } } },
+    database: { clothTypes: new Map([[10, 30]]), clothOutfits: new Map() } })
+  assert.equal(manifest.entries.find(e => e.kind === 'filter' && e.id === 'Vibe_013')?.name, '溯影')
+  assert.equal(manifest.entries.find(e => e.kind === 'lighting' && e.id === 'DirectionLight_R')?.name, '方向补光-侧光-右')
+  assert.equal(manifest.entries.find(e => e.id === 'bad id!'), undefined)
+})
 import {
   createMetadataDictionaryProviderFromConfig,
   loadMetadataDictionaryRemoteConfigFile
@@ -146,7 +157,7 @@ test('Nikki Albums adapter converts public hot-update packages into canonical cl
     if (result.status !== 'updated') return
     assert.equal(result.etag, '"fixture-v1"')
     assert.equal(result.manifest.provider, 'nikki-albums-public')
-    assert.equal(result.manifest.providerVersion, 'lang-v1:db-v1:photography-names-v1')
+    assert.equal(result.manifest.providerVersion, 'lang-v1:db-v1:photography-names-v2')
     assert.deepEqual(result.manifest.entries, [{
       kind: 'clothing',
       id: String(clothingId),

@@ -60,6 +60,70 @@ test('outfit list splits large Chinese descriptions into six-card controls under
 });
 
 function adapter(server){const e={};let socket;return {getRandomValues:o=>o.success({randomValues:Uint8Array.from(randomBytes(64)).buffer}),createTCPSocket:()=>({onConnect:f=>e.connect=f,onMessage:f=>e.message=f,onError:f=>e.error=f,onClose:f=>e.close=f,connect(){socket=net.connect(server.address().port,'127.0.0.1');socket.on('connect',()=>e.connect());socket.on('data',b=>e.message({message:Uint8Array.from(b).buffer}));socket.on('error',()=>e.error());socket.on('close',()=>e.close());},write:b=>socket.write(Buffer.from(b)),close:()=>socket?.destroy()})};}
+
+test('encrypted gallery uses exact local PNGs, leaves missing icons blank and versions by content', async () => {
+ const {loadLocalClothingIconPack} = await import('../../apps/pc-companion/dist/src/metadata/LocalClothingIconPack.js');
+ const directory = await mkdtemp(join(tmpdir(),'nikki-local-outfit-'));
+ let channel, stop;
+ try {
+  const photoPath = join(directory,'photo.jpg');
+  const photo = Buffer.from([255,216,255,217]);
+  await writeFile(photoPath,photo);
+  const first = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGN4WTQFAAQ3AfCGNPMoAAAAAElFTkSuQmCC','base64');
+  const second = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPw2HYeAAMXAc4aViHBAAAAAElFTkSuQmCC','base64');
+  const ids = ['1020100111','1020600111','1020900111'];
+  const hash = data => createHash('sha256').update(data).digest('hex');
+  let upstream = 0;
+  async function sourceWith(images) {
+   const entries = [];
+   for (const [index,image] of images.entries()) {
+    const digest = hash(image);
+    await writeFile(join(directory,digest+'.png'),image);
+    entries.push({id:ids[index],sha256:digest});
+   }
+   await writeFile(join(directory,'manifest.json'),JSON.stringify({schemaVersion:1,version:'test',source:'synthetic',entries}));
+   const localClothingIcons = await loadLocalClothingIconPack(directory);
+   assert.ok(localClothingIcons);
+   return createPreviewSource([{sourcePath:photoPath,sizeBytes:photo.length,sha256:hash(photo),metadata:{
+    dressing:{clothes:ids.map(id=>({id,name:'同名',thumbnail:'https://images.example.test/icon.png'}))},
+    raw:{dictionary:{providerVersion:'test-v1'}}
+   }}],[directory],{localClothingIcons,loadIcon:async()=>{upstream++;throw Error('Unexpected upstream');}});
+  }
+  const source = await sourceWith([first,second]);
+  const id = source.list(0).items[0].id;
+  const config = {type:'NikkiSyncLocalGalleryDownload',version:1,host:'192.168.1.2',port:32001,
+   key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};
+  const service = createGalleryServer(config,source);
+  stop = service.stop;
+  await new Promise(resolve=>service.server.listen(0,'127.0.0.1',resolve));
+  channel = await new Promise((resolve,reject)=>{
+   const connection = clientApi('gallery-channel').connectGallery(adapter(service.server),config,{ready:()=>resolve(connection),failed:reject});
+  });
+  const list = await new Promise(resolve=>channel.cachedOutfit(id,0,resolve));
+  assert.equal(list.status,'ok');
+  assert.deepEqual(Array.from(list.items,item=>item.hasIcon),[true,true,false]);
+  assert.deepEqual(Array.from(list.items,item=>item.name),['同名','同名','同名']);
+  assert.doesNotMatch(JSON.stringify(list),/https|1020100111|\.png/);
+  for (const [index,image] of [first,second].entries()) {
+   const icon = await new Promise(resolve=>channel.icon(id,list.items[index].key,resolve));
+   assert.equal(icon.status,'ok');
+   assert.equal(icon.source,'item');
+   assert.equal(icon.sha256,hash(image));
+   assert.deepEqual(Buffer.from(icon.image),image);
+  }
+  await assert.rejects(source.icon(id,list.items[2].key));
+  const restarted = await sourceWith([first,second]);
+  const afterRestart = restarted.outfit(restarted.list(0).items[0].id,0,true).items;
+  assert.equal(afterRestart[0].cacheKey,list.items[0].cacheKey);
+  assert.notEqual(afterRestart[0].key,list.items[0].key);
+  const updated = await sourceWith([second,second]);
+  const afterUpdate = updated.outfit(updated.list(0).items[0].id,0,true).items;
+  assert.notEqual(afterUpdate[0].cacheKey,list.items[0].cacheKey);
+  assert.equal(afterUpdate[1].cacheKey,list.items[1].cacheKey);
+  assert.equal(upstream,0);
+ } finally {channel?.close();await stop?.();await rm(directory,{recursive:true,force:true});}
+});
+
 test('outfit and verified icons use existing encrypted quota/profile, without counting icons as saved originals',async()=>{
  const id='a'.repeat(32),key='b'.repeat(32),config={type:'NikkiSyncLocalGalleryDownload',version:1,host:'192.168.1.2',port:32001,key:randomBytes(32).toString('hex'),sessionId:randomBytes(16).toString('hex'),expiresAt:new Date(Date.now()+600000).toISOString()};let transfers=0;
  const source={outfit:(_id,offset,cacheKeys)=>({offset,total:1,items:[{key,name:'星光裙',hasIcon:true,...(cacheKeys?{cacheKey:'c'.repeat(64)}:{})}],next:null}),icon:async()=>({image:Uint8Array.from(clientApi('synthetic-image').imageBytes()),mime:'image/png',source:'category'})};
@@ -111,6 +175,59 @@ test('outfit panel automatically collects every six-item wire page, reuses icons
  p._iconCache.clear();p.loadOutfit(p.data.selectedId,0);const late=f.pending;p.closeInfo();late.success();assert.equal(p.data.infoLoading,false);assert.equal(p.data.infoOpen,false);
 });
 
+test('reopening details fetches new camera and outfit results after an earlier empty response',async()=>{
+ const {page:p}=await pageFixture();
+ p.setData({infoOpen:false});
+ let resolved=false,detailCalls=0,outfitCalls=0;
+ p._channel={
+  metadata(_id,done){
+   detailCalls++;
+   done({status:'ok',availability:resolved?'available':'unavailable',rows:resolved?[{label:'焦距',value:'50'}]:[]});
+  },
+  outfit(_id,offset,done){
+   outfitCalls++;
+   done({status:'ok',offset,total:resolved?1:0,next:null,items:resolved?[{key:'b'.repeat(32),name:'裙子',hasIcon:false}]:[]});
+  }
+ };
+ p.showPhotoInfo();
+ assert.equal(p.data.infoRows.length,0);
+ assert.equal(p.data.outfitItems.length,0);
+ p.closeInfo();
+ resolved=true;
+ p.showPhotoInfo();
+ assert.equal(detailCalls,2);
+ assert.equal(outfitCalls,2);
+ assert.equal(p.data.infoRows[0]?.value,'50');
+ assert.equal(p.data.outfitItems[0]?.name,'裙子');
+});
+test('complete details reopen from the current session cache and reread once stale',async()=>{
+ const {page:p}=await pageFixture();p.setData({infoOpen:false});
+ let detailCalls=0,outfitCalls=0;
+ p._channel={
+  metadata(_id,done){detailCalls++;done({status:'ok',availability:'available',rows:[{label:'焦距',value:String(49+detailCalls)}]});},
+  outfit(_id,offset,done){outfitCalls++;done({status:'ok',offset,total:1,next:null,items:[{key:'b'.repeat(32),name:'裙子',hasIcon:false}]});}
+ };
+ p.showPhotoInfo();p.closeInfo();p.showPhotoInfo();
+ assert.equal(detailCalls,1);assert.equal(outfitCalls,1);assert.equal(p.data.infoRows[0]?.value,'50');
+ p.closeInfo();p._details.get(p.data.selectedId).expiresAt=Date.now()-1;p.showPhotoInfo();
+ assert.equal(detailCalls,2);assert.equal(outfitCalls,2);assert.equal(p.data.infoRows[0]?.value,'51');
+ p.clearFiles();assert.equal(p._details.size,0);assert.equal(p._outfits.size,0);
+});
+test('gallery cache survives a new page with verified preview files and no persisted access keys',async()=>{
+ const module={exports:{}};
+ runInNewContext(await readFile(new URL('../../apps/wechat-mini-program/miniprogram/lib/gallery-cache.js',import.meta.url),'utf8'),{module,Date});
+ let storage;const files=new Map();
+ const wx={env:{USER_DATA_PATH:'/cache'},getStorageSync:()=>storage,setStorageSync:(_key,value)=>storage=JSON.parse(JSON.stringify(value)),
+  getFileSystemManager:()=>({statSync:path=>{if(!files.has(path))throw Error();return {size:files.get(path)};},unlink:({filePath})=>files.delete(filePath)})};
+ const key='a'.repeat(64),version='b'.repeat(64),accessKey='e'.repeat(32);
+ const first=module.exports.createGalleryCache(wx),path=first.reservePreview(4);files.set(path,4);first.savePreview(key,path,4);
+ first.saveDetails(key,{version,availability:'available',rows:[{label:'焦距',value:'50'}],items:[{key:accessKey,name:'裙子',hasIcon:true,cacheKey:'c'.repeat(64)}]});
+ const reopened=module.exports.createGalleryCache(wx);
+ assert.equal(reopened.getPreview(key),path);assert.equal(reopened.getPreview('d'.repeat(64)),undefined);
+ assert.equal(reopened.getDetails(key).version,version);assert.ok(!JSON.stringify(storage).includes(accessKey));
+ files.set(path,3);assert.equal(reopened.getPreview(key),undefined);assert.ok(!files.has(path));
+});
+
 test('closing details during automatic outfit paging ignores late pages and does not request icons',async()=>{
  const f=await pageFixture(),p=f.page;let finish,icons=0,calls=0;
  p._channel={outfit:(_id,_offset,done)=>{calls++;finish=done;},icon(){icons++;}};
@@ -133,7 +250,8 @@ test('unparsed auto-generated clothing codes are not presented as actual clothin
 });
 test('successful snapshot refresh invalidates cached outfit pages before displaying changed dictionary entries',async()=>{
  const {page:p}=await pageFixture();p.setData({viewerOpen:false,infoOpen:false,browseEnabled:false,infoLoading:false});p._outfits.set('old',{items:[]});
- p._channel={refresh:done=>done({status:'ok',offset:0,total:0,items:[],next:null})};p.refreshPhotos();assert.equal(p._outfits.size,0);
+ p._details.set('old',{rows:[]});
+ p._channel={refresh:done=>done({status:'ok',offset:0,total:0,items:[],next:null})};p.refreshPhotos();assert.equal(p._outfits.size,0);assert.equal(p._details.size,0);
 });
 test('new phone cache cleans only owned orphan icons and never removes a live pending icon or photo',async()=>{
  const m={exports:{}};runInNewContext(await readFile(new URL('../../apps/wechat-mini-program/miniprogram/lib/icon-cache.js',import.meta.url),'utf8'),{module:m,Uint8Array,Date});let read,write;const removed=[];

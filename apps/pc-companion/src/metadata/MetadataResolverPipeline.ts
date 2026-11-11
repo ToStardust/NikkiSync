@@ -1,6 +1,9 @@
 import type { InfinityPhotoMetadata } from '@nikkisync/core'
+import type { DatabaseManager } from '@nikkisync/database'
+import { MetadataResolutionFailure } from './types.js'
 import type {
   MetadataCapability,
+  MetadataResolutionOutcome,
   PhotoMetadataResolveRequest,
   PhotoMetadataResolveResult,
   PhotoMetadataResolver
@@ -54,15 +57,51 @@ export class MetadataResolverPipeline implements PhotoMetadataResolver {
     this.capabilities = [...new Set(this.resolvers.flatMap((resolver) => resolver.capabilities ?? []))]
   }
 
-  async resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult> {
+  async resolve(request: PhotoMetadataResolveRequest, database?: DatabaseManager): Promise<PhotoMetadataResolveResult> {
+    const outcomes: MetadataResolutionOutcome[] = []
+    for (const resolver of this.resolvers) {
+      try { outcomes.push({ status: 'fulfilled', value: await resolver.resolve(request, database) }) }
+      catch (reason) { outcomes.push({ status: 'rejected', reason }) }
+    }
+    return this.merge(outcomes)
+  }
+
+  get batchSize(): number {
+    return Math.max(...this.resolvers.map(resolver => resolver.batchSize ?? 12))
+  }
+
+  async resolveBatch(requests: readonly PhotoMetadataResolveRequest[], database: DatabaseManager): Promise<MetadataResolutionOutcome[]> {
+    const all: MetadataResolutionOutcome[][] = requests.map(() => [])
+    for (const resolver of this.resolvers) {
+      if (resolver.resolveBatch) {
+        const results = await resolver.resolveBatch(requests, database)
+        results.forEach((outcome, index) => { all[index]!.push(outcome) })
+        continue
+      }
+      for (const [index, request] of requests.entries()) {
+        try {
+          request.signal?.throwIfAborted()
+          if (request.isCurrent?.() === false) throw new Error('Photo changed')
+          all[index]!.push({ status: 'fulfilled', value: await resolver.resolve(request, database) })
+        } catch (reason) { all[index]!.push({ status: 'rejected', reason }) }
+      }
+    }
+    return all.map(outcomes => {
+      try { return { status: 'fulfilled', value: this.merge(outcomes) } }
+      catch (reason) { return { status: 'rejected', reason } }
+    })
+  }
+
+  private merge(outcomes: MetadataResolutionOutcome[]): PhotoMetadataResolveResult {
     let metadata: Partial<InfinityPhotoMetadata> = {}
     const successes: Array<{ provider: string, providerVersion?: string, capabilities?: MetadataCapability[] }> = []
     const failures: Array<{ provider: string, error: string }> = []
     const rawResponses: Array<{ provider: string, response: unknown }> = []
 
-    for (const resolver of this.resolvers) {
-      try {
-        const result = await resolver.resolve(request)
+    for (const [index, outcome] of outcomes.entries()) {
+      const resolver = this.resolvers[index]!
+      if (outcome.status === 'fulfilled') {
+        const result = outcome.value
         metadata = mergeMissing(metadata, result.metadata)
         successes.push({
           provider: result.provider,
@@ -72,7 +111,8 @@ export class MetadataResolverPipeline implements PhotoMetadataResolver {
             : {})
         })
         if (result.rawResponse !== undefined) rawResponses.push({ provider: result.provider, response: result.rawResponse })
-      } catch (error) {
+      } else {
+        const error: unknown = outcome.reason
         failures.push({
           provider: resolver.id,
           error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
@@ -81,6 +121,12 @@ export class MetadataResolverPipeline implements PhotoMetadataResolver {
     }
 
     if (successes.length === 0) {
+      const classified = outcomes.flatMap(outcome =>
+        outcome.status === 'rejected' && outcome.reason instanceof MetadataResolutionFailure ? [outcome.reason] : [])
+      if (classified.length === outcomes.length && classified.length) {
+        const next = classified.reduce((earliest, item) => Math.min(earliest, item.nextAttemptAt ?? Infinity), Infinity)
+        throw new MetadataResolutionFailure(classified[0]!.category, next === Infinity ? null : next)
+      }
       throw new AggregateError(
         failures.map((failure) => new Error(`${failure.provider}: ${failure.error}`)),
         'all metadata resolver providers failed'

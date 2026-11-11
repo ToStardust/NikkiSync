@@ -36,14 +36,21 @@ export class MetadataOnlineConsent {
   }
   abortPending(): void{for(const controller of this.active)controller.abort();this.active.clear()}
   guard(resolver: PhotoMetadataResolver): PhotoMetadataResolver {
+    const withConsent = async <T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      if (!this.granted) throw new Error('在线参数解析尚未开启')
+      const controller = new AbortController()
+      this.active.add(controller)
+      try { return await work(controller.signal) }
+      finally { this.active.delete(controller) }
+    }
+    const combine = (consent: AbortSignal, request?: AbortSignal) => request ? AbortSignal.any([consent, request]) : consent
     return {id:resolver.id,...(resolver.version?{version:resolver.version}:{}),...(resolver.capabilities?{capabilities:resolver.capabilities}:{}),
-      resolve:async request=>{
-        if(!this.granted)throw new Error('在线参数解析尚未开启')
-        const controller=new AbortController();this.active.add(controller)
-        const cancel=()=>controller.abort();request.signal?.addEventListener('abort',cancel,{once:true})
-        if(request.signal?.aborted)controller.abort()
-        try{return await resolver.resolve({...request,signal:controller.signal})}
-        finally{request.signal?.removeEventListener('abort',cancel);this.active.delete(controller)}
-      }}
+      ...(resolver.batchSize ? { batchSize: resolver.batchSize } : {}),
+      ...(resolver.resolveBatch ? {
+        resolveBatch: (requests, database) => withConsent(signal =>
+          resolver.resolveBatch!(requests.map(request => ({...request, signal: combine(signal, request.signal)})), database))
+      } : {}),
+      resolve: (request, database) => withConsent(signal => resolver.resolve({...request, signal: combine(signal, request.signal)}, database))
+    }
   }
 }

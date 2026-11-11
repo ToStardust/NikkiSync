@@ -23,6 +23,7 @@ type CatalogEntry={path:string;size:number;imageHash:string}
 type Batch={catalog?:Promise<CatalogEntry[]>;recycled:Map<string,FilePlan>}
 export type DeleteIntent={id:string;assetId:string;revision:number;cancel?:boolean;approval?:string;mediaFingerprint?:string;batchVerification?:boolean;resultAck?:boolean}
 type Row={id:string;device:string;asset_id:string;state:string;plan:string;message:string;lease:number;approval:string;dismissed:number}
+const wechatSessionEnded = '小程序连接已结束'
 const within=(file:string,root:string)=>{const rel=path.relative(root,file);return rel!==''&&!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel)}
 async function hash(file:string,end?:number):Promise<string>{const digest=createHash('sha256');for await(const bytes of createReadStream(file,end===undefined?{}:{end:end-1}))digest.update(bytes);return digest.digest('hex')}
 function planFailure(error:unknown,fallback:string):string{
@@ -60,7 +61,7 @@ export class DeletionQueue {
     db.connection.prepare("UPDATE organizer_deletions SET state='failed',message='上次处理被中断，请检查回收站后重新选择',lease=0 WHERE state='executing'").run()
     db.connection.prepare("UPDATE organizer_deletions SET state='pending',approval='',message='电脑重启，请重新确认',lease=0 WHERE state IN ('confirming','queued','checking')").run()
     db.connection.prepare("UPDATE organizer_deletions SET lease=0 WHERE state='preparing'").run()
-    db.connection.prepare("UPDATE organizer_deletions SET state='cancelled',approval='',lease=0,message='小程序连接已结束，请重新选择' WHERE device LIKE 'wechat:%' AND state IN ('preparing','pending','confirming','queued','checking')").run()
+    db.connection.prepare("UPDATE organizer_deletions SET state='cancelled',approval='',lease=0,message=? WHERE device LIKE 'wechat:%' AND state IN ('preparing','pending','confirming','queued','checking')").run(wechatSessionEnded+'，请重新选择')
   }
   private lock<T>(work:()=>Promise<T>):Promise<T>{const next=this.serial.then(work);this.serial=next.catch(()=>{});return next}
   activity(){return {...this.metrics,queued:this.jobs.size,active:this.inFlight.size}}
@@ -141,7 +142,8 @@ export class DeletionQueue {
       this.db.connection.prepare(`SELECT * FROM organizer_deletions WHERE dismissed=0 AND (${active} OR id IN (SELECT id FROM organizer_deletions WHERE dismissed=0 ORDER BY rowid DESC LIMIT 50))`).all()
     return rows.map(raw=>{
     const row=raw as Row;const plan=JSON.parse(row.plan) as Plan
-    return {id:row.id,assetId:row.asset_id,state:row.state,message:row.message,online:row.lease>this.clock()-45_000,resultAcknowledged:!!row.dismissed,batchVerified:row.approval.startsWith('authorized:'),batchVerification:!!plan.batchVerification,previewVersion:plan.mediaFingerprint??createHash('sha256').update(JSON.stringify(plan.files)).digest('hex'),...(device&&row.state==='confirming'?{approval:row.approval}:{}),
+    const sessionCancelled=!device&&row.state==='cancelled'&&row.device.startsWith('wechat:')&&row.message.startsWith(wechatSessionEnded)
+    return {id:row.id,assetId:row.asset_id,state:row.state,message:row.message,online:row.lease>this.clock()-45_000,resultAcknowledged:!!row.dismissed,batchVerified:row.approval.startsWith('authorized:'),batchVerification:!!plan.batchVerification,previewVersion:plan.mediaFingerprint??createHash('sha256').update(JSON.stringify(plan.files)).digest('hex'),...(device&&row.state==='confirming'?{approval:row.approval}:{}),...(sessionCancelled?{sessionCancelled:true}:{}),
       files:plan.files.map(file=>({name:path.basename(file.path),size:file.size,...(!device?{folder:path.basename(path.dirname(file.path))}:{})})),count:plan.files.length}
   })}
   async sync(device:string,intents:DeleteIntent[]){return this.lock(async()=>{
@@ -201,7 +203,7 @@ export class DeletionQueue {
   async cancelTransientSession(device:string){return this.lock(async()=>{
     if(!/^wechat:[a-f0-9-]{36}$/.test(device))throw new Error('invalid_session')
     for(const row of this.db.connection.prepare("SELECT id FROM organizer_deletions WHERE device=? AND state IN ('preparing','pending','confirming','queued','checking')").all(device)){
-      this.finish(String(row.id),'cancelled','小程序连接已结束，尚未执行的申请已取消');this.jobs.delete(String(row.id))
+      this.finish(String(row.id),'cancelled',wechatSessionEnded+'，尚未执行的申请已取消');this.jobs.delete(String(row.id))
     }
     this.db.connection.prepare('UPDATE organizer_deletions SET lease=0 WHERE device=?').run(device)
   })}

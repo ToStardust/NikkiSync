@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][string]$AndroidApk,
-    [string]$DesktopVersion = '1.0.31',
+    [string]$DesktopVersion = '1.0.34',
     [Parameter(Mandatory=$true)][long]$DesktopBuild,
     [Parameter(Mandatory=$true)][string]$OutputDirectory
 )
@@ -18,8 +18,8 @@ $compatibleBuild = $DesktopBuild + 1
 $compatibleOutput = "release/MomoCamera-PC-$DesktopVersion-AppAndMiniProgram-$compatibleBuild"
 Push-Location $root
 try {
-    & ./apps/windows-shell/package-portable.ps1 -OutputDirectory $appOutput -AndroidApk $AndroidApk -DesktopVersion $DesktopVersion -DesktopBuild $DesktopBuild -ClientEdition AppOnly
-    & ./apps/windows-shell/package-portable.ps1 -OutputDirectory $compatibleOutput -AndroidApk $AndroidApk -DesktopVersion $DesktopVersion -DesktopBuild $compatibleBuild -ClientEdition AppAndMiniProgram -IncludeWeChatMotionTools
+    & ./apps/windows-shell/package-portable.ps1 -OutputDirectory $appOutput -DesktopVersion $DesktopVersion -DesktopBuild $DesktopBuild -ClientEdition AppOnly
+    & ./apps/windows-shell/package-portable.ps1 -OutputDirectory $compatibleOutput -DesktopVersion $DesktopVersion -DesktopBuild $compatibleBuild -ClientEdition AppAndMiniProgram -IncludeWeChatMotionTools
     New-Item -ItemType Directory -Path $delivery | Out-Null
     Copy-Item -LiteralPath (Join-Path $root "$appOutput/NikkiSync-PC.exe") -Destination (Join-Path $delivery "（电脑端-仅需APP的）大喵相机助手_$DesktopVersion.exe")
     Copy-Item -LiteralPath (Join-Path $root "$compatibleOutput/NikkiSync-PC.exe") -Destination (Join-Path $delivery "（电脑端-兼容小程序和APP）大喵相机助手_$DesktopVersion.exe")

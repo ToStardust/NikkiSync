@@ -1,4 +1,5 @@
 import type { MetadataDictionaryManifest } from '@nikkisync/core'
+import { VERIFIED_PHOTOGRAPHY_NAMES } from './VerifiedPhotographyNames.js'
 
 /** Exact public clothing IDs, checked against the suit's BWIKI component list. */
 export const VERIFIED_CLOTHING_NAMES: MetadataDictionaryManifest = {
@@ -32,8 +33,8 @@ export const VERIFIED_CLOTHING_NAMES: MetadataDictionaryManifest = {
 
 /** The optional PC-local file extends the bundled verified names by exact kind/id. */
 export function clothingNameSupplement(local?: MetadataDictionaryManifest): MetadataDictionaryManifest {
-  if (!local) return VERIFIED_CLOTHING_NAMES
-  const entries = new Map(VERIFIED_CLOTHING_NAMES.entries.map(entry => [`${entry.kind}:${entry.id}`, entry]))
-  for (const entry of local.entries) entries.set(`${entry.kind}:${entry.id}`, entry)
+  const builtIn = [...VERIFIED_CLOTHING_NAMES.entries, ...VERIFIED_PHOTOGRAPHY_NAMES]
+  const entries = new Map(builtIn.map(entry => [`${entry.kind}:${entry.id}`, entry]))
+  for (const entry of local?.entries ?? []) entries.set(`${entry.kind}:${entry.id}`, entry)
   return { ...VERIFIED_CLOTHING_NAMES, entries: [...entries.values()] }
 }

@@ -1,4 +1,5 @@
 import type { InfinityPhotoMetadata } from '@nikkisync/core'
+import type { DatabaseManager } from '@nikkisync/database'
 
 export type MetadataCapability =
   | 'clothing'
@@ -18,8 +19,14 @@ export interface MetadataProviderDescriptor {
 export interface PhotoMetadataResolveRequest {
   /** Local cancellation, never serialized in the third-party request body. */
   signal?: AbortSignal
+  /** Recheck the scanned asset after waiting for the online queue. */
+  isCurrent?: () => boolean
+  /** A refresh of a previously decoded local result must stay on this machine. */
+  localOnly?: boolean
   assetId: string
   uid: string
+  sourcePhotoPath?: string
+  sourcePhotoSha256?: string
   nativeParamToken: string
   /** Full opaque Base64 parameter payload between the two trailing JPEG EOI markers. */
   nativeParamPayload?: string
@@ -38,14 +45,27 @@ export interface PhotoMetadataResolveResult {
   providerVersion?: string
   capabilities?: MetadataCapability[]
   rawResponse?: unknown
+  /** Values emitted by the older file decoder, for comparing against its cached result. */
+  previousLocalValues?: Partial<Pick<InfinityPhotoMetadata, 'camera' | 'filter' | 'lighting'>>
 }
 
 export interface PhotoMetadataResolver {
   readonly id: string
+  readonly usesPhotoFile?: boolean
   /** Bump when provider parsing/dictionary semantics change so cached photos can be re-enriched. */
   readonly version?: string | undefined
   readonly capabilities?: MetadataCapability[]
-  resolve(request: PhotoMetadataResolveRequest): Promise<PhotoMetadataResolveResult>
+  resolve(request: PhotoMetadataResolveRequest, database?: DatabaseManager): Promise<PhotoMetadataResolveResult>
+  resolveBatch?(requests: readonly PhotoMetadataResolveRequest[], database: DatabaseManager): Promise<MetadataResolutionOutcome[]>
+  readonly batchSize?: number
+}
+
+export type MetadataResolutionOutcome = PromiseSettledResult<PhotoMetadataResolveResult>
+
+export class MetadataResolutionFailure extends Error {
+  constructor(readonly category: string, readonly nextAttemptAt: number | null) {
+    super(category)
+  }
 }
 
 export interface MetadataResolverServiceConfig {

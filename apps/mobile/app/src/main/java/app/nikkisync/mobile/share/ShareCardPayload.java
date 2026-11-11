@@ -21,12 +21,22 @@ public record ShareCardPayload(
         effectItems = List.copyOf(effectItems == null ? List.of() : effectItems);
     }
 
-    public record Item(String label, String value, String clothingId) {
-        public Item(String label, String value) { this(label, value, ""); }
+    public static String effectKind(String label) {
+        return switch (label) {
+            case "动作" -> "pose";
+            case "光照" -> "lighting";
+            default -> "";
+        };
+    }
+
+    public record Item(String label, String value, String clothingId, String effectId) {
+        public Item(String label, String value) { this(label, value, "", ""); }
+        public Item(String label, String value, String clothingId) { this(label, value, clothingId, ""); }
         public Item {
             label = label == null ? "" : label.trim();
             value = value == null ? "" : value.trim();
             clothingId = clothingId == null ? "" : clothingId.trim();
+            effectId = effectId == null ? "" : effectId.trim();
         }
     }
 }

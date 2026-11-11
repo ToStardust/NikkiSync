@@ -21,6 +21,25 @@ import java.util.List;
 @Config(sdk = 35)
 public final class ShareCardExporterTest {
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    public void effectBadgesDrawTheMatchingPoseAndLightingArtwork() {
+        Bitmap pose = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888);
+        Bitmap light = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888);
+        pose.eraseColor(Color.RED);
+        light.eraseColor(Color.GREEN);
+        var payload = ShareCardPayloadBuilder.build("photo", "", "", """
+                {"pose":{"id":"1090012102","name":"浮荧共舞"},
+                 "lighting":{"id":"HueEdgeLight_001_R","name":"柔黄-右","strength":89}}
+                """);
+        var page = ShareCardLayout.pages(payload).get(0);
+        Bitmap rendered = ShareCardExporter.renderPage(null, payload, page, 0, 1,
+                java.util.Map.of("effect:pose", pose, "effect:lighting", light));
+        try {
+            assertEquals(Color.RED, rendered.getPixel(716, 1430));
+            assertEquals(Color.GREEN, rendered.getPixel(716, 1554));
+        } finally { rendered.recycle(); pose.recycle(); light.recycle(); }
+    }
+
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     public void actualPixelsShowPartIconsAndWarmPinkAccent() throws Exception {
         Bitmap background=Bitmap.createBitmap(1440,1800,Bitmap.Config.ARGB_8888);
         Canvas source=new Canvas(background);Paint fill=new Paint();

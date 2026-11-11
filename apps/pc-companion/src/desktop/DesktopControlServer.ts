@@ -85,7 +85,19 @@ export function createDesktopControlServer(config: DesktopControlServerConfig): 
           }
           if(request.method!=='POST'||requestUrl.pathname!=='/api/sync-accounts'||!request.headers['content-type']?.startsWith('application/json')){json(response,400,{error:'bad_request'});return}
           const chunks:Buffer[]=[];let size=0;for await(const chunk of request){size+=chunk.length;if(size>16384){json(response,413,{error:'too_large'});return}chunks.push(Buffer.from(chunk))}
-          try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));config.accounts.setSelection(value.uids);json(response,200,config.accounts.state())}catch{json(response,400,{error:'invalid_accounts'})}return
+          const revision = config.accounts.revision()
+          try {
+            const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+            config.accounts.setSelection(value.uids)
+          } catch {
+            json(response, 400, {error:'invalid_accounts'})
+            return
+          }
+          // Revoke the old snapshot before acknowledging the new sharing scope.
+          const scopeChanged = config.accounts.revision() !== revision
+          if (scopeChanged) await config.wechatGallery?.stop()
+          json(response, 200, {...config.accounts.state(), wechatReconnect: scopeChanged && Boolean(config.wechatGallery)})
+          return
         }
         if(config.deletions&&requestUrl.pathname.startsWith('/api/organizer')){
           if(request.method==='GET'&&requestUrl.pathname==='/api/organizer/preview'){

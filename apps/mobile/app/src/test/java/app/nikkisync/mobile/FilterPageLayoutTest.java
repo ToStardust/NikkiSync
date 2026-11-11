@@ -69,6 +69,58 @@ public class FilterPageLayoutTest {
         } finally {close(activity);}
     }
 
+    @Test public void versionFilterCombinesWithSourcesAndKeepsDraftUntilApply() throws Exception {
+        MainActivity activity=activity();
+        try {
+            List<AssetSummary> assets=(List<AssetSummary>)get(activity,"assets");
+            assets.add(versionPhoto("inferred","1001"," v2.11 ","inferred"));
+            assets.add(versionPhoto("explicit","1002","2.11","explicit"));
+            assets.add(versionPhoto("older","1001","2.9","explicit"));
+            assets.add(versionPhoto("unknown","1001",null,null));
+            call(activity,"showGalleryFilterSheet");
+            View page=top(activity);
+            Button apply=findButton(page,"应用");
+            assertEquals(Gravity.CENTER,apply.getGravity());
+            assertEquals(android.graphics.Color.WHITE,apply.getCurrentTextColor());
+            assertTrue(apply.getBackground() instanceof android.graphics.drawable.RippleDrawable);
+            assertTrue(apply.getHeight()>=dp(activity,48));
+            var drawer=findType(page,SavedFilterSheet.class);
+            var scroll=(ScrollView)get(drawer,"scrolling");
+            assertTrue(bounds(scroll,activity.navigationHost()).contains(bounds(page.findViewWithTag("source-folder"),activity.navigationHost())));
+            View versions=page.findViewWithTag("source-version");
+            assertNotNull(versions);
+            versions.performClick();
+            assertNotNull(findText(top(activity),"2.11 版本 · 2 张"));
+            renderProof(activity.navigationHost(),"version-drawer");
+            top(activity).findViewWithTag("2.11").performClick();
+            findButton(top(activity),"取消").performClick();
+            assertEquals(4,filtered(activity).size());
+            call(activity,"showGalleryFilterSheet");
+            top(activity).findViewWithTag("source-version").performClick();
+            top(activity).findViewWithTag("2.11").performClick();
+            top(activity).findViewWithTag("source-uid").performClick();
+            top(activity).findViewWithTag("1001").performClick();
+            findButton(top(activity),"应用").performClick();
+            assertEquals(List.of("inferred"),filtered(activity).stream().map(AssetSummary::assetId).toList());
+            call(activity,"showGalleryFilterSheet");
+            findButton(top(activity),"重置").performClick();
+            top(activity).findViewWithTag("source-version").performClick();
+            top(activity).findViewWithTag("__unknown__").performClick();
+            findButton(top(activity),"应用").performClick();
+            assertEquals(List.of("unknown"),filtered(activity).stream().map(AssetSummary::assetId).toList());
+        } finally {close(activity);}
+    }
+
+    private static AssetSummary versionPhoto(String id,String uid,String version,String source){
+        return new AssetSummary(id,"photo","ready","2026-10-27T01:00:00Z",uid,1,100,200,false,false,null,"r",version,source);
+    }
+    @SuppressWarnings("unchecked")
+    private static List<AssetSummary> filtered(MainActivity activity)throws Exception{
+        Method method=MainActivity.class.getDeclaredMethod("filteredGallery");
+        method.setAccessible(true);
+        return (List<AssetSummary>)method.invoke(activity);
+    }
+
     private static AssetSummary photo(String id,String folder){return new AssetSummary(id,"photo","ready","2026-10-27T01:00:00Z","1001",1,100,200,false,false,null,"r",null,null).withSource(folder+"\\photo.jpeg",folder,123L);}
     private static MainActivity activity()throws Exception{MainActivity a=Robolectric.buildActivity(MainActivity.class).get();call(a,"buildUi");return a;}
     private static void close(MainActivity a)throws Exception{a.navigationHost().close();for(String name:new String[]{"io","organizerIo","organizerNetworkIo"})((java.util.concurrent.ExecutorService)get(a,name)).shutdownNow();}

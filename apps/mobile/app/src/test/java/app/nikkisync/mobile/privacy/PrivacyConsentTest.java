@@ -4,7 +4,10 @@ import android.content.Intent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.Button;
+import android.graphics.drawable.GradientDrawable;
 import app.nikkisync.mobile.MainActivity;
+import app.nikkisync.mobile.ui.chrome.ChromeHost;
 import app.nikkisync.mobile.inspiration.InspirationActivity;
 import java.lang.reflect.Field;
 import org.junit.Test;
@@ -29,7 +32,11 @@ public final class PrivacyConsentTest {
         try {
             assertNull(field(activity,"identity"));assertNull(field(activity,"discovery"));assertNull(field(activity,"imageLoader"));
             assertTrue(activity.getSharedPreferences("nikkisync.identity",0).getAll().isEmpty());
-            assertNotNull(find(activity.navigationHost(),"同意并继续"));
+            Button agree=(Button)find(activity.navigationHost(),"同意并继续");
+            assertNotNull(agree);
+            assertEquals(0xfff3b6bf,((GradientDrawable)agree.getBackground()).getColor().getDefaultColor());
+            assertEquals(0xfffffbf8,((GradientDrawable)find(activity.navigationHost(),"隐私政策").getBackground()).getColor().getDefaultColor());
+            assertEquals(1,findHost(activity.navigationHost()).effectsLayer().getChildCount());
             find(activity.navigationHost(),"隐私政策").performClick();activity.navigationHost().interrupt();
             assertEquals(1,activity.navigationHost().overlayCount());assertNull(field(activity,"identity"));
             activity.navigationHost().commit();activity.navigationHost().interrupt();
@@ -69,6 +76,13 @@ public final class PrivacyConsentTest {
     private static View find(View view,String text){
         if(view instanceof TextView label&&label.getText().toString().equals(text))return view;
         if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++){View found=find(group.getChildAt(i),text);if(found!=null)return found;}
+        return null;
+    }
+    private static ChromeHost findHost(View view){
+        if(view instanceof ChromeHost host)return host;
+        if(view instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++){
+            ChromeHost found=findHost(group.getChildAt(i));if(found!=null)return found;
+        }
         return null;
     }
 }

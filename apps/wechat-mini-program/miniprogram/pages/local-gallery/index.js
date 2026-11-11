@@ -1,12 +1,23 @@
 const { parseGalleryQr, connectGallery } = require('../../lib/gallery-channel.js');
 const { saveOriginalBatch } = require('../../lib/original-save.js');
 const { createIconCache } = require('../../lib/icon-cache.js');
+const { createGalleryCache } = require('../../lib/gallery-cache.js');
 const { createLiveCache } = require('../../lib/live-gallery.js');
 const { createShareCardJob, saveShareCard } = require('../../lib/share-card.js');
 const {inspirationPage,inspirationData}=require('../../lib/inspiration-page.js');
 const {deletionPage,deletionData}=require('../../lib/deletion-page.js');
 const {profilePage,profileData}=require('../../lib/profile-page.js');
 let sequence = 0;
+const DETAIL_CACHE_MS = 60 * 1000;
+const DETAIL_CACHE_LIMIT = 36;
+function photoSaveMessage(message) {
+  try {
+    if (wx.getDeviceInfo?.().platform === 'ios') {
+      return message + ' 找不到照片时，请在「照片」中按最近添加排序，或到「最近保存」查看。';
+    }
+  } catch (_) {}
+  return message;
+}
 Page({
   ...inspirationPage,
   ...deletionPage,
@@ -23,13 +34,14 @@ Page({
     searchText:'',filterVersion:'',filterFrom:'',filterTo:'',filtersOpen:false,filterActive:false,versionOptions:[{label:'全部版本',version:''}],versionIndex:0,
     outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:'',
     ambientPath: '', pageStart: 0, pageEnd: 0, loaded: 0, dateSummary: '', message: '', connectionDiagnostic: '' },
-  onLoad() { this._alive = true; this._generation = 0; this._connectionEpoch = 0; this._popupEpoch = 0; this._saveEpoch = 0; this._metadataEpoch = 0; this._viewerSeq = 0; this._metadata = new Map(); this._popupClosing = false; this._files = new Set();
+  onLoad() { this._alive = true; this._generation = 0; this._connectionEpoch = 0; this._popupEpoch = 0; this._saveEpoch = 0; this._metadataEpoch = 0; this._viewerSeq = 0; this._popupClosing = false; this._files = new Set();
     this.initProfile?.();
     this._selected = new Set(); this._saved = new Map(); this._retryIds = []; this._previewCache = new Map(); this._hdEpoch = 0; this._polls = 0; this._infoSeq=0;this._motionTimers={};this._motionSerial={};this.resetViewerGesture();
     this._rotations=new Map();this._query={};this._shareEpoch=0;this._sharePaths=[];this._resumable=false;this._resumeOffset=0;this._resumeAttempts=0;
-    this._outfitEpoch=0;this._outfits=new Map();this._outfitBusy=0;
+    this._outfitEpoch=0;this._outfits=new Map();this._outfitBusy=0;this._details=new Map();
     this._liveIds=new Set();this._liveEpoch=0;try{if(typeof createLiveCache==='function')this._liveCache=createLiveCache(wx);}catch(_){}
     try{if(typeof createIconCache==='function')this._iconCache=createIconCache(wx);}catch(_){}
+    try{if(typeof createGalleryCache==='function')this._galleryCache=createGalleryCache(wx);}catch(_){}
     try{const info=wx.getWindowInfo?.()||{},height=info.windowHeight,width=info.windowWidth;this.setData({writeExif:wx.getStorageSync?.('nikkisync.writeExif')!==false,reduceMotion:wx.getStorageSync?.('nikkisync.reduceMotion')===true,windowHeight:Number.isFinite(height)&&height>0?height:800,windowWidth:Number.isFinite(width)&&width>0?width:400});}catch(_){} },
   toggleExif(event){if(this.data.saving)return;const enabled=typeof event?.detail?.value==='boolean'?event.detail.value:!this.data.writeExif;this.setData({writeExif:enabled});try{wx.setStorageSync?.('nikkisync.writeExif',enabled);}catch(_){}},
   searchChanged(event){this.setData({searchText:event.detail.value});},
@@ -46,7 +58,13 @@ Page({
     this._query={text,version:this.data.filterVersion,from,to,offsetMinutes:-new Date().getTimezoneOffset()};
     this.setData({filterActive:!!(text||from||to||this.data.filterVersion),filtersOpen:false});this.loadPage(0);
   },
-  clearFilters(){if(this.data.busy||this.data.saving)return;this.setData({searchText:'',filterVersion:'',filterFrom:'',filterTo:'',versionIndex:0});this.applyFilters();},
+  clearFilters() {
+    if (this.data.busy || this.data.saving) return;
+    this._query = {};
+    this._resumeOffset = 0;
+    this.setData({searchText:'',filterVersion:'',filterFrom:'',filterTo:'',versionIndex:0,filterActive:false,filtersOpen:false});
+    if (this.data.connected) this.applyFilters();
+  },
   groupsFor(photos){const groups=[];for(let n=0;n<photos.length;n++){const photo=Object.assign({},photos[n],{index:n}),version=photo.version||'',last=groups[groups.length-1];
     const group=last&&last.version===version?last:{version,label:version?version+' 版本':'版本未知',inferred:false,photos:[]};if(group!==last)groups.push(group);if(photo.versionSource==='inferred')group.inferred=true;group.photos.push(photo);}return groups;},
   rotatePhoto(){this.setRotation(((this.data.viewerRotation||0)+90)%360);},
@@ -90,7 +108,7 @@ Page({
     if (this._alive) this.setData({resumeAvailable:!!retained,connectionOpen: false, ambientPath: '', saving: false, saveStopping: false, retryCount: 0, infoOpen: false, infoMounted: false, infoExpanded: false, infoPhase: 'exit', viewerClosing: false, viewerPhase: 'open', infoLoading: false, hdLoading: false, downloadEnabled: false, selectedCount:this._selected.size, selectionMode:retained&&this.data.selectionMode});
     if (this._alive && !this._scanning) this.setData({ connected: false, busy: false, photos: [],groups:[], selectedPath: '', viewerOpen: false, viewerChrome: true, message:retained?'连接已暂停，回到前台后自动恢复。':'连接已关闭。重新连接需要电脑生成新浏览码。' });
   },
-  onUnload() {this.stopDeletionPolling?.();this._alive=false;this._active=false;this._resumable=false;this.stopResume();this.closeShareCard();this.resetViewerGesture();this.stopRefresh(); this.discardOriginal();this._pending=null;this._saveEpoch++;this._metadataEpoch++;this._saveJob?.cancel();this._metadata.clear();this._selected.clear();this._saved.clear();this._retryIds=[];this._popupEpoch++;this._generation++;this._connectionEpoch++;this._channel?.close();this.clearFiles();},
+  onUnload() {this.stopDeletionPolling?.();this._alive=false;this._active=false;this._resumable=false;this.stopResume();this.closeShareCard();this.resetViewerGesture();this.stopRefresh(); this.discardOriginal();this._pending=null;this._saveEpoch++;this._metadataEpoch++;this._saveJob?.cancel();this._selected.clear();this._saved.clear();this._retryIds=[];this._popupEpoch++;this._generation++;this._connectionEpoch++;this._channel?.close();this.clearFiles();},
   stopResume(){if(typeof clearTimeout==='function')clearTimeout(this._resumeTimer);this._resumeTimer=null;},
   resumeConnection(){
     if(!this._alive||!this._active||!this._resumable||this.data.busy)return;
@@ -107,13 +125,13 @@ Page({
     }else if(this._active&&this._resumable)this.setData({message:'暂时连不上电脑，请确认同一 Wi-Fi 和电脑仍在运行，再点重试连接。'});
   },
   removeFile(path) { if (!path) return; this._files.delete(path); try { wx.getFileSystemManager().unlink({ filePath: path, fail() {} }); } catch (_) {} },
-  clearFiles(keepPreviews=false) {this.discardLive();this._liveIds.clear();this._outfitEpoch++;this._outfitBusy=0;if(!keepPreviews)this._outfits?.clear();this._iconCache?.release(keepPreviews);const retained=keepPreviews?new Set(this._previewCache.values()):new Set();for(const path of Array.from(this._files))if(!retained.has(path))this.removeFile(path);if(!keepPreviews)this._previewCache.clear();},
+  clearFiles(keepPreviews=false) {this.discardLive();this._liveIds.clear();this._outfitEpoch++;this._outfitBusy=0;if(!keepPreviews){this._outfits.clear();this._details.clear();}this._iconCache?.release(keepPreviews);this._galleryCache?.flush();const retained=keepPreviews?new Set(this._previewCache.values()):new Set();for(const path of Array.from(this._files))if(!retained.has(path))this.removeFile(path);if(!keepPreviews)this._previewCache.clear();},
   scanPc() {
     if (!this._alive || !this._active || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading) return;
-    this.stopDeletionPolling?.();this._deletionCancel=new Set();this.setData({deletionEnabled:false,deletionItems:[],deletionMessage:'',deletionOpen:false,connectionDiagnostic:''});
+    this.stopDeletionPolling?.();this._deletionCancel=new Set();this.setData({deletionEnabled:false,deletionItems:[],viewerDeletionId:'',deletionMessage:'',deletionOpen:false,connectionDiagnostic:''});
     this._resumable=false;this._resumeOffset=0;this._resumeAttempts=0;this.stopResume();this.setData({resumeAvailable:false});
     this.resetViewerGesture();this.stopRefresh(); this.discardOriginal(); this._selected.clear(); this._saved.clear(); this._retryIds=[]; this._polls=0;this._hdFailedId='';
-    this._metadata.clear(); this._metadataEpoch++;this._rotations.clear();this._query={};this.setData({groups:[],exportEnabled:false,browseEnabled:false,searchText:'',filterVersion:'',filterFrom:'',filterTo:'',versionIndex:0,filterActive:false});
+    this._metadataEpoch++;this._rotations.clear();this._query={};this.setData({groups:[],exportEnabled:false,browseEnabled:false,searchText:'',filterVersion:'',filterFrom:'',filterTo:'',versionIndex:0,filterActive:false});
     if (this._channel) this._channel.close(); this._popupEpoch++; this._generation++; this._connectionEpoch++; this.clearFiles();
     this._scanning = true; this.setData({ busy: true, connected: false, connectionOpen: false, downloadEnabled: false, selectionMode: false, selectedCount: 0, saveStopping: false, retryCount: 0, saveMessage: '', ambientPath: '', loaded: 0, photos: [], selectedPath: '', viewerOpen: false, viewerClosing: false, viewerPhase: 'open', infoMounted: false, infoOpen: false, viewerChrome: true, message: '请扫描电脑端的连接二维码' });
     wx.scanCode({ onlyFromCamera: true, scanType: ['qrCode'], success: value => {
@@ -134,8 +152,8 @@ Page({
       failed: message => {
         if (!this._alive || epoch !== this._connectionEpoch) return;
         this._resumable=false;this._generation++;this._metadataEpoch++;
-        this.stopResume();this.stopRefresh();this.clearFiles();
-        const diagnostic = /（(C0[1-6])：([^）]+)）/.exec(message);
+        this.stopResume();this.stopRefresh();this.stopDeletionPolling?.();this.clearFiles();
+        const diagnostic = /（(C0[1-7])：([^）]+)）/.exec(message);
         this.setData({
           connected:false,busy:false,resumeAvailable:false,hdLoading:false,infoLoading:false,
           photos:[],groups:[],ambientPath:'',selectedPath:'',viewerOpen:false,
@@ -148,27 +166,55 @@ Page({
   loadPage(offset, viewerTarget) {
     if (!this._alive || !this._active || !this.data.connected || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || !(this.data.browseEnabled?typeof this._channel?.browse==='function':typeof this._channel?.list==='function')) return;
     this.adoptSelection(); this.discardOriginal();this.resetViewerGesture();
-    this._metadataEpoch++; this._metadata.clear();
+    this._metadataEpoch++;
     const generation = ++this._generation; this._popupEpoch++; const keepViewer=Number.isInteger(viewerTarget) && this.data.viewerOpen;
     this.setData({ busy: true, photos: [], ambientPath: '', loaded: 0, selectedPath: '', viewerPreviewPath:'', viewerOriginalPath:'', infoOpen: false, infoMounted: false, viewerClosing: false, viewerPhase: 'open', viewerOpen: keepViewer, viewerChrome: true, message: '正在读取电脑照片…' });
     try{const received=value=>{
       if (!this._alive || !this._active || generation !== this._generation) return;
       if (value.status !== 'ok') { this.setData({ busy: false, message: value.message }); return; }
-      this.applyPage(value, offset, generation, keepViewer ? viewerTarget : undefined);
+      if (offset > 0 && value.total > 0 && value.items.length === 0) {
+        this._resumeOffset = 0;
+        this.setData({busy:false,viewerOpen:false});
+        this.loadPage(0);
+        return;
+      }
+      const apply=keys=>{
+        if(this._alive&&this._active&&generation===this._generation)this.applyPage(value,offset,generation,keepViewer?viewerTarget:undefined,keys);
+      };
+      if(this._galleryCache&&value.items.length&&this._channel.previewCacheKeys){
+        try{this._channel.previewCacheKeys(value.items.map(item=>item.id),apply);}catch(_){apply();}
+      }else apply();
     };if(this.data.browseEnabled&&typeof this._channel.browse==='function')this._channel.browse(offset,this._query,received);else this._channel.list(offset,received);}catch(_){this.transferUnavailable();}
   },
   transferUnavailable() {
+    if (!this.data.connected) return;
     this.stopRefresh();if(this._resumable&&this._channel?.interrupt?.())return;this._channel?.close();this._resumable=false;this.stopResume();
     if(this._alive && this._active)this.setData({busy:false,connected:false,hdLoading:false,infoLoading:false,message:'连接已结束，请在电脑生成新浏览码后重新连接。'});
   },
-  applyPage(value, offset, generation, viewerTarget) {
+  applyPage(value, offset, generation, viewerTarget, cacheKeys) {
       for(const item of value.items)if(item.live===true)this._liveIds.add(item.id);else this._liveIds.delete(item.id);
-      const photos = value.items.map(x => ({ id: x.id,video:x.video===true,live:x.live===true, date: x.date ? new Date(Date.parse(x.date)-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) : '日期未知',version:x.version||'',versionSource:x.versionSource||'unknown',mime:x.mime||'image/jpeg',rotation:x.live?0:this._rotations.get(x.id)||0,path: this._previewCache.get(x.id) || '', selected: this._selected.has(x.id), saveState: this._saved.get(x.id) || '', state: '等待加载' }));
+      const photos = value.items.map((x,index) => {
+        const cacheKey=cacheKeys?.[index];
+        const path = (cacheKey?this._galleryCache?.getPreview(cacheKey):this._previewCache.get(x.id)) || '';
+        if (path) {
+          this._previewCache.delete(x.id);
+          this._previewCache.set(x.id,path);
+        }
+        return {
+          id:x.id,...(cacheKey?{cacheKey}:{}),video:x.video===true,live:x.live===true,
+          date:x.date?new Date(Date.parse(x.date)-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10):'日期未知',
+          version:x.version||'',versionSource:x.versionSource||'unknown',mime:x.mime||'image/jpeg',
+          rotation:x.live?0:this._rotations.get(x.id)||0,path,selected:this._selected.has(x.id),
+          saveState:this._saved.get(x.id)||'',state:path?'':x.video?'▶ 视频':'等待加载'
+        };
+      });
       const dates = photos.map(x => x.date).filter(x => x !== '日期未知');
+      const cachedPhotos = photos.filter(photo=>photo.path);
       const first = dates[0], last = dates[dates.length - 1];
       const versions=Array.isArray(value.versions)?[{label:'全部版本',version:''},...value.versions.map(x=>({label:(x.version?x.version+' 版本':'版本未知')+' · '+x.count+' 张',version:x.version||'unknown'}))]:this.data.versionOptions;
       this.setData({ total: value.total,libraryTotal:value.libraryTotal??value.total,versionOptions:versions,versionIndex:Math.max(0,versions.findIndex(x=>x.version===this.data.filterVersion)), next: value.next, photos,groups:this.groupsFor(photos), pageStart: photos.length ? offset + 1 : 0, pageEnd: offset + photos.length,
-        selectedCount:this._selected.size, dateSummary: first ? (first === last ? first : first + ' · ' + last) : '日期未知' });
+        selectedCount:this._selected.size, dateSummary: first ? (first === last ? first : first + ' · ' + last) : '日期未知',
+        loaded:cachedPhotos.length,ambientPath:cachedPhotos[0]?.path||'' });
       this.prunePreviews();
       if(Number.isInteger(viewerTarget) && this.data.viewerOpen && photos.length)this.displayPhoto(Math.min(viewerTarget,photos.length-1));
       this.loadPreview(0, generation);
@@ -177,17 +223,20 @@ Page({
     if (!this._alive || !this._active || generation !== this._generation) return;
     if (index >= this.data.photos.length) { this.setData({ busy: false, message: this.data.filterActive&&!this.data.photos.length?'没有符合条件的照片，可以清除筛选。':'' });
       if(this.data.viewerOpen && this._nativeScale>=1.4)this.loadViewerOriginal(); return; }
-    if(this.data.photos[index].video){this.updatePhoto(index,{state:'▶ 视频'});this.loadPreview(index+1,generation);return;}
-    if(this.data.photos[index].path){this.updatePhoto(index,{});this.loadPreview(index+1,generation);return;}
-    const id = this.data.photos[index].id;
+    if(this.data.photos[index].video || this.data.photos[index].path){this.loadPreview(index+1,generation);return;}
+    const {id,cacheKey}=this.data.photos[index];
     try{this._channel.preview(id, value => {
       if (!this._alive || !this._active || generation !== this._generation) { if (value.image) value.image.fill(0); return; }
       if (value.status !== 'ok') { this.updatePhoto(index, { state: '照片不可用' }); if (this.data.connected) this.loadPreview(index + 1, generation); return; }
-      const path = wx.env.USER_DATA_PATH + '/nikkisync-gallery-' + Date.now() + '-' + (++sequence) + '.jpg', bytes = value.image.slice(); value.image.fill(0);
-      const failed = () => { bytes.fill(0); this.removeFile(path); if (this._alive && generation === this._generation) { this.updatePhoto(index, { state: '预览写入失败' }); this.loadPreview(index + 1, generation); } };
+      const bytes = value.image.slice(); value.image.fill(0);
+      const cache=cacheKey&&this._galleryCache;
+      const path=cache?cache.reservePreview(bytes.length):wx.env.USER_DATA_PATH+'/nikkisync-gallery-'+Date.now()+'-'+(++sequence)+'.jpg';
+      const discard=()=>cache?cache.discardPreview(path):this.removeFile(path);
+      const failed = () => { bytes.fill(0); discard(); if (this._alive && generation === this._generation) { this.updatePhoto(index, { state: '预览写入失败' }); this.loadPreview(index + 1, generation); } };
       try { wx.getFileSystemManager().writeFile({ filePath: path, data: bytes.buffer,
-        success: () => { bytes.fill(0); if (!this._alive || !this._active || generation !== this._generation) { this.removeFile(path); return; }
-          this._files.add(path); this._previewCache.delete(id);this._previewCache.set(id,path); this.updatePhoto(index, { path, state: '' }); this.prunePreviews();this.loadPreview(index + 1, generation); }, fail: failed }); }
+        success: () => { bytes.fill(0); if (!this._alive || !this._active || generation !== this._generation) { discard(); return; }
+          if(cache)cache.savePreview(cacheKey,path,bytes.length);else this._files.add(path);
+          this._previewCache.delete(id);this._previewCache.set(id,path); this.updatePhoto(index, { path, state: '' }); this.prunePreviews();this.loadPreview(index + 1, generation); }, fail: failed }); }
       catch (_) { failed(); }
     });}catch(_){this.transferUnavailable();}
   },
@@ -198,7 +247,7 @@ Page({
     this.setData(update); },
   prunePreviews() {
     const keep=new Set(this.data.photos.map(x=>x.id));
-    for(const [id,path] of this._previewCache){if(this._previewCache.size<=36)break;if(!keep.has(id)){this._previewCache.delete(id);this.removeFile(path);}}
+    for(const [id,path] of this._previewCache){if(this._previewCache.size<=36)break;if(!keep.has(id)){this._previewCache.delete(id);if(this._files.has(path))this.removeFile(path);}}
   },
   stopRefresh() { if(typeof clearTimeout==='function')clearTimeout(this._refreshTimer);this._refreshTimer=null; },
   scheduleRefresh() {
@@ -210,12 +259,13 @@ Page({
     if(!this._alive || !this._active || !this.data.connected || !this.data.downloadEnabled || this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading || this.data.viewerOpen || this.data.connectionOpen || this.data.myOpen || this.data.inspirationOpen || this.data.selectionMode || this.data.selectedCount || (automatic===true && this.data.pageStart>1) || typeof this._channel?.refresh!=='function') {
       if(automatic!==true && this._alive)this.setData({message:'请先结束选择、预览或保存，再刷新照片。'});wx.stopPullDownRefresh?.();return;
     }
-    const generation=++this._generation;this._polls++;this._metadata.clear();this._metadataEpoch++;this._outfits.clear();
+    const generation=++this._generation;this._polls++;this._metadataEpoch++;
     this.setData({busy:true,message:'正在检查新照片…'});
     try{this._channel.refresh(value=>{
       wx.stopPullDownRefresh?.();
       if(!this._alive || !this._active || generation!==this._generation)return;
       if(value.status!=='ok'){this.setData({busy:false,message:'刷新暂时不可用；请确认电脑正在运行新版 EXE。'});return;}
+      this._details.clear();this._outfits.clear();
       if(this.data.browseEnabled){this.setData({busy:false});this.loadPage(0);}else this.applyPage(value,0,generation);
     });}catch(_){wx.stopPullDownRefresh?.();this.setData({busy:false,message:'刷新暂时不可用，请重新连接。'});}
   },
@@ -342,8 +392,9 @@ Page({
         this._retryIds=ids.filter(id=>!savedIds.has(id));
         for(const result of value.results){this._saved.set(result.id,result.status);if(result.status==='saved')this._selected.delete(result.id);}
         const photos=this.data.photos.map(photo=>{const result=value.results.find(x=>x.id===photo.id);return result?Object.assign({},photo,{saveState:result.status,selected:result.status==='saved'?false:photo.selected}):photo;});
+        const resultMessage = '已保存 '+saved+' 张'+(this._retryIds.length?'，'+this._retryIds.length+' 张未完成':'')+(value.cancelled?'（已停止）。':'。');
         this.setData({saving:false,saveStopping:false,retryCount:this._retryIds.length,photos,groups:this.groupsFor(photos),selectedCount:this._selected.size,viewerSelected:this._selected.has(this.data.selectedId),permissionDenied:!!value.permissionDenied,
-          saveMessage:value.permissionDenied?'相册权限未获准。开启权限后可重试未完成项；若连接已关闭，请重新扫码。':'已保存 '+saved+' 张'+(this._retryIds.length?'，'+this._retryIds.length+' 张未完成':'')+(value.cancelled?'（已停止）。':'。')});
+          saveMessage:value.permissionDenied?'相册权限未获准。开启权限后可重试未完成项；若连接已关闭，请重新扫码。':saved?photoSaveMessage(resultMessage):resultMessage});
       }
     },{exif:this.data.writeExif&&this.data.exportEnabled,rotations:Object.fromEntries(ids.map(id=>[id,this._rotations.get(id)||0]))});} catch (_) {this._retryIds=ids.slice();this.setData({saving:false,saveStopping:false,retryCount:ids.length,saveMessage:'无法开始保存，请重新连接后重试。'});}
   },
@@ -404,7 +455,7 @@ Page({
       }
       if(!current())return;
       await saveShareCard(wx,path);
-      if(current())this.setData({shareMessage:both?'原图和这张分享图已保存到相册。':'这张分享图已保存到相册。'});
+      if(current())this.setData({shareMessage:photoSaveMessage(both?'原图和这张分享图已保存到相册。':'这张分享图已保存到相册。')});
     }catch(error){
       if(current())this.setData({shareMessage:(both&&this._shareOriginalSaved?'原图已保存。':'')+error.message,permissionDenied:/权限/.test(error.message)});
     }finally{
@@ -421,15 +472,48 @@ Page({
       });
     }
     if(this.data.busy || this.data.saving || this.data.infoLoading || this.data.hdLoading){this.setData({infoMessage:'请等待当前传输完成后，再点参数。'});return;}
-    const id=this.data.selectedId,cached=this._metadata.get(id);
-    if(cached){this.setData(cached);this.loadOutfit(id,0);return;}
+    const id=this.data.selectedId;
     if(!this.data.connected || !this.data.downloadEnabled){this.setData({infoRows:[],infoMessage:'需要连接电脑的新版浏览码，才能读取参数。'});return;}
-    const epoch=++this._metadataEpoch;this.setData({infoLoading:true,infoRows:[],infoMessage:'正在读取电脑已解析的参数…'});
-    try {this._channel.metadata(id,value=>{
+    const cached = this._details.get(id);
+    this._details.delete(id);
+    if (cached && Date.now() < cached.expiresAt) {
+      this._details.set(id,cached);
+      this.setData({infoRows:cached.rows,infoMessage:'来自电脑已有解析结果'});
+      this.loadOutfit(id,0);
+      return;
+    }
+    // Pending/partial results must reread the PC so background decoding can appear.
+    for(const key of this._outfits.keys())if(key.startsWith(id+':'))this._outfits.delete(key);
+    const epoch=++this._metadataEpoch;
+    this.setData({infoLoading:true,infoRows:[],infoMessage:'正在读取电脑已解析的参数…',outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:''});
+    const cacheKey=this.data.photos[this.data.viewerIndex]?.cacheKey;
+    const saved=this._galleryCache?.getDetails(cacheKey);
+    const received=value=>{
       if(!this._alive || !this._active || epoch!==this._metadataEpoch || id!==this.data.selectedId)return;
+      if(value.status==='ok'&&value.unchanged&&saved){
+        value={...saved,status:'ok'};
+        this.seedOutfitPages(id,saved.items.map((item,index)=>({...item,key:index.toString(16).padStart(32,'0')})),true);
+      }else if(value.status==='ok'&&value.version&&Array.isArray(value.items)){
+        this._galleryCache.saveDetails(cacheKey,value);
+        this.seedOutfitPages(id,value.items,false);
+      }
+      if(value.status==='ok'&&value.availability==='available'&&value.rows.length){
+        if(this._details.size>=DETAIL_CACHE_LIMIT)this._details.delete(this._details.keys().next().value);
+        this._details.set(id,{rows:value.rows,expiresAt:Date.now()+DETAIL_CACHE_MS});
+      }
       const state={infoLoading:false,infoRows:value.status==='ok'?value.rows:[],infoMessage:value.status!=='ok'?'参数暂时不可用。':value.availability==='unavailable'?'电脑尚未解析出这张照片的参数。':value.availability==='partial'?'部分服装名称尚未解析。':'来自电脑已有解析结果'};
-      if(value.status==='ok')this._metadata.set(id,state);this.setData(state);if(value.status==='ok'&&this.data.infoOpen)this.loadOutfit(id,0);
-    });}catch(_){this.setData({infoLoading:false,infoMessage:'请等待当前传输完成或重新连接。'});}
+      this.setData(state);if(value.status==='ok'&&this.data.infoOpen)this.loadOutfit(id,0);
+    };
+    try{
+      if(cacheKey&&this._galleryCache&&this._channel.cachedDetails)this._channel.cachedDetails(id,saved?.version,received);
+      else this._channel.metadata(id,received);
+    }catch(_){this.setData({infoLoading:false,infoMessage:'请等待当前传输完成或重新连接。'});}
+  },
+  seedOutfitPages(id,items,fromDisk){
+    for(let offset=0;offset<Math.max(1,items.length);offset+=6){
+      while(this._outfits.size>=40)this._outfits.delete(this._outfits.keys().next().value);
+      this._outfits.set(id+':'+offset,{status:'ok',offset,total:items.length,next:offset+6<items.length?offset+6:null,items:items.slice(offset,offset+6),fromDisk});
+    }
   },
   loadOutfit(id,offset){
     if(!this._iconCache||!this._alive||!this._active||!this.data.infoOpen||id!==this.data.selectedId||typeof this._channel?.outfit!=='function'||this._outfitBusy)return;
@@ -459,7 +543,10 @@ Page({
     };
     const page=offset=>{
       if(!current()){finish();return;}
-      const cacheKey=id+':'+offset,cached=this._outfits.get(cacheKey);if(cached){this._outfits.delete(cacheKey);this._outfits.set(cacheKey,cached);apply(cached,offset);return;}
+      const cacheKey=id+':'+offset,cached=this._outfits.get(cacheKey);
+      if(cached&&(!cached.fromDisk||cached.items.every(item=>!item.hasIcon||this._iconCache.get(item.cacheKey)))){
+        this._outfits.delete(cacheKey);this._outfits.set(cacheKey,cached);apply(cached,offset);return;
+      }
       try{const request=this._channel.cachedOutfit||this._channel.outfit;request(id,offset,value=>{if(current()&&value.status==='ok'){while(this._outfits.size>=40)this._outfits.delete(this._outfits.keys().next().value);this._outfits.set(cacheKey,value);}apply(value,offset);});}catch(_){apply({status:'failed'},offset);}
     };page(0);
   },
@@ -508,7 +595,8 @@ Page({
     this.resetViewerGesture();const frame=++this._viewerSeq;this._activeViewerFrame=frame;
     const rotation=this._rotations.get(photo.id)||0,swapped=rotation===90||rotation===270;
     return {viewerVideo:photo.video===true,viewerLive:photo.live===true||photo.video===true,livePath:'',livePackPath:'',livePlaying:false,viewerRotation:rotation,viewerMime:photo.mime||'image/jpeg',viewerImageWidth:this.data.windowWidth,viewerImageHeight:this.data.windowHeight,rotationWidth:swapped?this.data.windowHeight:this.data.windowWidth,rotationHeight:swapped?this.data.windowWidth:this.data.windowHeight,selectedPath:photo.path,viewerPreviewPath:photo.path,viewerOriginalPath:'',originalReady:false,selectedId:photo.id || '',selectedDate:photo.date || '日期未知',viewerIndex:index,
-      viewerPosition:Math.max(0,this.data.pageStart-1)+index+1,viewerSelected:this._selected.has(photo.id),viewerQuality:'preview',hdMessage:'',viewerFrames:[{key:frame,initialScale:1}],viewerClosing:false,viewerPhase:'open',viewerSettle:0,infoOpen:false,infoMounted:false,infoPhase:'exit',infoExpanded:false,infoLoading:false,infoRows:[],infoMessage:'',outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:''};
+      viewerPosition:Math.max(0,this.data.pageStart-1)+index+1,viewerSelected:this._selected.has(photo.id),viewerQuality:'preview',hdMessage:'',saveMessage:'',
+      viewerDeletionId:this.deletionIdForPhoto?.(photo.id)||'',viewerFrames:[{key:frame,initialScale:1}],viewerClosing:false,viewerPhase:'open',viewerSettle:0,infoOpen:false,infoMounted:false,infoPhase:'exit',infoExpanded:false,infoLoading:false,infoRows:[],infoMessage:'',outfitItems:[],outfitTotal:0,outfitOffset:0,outfitNext:null,outfitNote:''};
   },
   displayPhoto(index) { this.closeShareCard();this.discardOriginal();this._metadataEpoch++;this.setData(this.photoState(index)); },
   previousPhoto() { this.movePhoto(-1); },
@@ -622,5 +710,5 @@ Page({
   popupLeaving() { if (this.data.popupMode === 'viewer') this.closePhoto(); else if(this.data.popupMode==='inspirationEditor')this.cancelInspirationEdit();else this.closeConnection(); },
   popupLeft() { this._popupClosing = false; if (this.data.popupMode === 'viewer') this.viewerLeft(); },
   imageFailed(event) { const index = Number(event.currentTarget.dataset.index), photo = this.data.photos[index]; if (!photo || !photo.path) return;
-    this._previewCache.delete(photo.id);this.removeFile(photo.path); this.updatePhoto(index, { path: '', state: '图片无法显示' }); }
+    this._previewCache.delete(photo.id);this._galleryCache?.invalidatePreview(photo.cacheKey,photo.path);if(this._files.has(photo.path))this.removeFile(photo.path); this.updatePhoto(index, { path: '', state: '图片无法显示' }); }
 });

@@ -7,8 +7,14 @@ public static class DesktopProjectLinks
     {
         "momo" => "https://github.com/ToStardust/NikkiSync",
         "nikkiGallery" => "https://github.com/QianQianLuLu1/NikkiGallery",
+        "nikkiAlbums" => "https://github.com/RanAxro/nikki_albums",
+        "meowStarMap" => "https://github.com/QianQianLuLu1/MeowStarMap",
+        "nuan5" => "https://nuan5.pro/",
+        "gongeo" => "https://gongeo.us/",
         "releases" => DesktopRelease.ReleasesUrl,
         "downloads" => DesktopRelease.DownloadsUrl,
+        "quark" => DesktopRelease.QuarkDownloadsUrl,
+        "androidDirect" => DesktopRelease.AndroidDirectUrl,
         _ => null
     };
 }

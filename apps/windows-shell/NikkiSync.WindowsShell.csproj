@@ -7,12 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.0.31</Version>
-    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026110202</DesktopBuild>
+    <Version>1.0.39</Version>
+    <DesktopBuild Condition="'$(DesktopBuild)' == ''">2026111107</DesktopBuild>
+    <MomoSupportUrl Condition="'$(MomoSupportUrl)' == ''">$(MOMO_SUPPORT_URL)</MomoSupportUrl>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="DesktopBuild" Value="$(DesktopBuild)" />
+    <AssemblyMetadata Include="MomoSupportUrl" Value="$(MomoSupportUrl)" />
     <EmbeddedResource Include="Assets\update-public-key.pem" LogicalName="MomoCamera.UpdatePublicKey" />
+    <EmbeddedResource Include="$(PortableIconPackPath)" LogicalName="NikkiSync.Icons.Full.zip" Condition="'$(PortableIconPackPath)' != ''" />
     <EmbeddedResource Include="..\..\tools\connection-diagnostics\Collect-ConnectionInfo.ps1" LogicalName="MomoCamera.ConnectionDiagnostics" />
     <Resource Include="Assets\app.ico" />
     <Resource Include="..\..\assets\branding\momo-camera.png" Link="Assets\brand.png" />

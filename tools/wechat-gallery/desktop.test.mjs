@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
+import './windows-conversion.test.mjs';
+test('changing the saved account scope revokes the active Mini Program session',async()=>{
+ const {DatabaseManager}=await import('../../packages/database/dist/src/index.js');
+ const {AccountSyncSettings}=await import('../../apps/pc-companion/dist/src/server/AccountSyncSettings.js');
+ const {createDesktopControlServer}=await import('../../apps/pc-companion/dist/src/desktop/DesktopControlServer.js');
+ const db=new DatabaseManager();db.initialize();
+ const accounts=new AccountSyncSettings(db);let closed=0;
+ const server=createDesktopControlServer({accounts,getStatus:()=>({service:'ready',host:'192.168.1.8',port:28080,assets:0,pairedDevices:0,firstRun:false}),createPairingUri:()=>'',qrSvg:async()=>'<svg/>',
+  wechatGallery:{status:()=>({state:'connected',photoCount:0,originalsSent:0}),stop:async()=>{closed++;}}});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const base='http://127.0.0.1:'+server.address().port;
+ try{
+  const token=/name="nikkisync-desktop-token" content="([^"]+)"/.exec(await(await fetch(base)).text())[1];
+  const select=uids=>fetch(base+'/api/sync-accounts',{method:'POST',headers:{'X-NikkiSync-Desktop-Token':token,'content-type':'application/json'},body:JSON.stringify({uids})});
+  assert.equal((await select(['12345'])).status,200);
+  assert.equal(closed,1);assert.deepEqual(accounts.selection(),['12345']);
+  assert.equal((await select(['12345'])).status,200);
+  assert.equal(closed,1,'submitting the same scope keeps the session');
+ } finally {await new Promise(resolve=>server.close(resolve));db.close();}
+});
 test('renewed gallery QR uses the current network instead of the startup address',async()=>{
  const {WeChatGalleryService}=await import('../../apps/pc-companion/dist/src/wechat/WeChatGalleryService.js');
  let host='192.168.137.1';const hosts=[],qrHosts=[];
@@ -91,8 +111,12 @@ test('an already claimed QR is hidden instead of inviting a second scan, without
  const {wechatPanelScript}=await import('../../apps/pc-companion/dist/src/desktop/WeChatGalleryPanel.js');
  class Element{content='local';innerHTML='';hidden=true;disabled=false;textContent='';replaceChildren(){this.innerHTML='';}focus(){}}
  const nodes=new Map(),el=s=>{if(!nodes.has(s))nodes.set(s,new Element());return nodes.get(s)};let created=0,ended=0;
- runInNewContext(wechatPanelScript,{document:{querySelector:el,addEventListener(){}},window:{addEventListener(){}},Date,setInterval:()=>1,clearInterval(){},fetch:async(_u,{method})=>({ok:true,json:async()=>{if(method==='POST'){created++;return{qrSvg:'<svg/>',expiresAt:new Date(Date.now()+600000).toISOString()}}if(method==='DELETE'){ended++;return{state:'closed'}}return{state:'connected',photoCount:1,originalsSent:0}}})});
+ const initialTime=Date.now();let time=initialTime;
+ class PanelDate extends Date{static now(){return time;}}
+ runInNewContext(wechatPanelScript,{document:{querySelector:el,addEventListener(){}},window:{addEventListener(){}},Date:PanelDate,setInterval:()=>1,clearInterval(){},fetch:async(_u,{method})=>({ok:true,json:async()=>{if(method==='POST'){created++;return{qrSvg:'<svg/>',expiresAt:new Date(initialTime+600000).toISOString()}}if(method==='DELETE'){ended++;return{state:'closed'}}return{state:'connected',photoCount:1,originalsSent:0,expiresAt:new Date(initialTime+3600000).toISOString()}}})});
  await el('#wechat-start').onclick();assert.equal(el('#wechat-qr').innerHTML,'','the initial QR key is consumed after authentication');
+ assert.match(el('#wechat-expiry').textContent,/连接剩余 60:00/);
+ time+=11*60*1000;
  await el('#wechat-close').onclick();await el('#wechat-start').onclick();assert.equal(created,1);assert.equal(ended,0);assert.equal(el('#wechat-qr').innerHTML,'');
  await el('#wechat-renew').onclick();assert.equal(created,2,'explicit rescan always receives a fresh key');
 });
