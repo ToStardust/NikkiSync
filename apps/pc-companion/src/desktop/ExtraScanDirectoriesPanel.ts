@@ -22,7 +22,9 @@ export const extraScanDirectoriesScript=String.raw`
   async function extraRequest(action,body){
     const token=document.querySelector('meta[name="nikkisync-desktop-token"]')?.content||'';
     const response=await fetch('/api/scan-directories'+(action?'/'+action:''),{method:body?'POST':'GET',headers:{'x-nikkisync-desktop-token':token,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
-    const value=await response.json();if(!response.ok)throw new Error(extraErrors[value.error]||'暂时无法管理扫描目录，请确认已打开新版电脑助手。');return value;
+    const value=await response.json();
+    if(!response.ok)throw Object.assign(new Error(extraErrors[value.error]||'暂时无法管理扫描目录，请确认已打开新版电脑助手。'),{code:value.error});
+    return value;
   }
   function extraButtons(){extraAdd.disabled=extraSpinning.disabled=!bridge||extraBusy;extraRescan.disabled=extraBusy;document.querySelector('#confirm-scan-directory').disabled=extraBusy;document.querySelector('#cancel-scan-directory').disabled=extraBusy;}
   function renderExtraState(state){
@@ -61,12 +63,20 @@ export const extraScanDirectoriesScript=String.raw`
   extraAdd.onclick=()=>{if(!extraBusy)bridge?.postMessage({type:'chooseExtraScanDirectory'});};
   extraSpinning.onclick=()=>{if(!extraBusy)bridge?.postMessage({type:'chooseSpinningMomoDirectory'});};
   extraRescan.onclick=()=>extraOperation(()=>extraRequest('rescan',{}));
-  document.querySelector('#cancel-scan-directory').onclick=()=>{extraProposal=undefined;extraPreview.hidden=true;};
-  document.querySelector('#confirm-scan-directory').onclick=()=>{if(extraProposal)return extraOperation(async()=>{await extraRequest('confirm',{proposalId:extraProposal});extraProposal=undefined;extraPreview.hidden=true;});};
+  function clearExtraPreview(){extraProposal=undefined;extraPreview.hidden=true;}
+  document.querySelector('#cancel-scan-directory').onclick=clearExtraPreview;
+  document.querySelector('#confirm-scan-directory').onclick=()=>{
+    if(!extraProposal)return;
+    return extraOperation(async()=>{
+      try{await extraRequest('confirm',{proposalId:extraProposal});}
+      catch(error){if(error.code==='selection_expired')clearExtraPreview();throw error;}
+      clearExtraPreview();
+    });
+  };
   async function handleExtraDirectoryMessage(event){
     if(event.data?.type==='extraScanDirectoryError'){extraMessage.textContent='无法打开文件夹选择器，请关闭其他选择窗口后重试。';return;}
     if(event.data?.type!=='extraScanDirectorySelected'||typeof event.data.path!=='string'||extraBusy)return;
-    extraBusy=true;extraButtons();extraPreview.hidden=true;extraMessage.textContent='正在识别所选目录…';
+    extraBusy=true;extraButtons();clearExtraPreview();extraMessage.textContent='正在识别所选目录…';
     try{
       const proposal=await extraRequest('inspect',{path:event.data.path,...(event.data.source==='spinning_momo'?{source:'spinning_momo'}:{})});extraProposal=proposal.id;
       document.querySelector('#scan-directory-preview-roots').textContent=proposal.roots.map(item=>item.path).join('\n');

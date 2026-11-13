@@ -435,6 +435,27 @@ test('home guidance opens settings and an extra folder is shared only after conf
   assert.equal(mount(async()=>({})).element('#add-scan-directory').disabled,true)
 })
 
+test('an expired directory selection clears the preview and cannot be confirmed again',async()=>{
+  let receive!:(event:unknown)=>void
+  let confirmations=0
+  const ui=mount(async(url)=>{
+    if(url.endsWith('/inspect'))return {ok:true,json:async()=>({id:'expired',roots:[{path:'C:/GamePhotos'}],images:2,videos:0})}
+    if(url.endsWith('/confirm')){
+      confirmations++
+      return {ok:false,json:async()=>({error:'selection_expired'})}
+    }
+    return {ok:true,json:async()=>({directories:[],automaticRoots:[],message:''})}
+  },{postMessage(){},addEventListener(_:string,handler:typeof receive){receive=handler}})
+  receive({data:{type:'extraScanDirectorySelected',path:'C:/GamePhotos'}})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(ui.element('#scan-directory-preview').hidden,false)
+  await ui.element('#confirm-scan-directory').onclick!()
+  assert.equal(ui.element('#scan-directory-preview').hidden,true)
+  assert.match(ui.element('#scan-directory-message').textContent,/选择结果已过期/)
+  await ui.element('#confirm-scan-directory').onclick!()
+  assert.equal(confirmations,1)
+})
+
 test('hidden desktop stops status requests and refreshes immediately when restored', async () => {
   let requests = 0
   const ui = mount(async () => { requests++; return { ok: true, json: async () => ({ assets: 12, pairedDevices: 0, host: '127.0.0.1', port: 1 }) } })

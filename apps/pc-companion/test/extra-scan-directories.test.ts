@@ -258,10 +258,17 @@ test('extra-directory HTTP actions require a local desktop token and origin, and
     assert.equal(f.ready(),1)
     assert.equal((await fetch(url+'/api/scan-directories/confirm',{method:'POST',headers,body:JSON.stringify({proposalId:preview.id})})).status,200)
     assert.equal(f.ready(),2)
+    // The desktop may miss the first successful response and repeat the same confirmation.
+    const retry=await fetch(url+'/api/scan-directories/confirm',{method:'POST',headers,body:JSON.stringify({proposalId:preview.id})})
+    assert.equal(retry.status,200)
+    assert.equal((await retry.json() as ReturnType<ExtraScanDirectories['state']>).directories.length,1)
+    assert.equal(f.ready(),2)
     const id=f.extra.state().directories[0]!.id
     await fetch(url+'/api/scan-directories/remove',{method:'POST',headers,body:JSON.stringify({id})})
     assert.equal(f.ready(),1)
     assert.equal(f.database.connection.prepare("SELECT COUNT(*) AS c FROM resources WHERE source_path=? AND stable_state='stable'").get(path.join(folder,'External.jpg'))?.c,0)
+    assert.equal((await fetch(url+'/api/scan-directories/confirm',{method:'POST',headers,body:JSON.stringify({proposalId:preview.id})})).status,400)
+    assert.equal(f.ready(),1)
     const bad=await fetch(url+'/api/scan-directories/confirm',{method:'POST',headers,body:JSON.stringify({proposalId:'not-issued'})});assert.equal(bad.status,400)
     assert.equal((await bad.json() as {error:string}).error,'selection_expired')
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close()}

@@ -72,6 +72,20 @@ test('closed-game fallback checks common game locations on all fixed disks witho
   } finally { await rm(sandbox, { recursive: true, force: true }) }
 })
 
+test('discovers a closed game under APP/NIKKI when Windows has no install or shortcut hint', async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), 'nikkisync-app-install-'))
+  try {
+    const root = path.join(sandbox, 'APP', 'NIKKI', 'InfinityNikki Launcher', 'InfinityNikki')
+    const photos = path.join(root, 'X6Game', 'Saved', 'GamePlayPhotos')
+    await installation(root)
+    await mkdir(photos, { recursive: true })
+    const result = await discoverInfinityNikkiInstallation({ ...isolated,
+      windowsHints: { registryPaths: [], shortcutPaths: [], driveRoots: [sandbox] } })
+    assert.equal(result?.installRoot, root)
+    assert.deepEqual(result?.photoRoots, [photos])
+  } finally { await rm(sandbox, { recursive: true, force: true }) }
+})
+
 test('an invalid manual folder fails explicitly and a misleading X6Game directory is not an installation', async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), 'nikkisync-invalid-selection-'))
   try {

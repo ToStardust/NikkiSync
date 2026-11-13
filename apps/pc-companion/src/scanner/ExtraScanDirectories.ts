@@ -8,6 +8,7 @@ import {gamePlayUid,nativePhotoLayout,nativePhotoAccountDirectory} from './Nativ
 import {isPendingUploadPath} from './ResourceClassifier.js'
 
 const MAX_DIRECTORIES=16
+const PROPOSAL_TTL_MS=600_000
 const key=(value:string)=>path.resolve(value).toLowerCase()
 const within=(value:string,root:string)=>key(value)===key(root)||key(value).startsWith(key(root)+path.sep)
 const overlaps=(a:string,b:string)=>within(a,b)||within(b,a)
@@ -47,7 +48,7 @@ export interface ExtraDirectoryProposal {id:string;roots:ExtraScanRoot[];images:
 
 export class ExtraScanDirectories{
   private directories:ExtraScanRoot[]
-  private proposals=new Map<string,{proposal:ExtraDirectoryProposal;expires:number}>()
+  private proposals=new Map<string,{proposal:ExtraDirectoryProposal;expires:number;confirmed?:true}>()
   private operations:Promise<unknown>=Promise.resolve()
   private busy=false
   private lastResult=''
@@ -118,13 +119,14 @@ export class ExtraScanDirectories{
     const proposal={id:randomBytes(18).toString('base64url'),roots:unique,images,videos,limited,hint}
     for(const [id,item]of this.proposals)if(item.expires<Date.now())this.proposals.delete(id)
     if(this.proposals.size>=8)this.proposals.delete(this.proposals.keys().next().value!)
-    this.proposals.set(proposal.id,{proposal,expires:Date.now()+600_000})
+    this.proposals.set(proposal.id,{proposal,expires:Date.now()+PROPOSAL_TTL_MS})
     return proposal
   }
 
   add(id:string):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{
     const item=this.proposals.get(id)
     if(!item||item.expires<Date.now()){this.proposals.delete(id);throw new Error('selection_expired')}
+    if(item.confirmed)return this.state()
     const existing=await resolveScopes([...this.directories.map(value=>value.path),...this.scanner.getAutomaticRoots()])
     for(const root of item.proposal.roots){
       if(key(await realpath(root.path))!==key(root.path))throw new Error('directory_unavailable')
@@ -132,13 +134,18 @@ export class ExtraScanDirectories{
     }
     if(this.directories.length+item.proposal.roots.length>MAX_DIRECTORIES)throw new Error('too_many_directories')
     await this.change([...this.directories,...item.proposal.roots])
-    this.proposals.delete(id)
+    // Keep the receipt briefly so a lost response does not turn a completed addition into an expiration.
+    item.confirmed=true
+    item.expires=Date.now()+PROPOSAL_TTL_MS
     this.lastResult=this.scanner.getStatus().lastScan?.errors.length?'目录已添加，但部分文件暂不可读。请确认磁盘在线后重新扫描，之前的索引已保留。':'目录已加入扫描。新照片和录像会继续自动收录；手机会通过现有连接同步更新。'
     return this.state()
   }).then(()=>this.state())}
   remove(id:string):Promise<ReturnType<ExtraScanDirectories['state']>>{return this.serialize(async()=>{
     if(!this.directories.some(entry=>entry.id===id))throw new Error('directory_not_found')
     await this.change(this.directories.filter(entry=>entry.id!==id))
+    for(const [proposalId,item] of this.proposals){
+      if(item.confirmed&&item.proposal.roots.some(root=>root.id===id))this.proposals.delete(proposalId)
+    }
     this.lastResult='已停止扫描和分享此目录，电脑原文件与手机已保存的文件保留。'
     return this.state()
   }).then(()=>this.state())}

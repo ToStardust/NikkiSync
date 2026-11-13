@@ -126,7 +126,7 @@ class InstallationSearch {
   }
 
   async commonLocations(drives: string[]): Promise<string | undefined> {
-    const containers = ['', 'GAME', 'Games', '游戏', 'Program Files', 'Program Files (x86)', 'Epic Games', 'SteamLibrary/steamapps/common', 'WeGameApps']
+    const containers = ['', 'APP/NIKKI', 'GAME', 'Games', '游戏', 'Program Files', 'Program Files (x86)', 'Epic Games', 'SteamLibrary/steamapps/common', 'WeGameApps']
     const names = ['InfinityNikki', 'Infinity Nikki', 'InfinityNikki Launcher', 'Infinity Nikki Launcher', '无限暖暖']
     // Check known names on every disk before exploring broader containers, so a
     // busy system drive cannot consume the search budget before D:/E: are tried.
