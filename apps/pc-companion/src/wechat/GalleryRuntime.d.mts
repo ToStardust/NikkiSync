@@ -45,7 +45,7 @@ export function createIndexedPreviewSource(database: DatabaseManager, roots: str
   loadIcon?(descriptor: {candidates:{url:string;kind:'item'|'category'}[];versionKey:string}): Promise<{image:Uint8Array;mime:'image/png';source:'item'|'category'}>;
 }): Promise<GallerySource>;
 export function exportLive(jpeg:Uint8Array,video:Uint8Array,options:{exif:boolean;metadata:unknown;presentationUs?:number;ffmpeg?:string;ffprobe?:string}):Promise<{image:Uint8Array;mime:'application/x-livp'}>;
-export function exportJpeg(bytes:Uint8Array,metadata:unknown,options:{exif:boolean;rotation:number;cameraName?:string|undefined}):Buffer;
+export function exportJpeg(bytes:Uint8Array,metadata:unknown,options:{exif:boolean;rotation:number;cameraName?:string|undefined},maxBytes?:number):Buffer;
 export function gameVersionEnglishName(version:unknown):string|undefined;
 export function setRemoteGameVersionNames(names:Record<string,string>):void;
 export function rotatePng(bytes:Uint8Array,rotation:number,script?:string):Promise<Uint8Array>;

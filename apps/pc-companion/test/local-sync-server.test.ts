@@ -109,6 +109,19 @@ test('ordinary JPEG export is authenticated, source-verified, non-destructive an
     for(const suffix of ['&cameraName=','&cameraName=x&cameraName=y','&cameraName=x%00y','&cameraName='+encodeURIComponent('暖'.repeat(100))])assert.equal((await get(route+suffix)).status,400);
     assert.equal((await get(route.replace('exif=true','exif=false')+'&cameraName=x')).status,400);
     for(const p of [route.replace('90','91'),route+'&path=PRIVATE',route+'&exif=false'])assert.equal((await get(p)).status,400);
+    const largeMedia=Buffer.concat([media.subarray(0,media.length-2),Buffer.alloc(20*1024*1024,7),media.subarray(media.length-2)]);
+    await writeFile(mediaPath,largeMedia);
+    assets.reconcile({assetId:'exif_asset',assetType:'photo',assetState:'ready',discoveredAt:'2026-09-05T00:00:00.000Z',capturedAt:'2026-09-05T00:00:00.000Z',metadataSchemaVersion:1,
+      metadata:{schemaVersion:1,camera:{focalLength:35,apertureSection:1.2}},
+      resources:[{resourceId:'exif_resource',assetId:'exif_asset',role:'source_primary',fileName:'photo.jpg',sourcePath:mediaPath,pathKey:mediaPath.toLowerCase(),mimeType:'image/jpeg',fileExt:'.jpg',sizeBytes:largeMedia.length,sha256:sha256(largeMedia),stableState:'stable',isDerived:false}]});
+    const largeResult=await get(route);assert.equal(largeResult.status,200);
+    const largeOutput=Buffer.from(await largeResult.arrayBuffer());
+    assert.equal(largeResult.headers.get('X-NikkiSync-SHA256'),sha256(largeOutput));
+    assert.equal(largeResult.headers.get('X-NikkiSync-Rotation'),'90');
+    assert.ok(largeOutput.includes(Buffer.from('"focalLength":35')));
+    const scanMarker=Buffer.from([255,218]);
+    assert.deepEqual(largeOutput.subarray(largeOutput.indexOf(scanMarker)),largeMedia.subarray(largeMedia.indexOf(scanMarker)));
+    assert.deepEqual(await readFile(mediaPath),largeMedia);
     await writeFile(mediaPath,Buffer.alloc(media.length));assert.equal((await get(route)).status,409);
   }finally{await server.stop();db.close();await rm(temp,{recursive:true,force:true});}
 })

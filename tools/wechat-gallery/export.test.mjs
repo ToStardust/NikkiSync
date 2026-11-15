@@ -36,6 +36,14 @@ test('export rejects unsupported rotation, malformed JPEG/EXIF and oversized inp
  const {exportJpeg}=await load();for(const rotation of [1,-90,360,'90',null])assert.throws(()=>exportJpeg(fixtureJpeg(),{}, {exif:true,rotation}));
  for(const bytes of [Buffer.from([255,216,255]),Buffer.alloc(16777217),fixtureJpeg(Buffer.from('Exif\0\0broken'))])assert.throws(()=>exportJpeg(bytes,{}, {exif:true,rotation:0}));
 });
+test('large JPEG export preserves image bytes and camera parameters when explicitly enabled',async()=>{
+ const {exportJpeg}=await load(),source=fixtureJpeg(),end=source.length-2;
+ const large=Buffer.concat([source.subarray(0,end),Buffer.alloc(20*1024*1024,7),source.subarray(end)]);
+ assert.throws(()=>exportJpeg(large,{}, {exif:true,rotation:0}));
+ const output=exportJpeg(large,{camera:{focalLength:35,apertureSection:1.2}},{exif:true,rotation:90},128*1024*1024);
+ assert.equal(tagsOf(output)[0x920a],35);assert.equal(tagsOf(output)[0x829d],1.2);assert.equal(tagsOf(output)[0x112],6);
+ assert.deepEqual(output.subarray(output.indexOf(Buffer.from([255,218]))),large.subarray(large.indexOf(Buffer.from([255,218]))));
+});
 test('existing big-endian EXIF, ICC and opaque metadata are preserved when known tags change',async()=>{
  const {exportJpeg}=await load();const tiff=Buffer.alloc(40);tiff.write('MM');tiff.writeUInt16BE(42,2);tiff.writeUInt32BE(8,4);tiff.writeUInt16BE(2,8);
  tiff.writeUInt16BE(0x112,10);tiff.writeUInt16BE(3,12);tiff.writeUInt32BE(1,14);tiff.writeUInt16BE(2,18);

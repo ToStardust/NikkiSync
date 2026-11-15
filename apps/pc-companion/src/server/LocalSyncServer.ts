@@ -630,7 +630,8 @@ export class LocalSyncServer {
     if(this.exportBusy)return json(res,429,errorBody('resource_not_ready','Please retry after the current export'))
     this.exportBusy=true;let bytes:Buffer|undefined,output:Buffer|undefined
     try{
-      const size=Number(row.size_bytes),hash=String(row.sha256);if(!Number.isSafeInteger(size)||size<4||size>16777216||!/^[a-f0-9]{64}$/i.test(hash))throw new Error('Resource bounds')
+      const maxExportSize=128*1024*1024
+      const size=Number(row.size_bytes),hash=String(row.sha256);if(!Number.isSafeInteger(size)||size<4||size>maxExportSize||!/^[a-f0-9]{64}$/i.test(hash))throw new Error('Resource bounds')
       const file=await open(String(row.source_path),'r')
       try{
         const before=await file.stat();if(!before.isFile()||before.size!==size)throw new Error('Source changed')
@@ -640,7 +641,7 @@ export class LocalSyncServer {
       let metadata:any;try{metadata=JSON.parse(String(asset.metadata_json??'{}'))}catch{}
       metadata={...(metadata&&typeof metadata==='object'?metadata:{}),
         capture:{...(metadata?.capture??{}),capturedAt:metadata?.capture?.capturedAt??asset.captured_at}};
-      output=exportJpeg(bytes,metadata,{exif:exif==='true',rotation,cameraName});const exportedHash=createHash('sha256').update(output).digest('hex')
+      output=exportJpeg(bytes,metadata,{exif:exif==='true',rotation,cameraName},maxExportSize);const exportedHash=createHash('sha256').update(output).digest('hex')
       res.writeHead(200,{'Content-Type':'image/jpeg','Content-Length':output.length,'X-NikkiSync-SHA256':exportedHash,'X-NikkiSync-Exif':exif==='true'?'1':'0','X-NikkiSync-Rotation':String(rotation),'X-NikkiSync-Export':'jpeg-exif-v1','Cache-Control':'private, no-store'})
       if(req.method==='HEAD'){res.end();return}
       await new Promise<void>(resolve=>{res.once('close',resolve);res.end(output,resolve)})

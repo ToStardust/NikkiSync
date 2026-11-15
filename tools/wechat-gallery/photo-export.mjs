@@ -27,8 +27,8 @@ export function exportMetadata(metadata){
  for(const key of ['pose','action','filter','lighting'])if(metadata?.[key])result[key+'Parameters']=item(metadata[key]);
  return result;
 }
-function layout(input){
- if(!(input instanceof Uint8Array)||input.length<4||input.length>MAX)throw new Error('JPEG export size');
+function layout(input,maxBytes=MAX){
+ if(!(input instanceof Uint8Array)||input.length<4||input.length>maxBytes)throw new Error('JPEG export size');
  const bytes=Buffer.from(input.buffer,input.byteOffset,input.byteLength);if(bytes[0]!==255||bytes[1]!==216)throw new Error('JPEG required');
  const segments=[];let offset=2,sos=-1;
  while(offset<bytes.length){
@@ -52,11 +52,12 @@ function tiffReader(tiff){
  const orientationEntry=root.entries.get(0x112);let orientation=1;if(orientationEntry){const type=le?orientationEntry.readUInt16LE(2):orientationEntry.readUInt16BE(2),count=le?orientationEntry.readUInt32LE(4):orientationEntry.readUInt32BE(4);if(type!==3||count!==1)throw new Error('Exif orientation');orientation=le?orientationEntry.readUInt16LE(8):orientationEntry.readUInt16BE(8);if(orientation<1||orientation>8)throw new Error('Exif orientation');}
  return {le,root,exif,orientation};
 }
-export function exportJpeg(input,metadata,{exif=true,rotation=0,contentIdentifier,cameraName}={}){
+export function exportJpeg(input,metadata,{exif=true,rotation=0,contentIdentifier,cameraName}={},maxBytes=MAX){
+ if(!Number.isSafeInteger(maxBytes)||maxBytes<MAX||maxBytes>128*1024*1024)throw new Error('JPEG export size limit');
  if(typeof exif!=='boolean'||![0,90,180,270].includes(rotation))throw new Error('Export options');
  if(cameraName!==undefined&&(!exif||typeof cameraName!=='string'||!cameraName.trim()||cameraName!==cameraName.trim()||Buffer.byteLength(cameraName,'utf8')>256||/[\u0000-\u001f\u007f-\u009f]/u.test(cameraName)))throw new Error('Camera name');
  if(contentIdentifier!==undefined&&!/^[A-F0-9]{8}(-[A-F0-9]{4}){3}-[A-F0-9]{12}$/.test(contentIdentifier))throw new Error('Live identity');
- const {bytes,segments}=layout(input);if(!exif&&!rotation&&!contentIdentifier)return Buffer.from(bytes);
+ const {bytes,segments}=layout(input,maxBytes);if(!exif&&!rotation&&!contentIdentifier)return Buffer.from(bytes);
  const existing=segments.filter(x=>x.marker===0xe1&&x.data.subarray(0,6).equals(EXIF));if(existing.length>1)throw new Error('Multiple Exif blocks');
  const original=existing[0]?.data.subarray(6)??Buffer.from([73,73,42,0,8,0,0,0,0,0,0,0,0,0]);
  const state=tiffReader(original),chunks=[Buffer.from(original)];let position=original.length;
@@ -95,7 +96,7 @@ export function exportJpeg(input,metadata,{exif=true,rotation=0,contentIdentifie
  if(tiff.length+8>65535)throw new Error('Exif segment too large');const app1=Buffer.alloc(tiff.length+10);app1[0]=255;app1[1]=0xe1;app1.writeUInt16BE(tiff.length+8,2);EXIF.copy(app1,4);tiff.copy(app1,10);
  // Existing TIFF offsets remain valid: untouched original TIFF data stays at the same relative offsets.
  const pieces=[bytes.subarray(0,2),app1];let previous=2;for(const old of existing){pieces.push(bytes.subarray(previous,old.start));previous=old.end;}pieces.push(bytes.subarray(previous));
- const output=Buffer.concat(pieces);if(output.length>MAX){output.fill(0);throw new Error('Export size limit');}return output;
+ const output=Buffer.concat(pieces);if(output.length>(maxBytes===MAX?MAX:maxBytes+65536)){output.fill(0);throw new Error('Export size limit');}return output;
 }
 export function liveJpeg(input,metadata,exif,contentIdentifier){
  const {bytes,sos}=layout(input),end=bytes.indexOf(Buffer.from([255,217]),sos);
