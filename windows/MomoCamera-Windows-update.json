@@ -1,0 +1,53 @@
+{
+  "Schema": 2,
+  "AppId": "MomoCamera.Windows",
+  "Version": "1.0.43",
+  "Build": 2026112701,
+  "Channel": "public-beta",
+  "Notes": "恢复电脑程序和本地图标的自动更新。通过签名差分升级并保留原有照片和设置。",
+  "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-PC-1.0.43-build2026112701.exe",
+  "Sha256": "3C26F46D8B0A15B14698F29EAD6586B52F01765E2D0C884EF6E9A9A9A404C1D5",
+  "Size": 284109716,
+  "Deltas": [
+    {
+      "BaseBuild": 2026112201,
+      "BaseSha256": "C97B722D7F880A442F496B38360806D86950DBDF0B9C8DB828ED3849ED5F4B1D",
+      "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-Windows-from-2026112201-to-2026112701.xdelta3",
+      "Sha256": "91504075D4322E8D2179C75C841C7666638A0BB97B866A867516A73C01EC2463",
+      "Size": 59055,
+      "Algorithm": "xdelta3-vcdiff"
+    },
+    {
+      "BaseBuild": 2026112102,
+      "BaseSha256": "8C3151DA3E4B51E3BC4223F4EFA9B4020BB690044283E072BDC23698E6F0E441",
+      "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-Windows-from-2026112102-to-2026112701.xdelta3",
+      "Sha256": "ADF3EC7EF5FD348B90D069167AE6041FC90EB08A09FEED9446A1AD3C8AC20DCA",
+      "Size": 699571,
+      "Algorithm": "xdelta3-vcdiff"
+    },
+    {
+      "BaseBuild": 2026111501,
+      "BaseSha256": "63B063D7CFADCDDDB5CC67866FABE9BF064B87CBB22331A4D1B03ACEAC2A8DCA",
+      "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-Windows-from-2026111501-to-2026112701.xdelta3",
+      "Sha256": "CE8D41807F3EFCA16C6D059FFC3ED1DF9AB67E96A10A528C94777760D771CFEB",
+      "Size": 37913909,
+      "Algorithm": "xdelta3-vcdiff"
+    },
+    {
+      "BaseBuild": 2026111201,
+      "BaseSha256": "7D4AAD76D9FE7355CEA9D695CF7E67F32BE09DFE0E4B1E9D65533953932BF250",
+      "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-Windows-from-2026111201-to-2026112701.xdelta3",
+      "Sha256": "5E8D5B537F1A7C46C0C16282EFA780807E48DE08517F1220D5DFCFAF03AF09CA",
+      "Size": 33242306,
+      "Algorithm": "xdelta3-vcdiff"
+    },
+    {
+      "BaseBuild": 2026111107,
+      "BaseSha256": "F82888F7B051DEA3A077F78A19759AB23C0599EA6083866B61788C1CFADB6301",
+      "DownloadUrl": "https://github.com/ToStardust/NikkiSync/releases/download/windows-update-20261127/MomoCamera-Windows-from-2026111107-to-2026112701.xdelta3",
+      "Sha256": "0072C3BA2F375EE24BE61AB5E8E6AF2CC01F4015493CBF4A3F0B0FE070B5D8D0",
+      "Size": 128331421,
+      "Algorithm": "xdelta3-vcdiff"
+    }
+  ]
+}
